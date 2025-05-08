@@ -1,3 +1,8 @@
+//! USN Journal module: provides access to the Windows NTFS Update Sequence Number (USN) change journal.
+//!
+//! This module enables querying, creating, deleting, and iterating over the USN change journal on NTFS volumes.
+//! It provides safe Rust abstractions over the Windows API for monitoring file system changes efficiently.
+
 use std::{ffi::c_void, mem::size_of};
 
 use anyhow::Context;
@@ -21,6 +26,9 @@ use crate::{
 };
 
 #[derive(Debug, Clone)]
+/// Iterator for enumerating USN journal records on an NTFS volume.
+///
+/// Use [`UsnJournal::new`] or [`UsnJournal::new_with_options`] to create an instance.
 pub struct UsnJournal {
     pub volume_handle: HANDLE,
     pub journal_id: u64,
@@ -35,6 +43,9 @@ pub struct UsnJournal {
 }
 
 #[derive(Debug, Clone)]
+/// Options for enumerating the USN journal.
+///
+/// Allows customization of the starting USN, reason mask, buffer size, and other parameters.
 pub struct UsnJournalEnumOptions {
     pub start_usn: Usn,
     pub reason_mask: u32,
@@ -58,6 +69,9 @@ impl Default for UsnJournalEnumOptions {
 }
 
 impl UsnJournal {
+    /// Create a new USN journal enumerator for the given volume and journal ID.
+    ///
+    /// Uses default options to enumerate all records.
     pub fn new(volume_handle: HANDLE, journal_id: u64) -> Self {
         Self {
             volume_handle,
@@ -73,6 +87,12 @@ impl UsnJournal {
         }
     }
 
+    /// Create a new USN journal enumerator with custom options.
+    ///
+    /// # Arguments
+    /// * `volume_handle` - Handle to the NTFS volume.
+    /// * `journal_id` - The USN journal identifier.
+    /// * `options` - Enumeration options (start USN, reason mask, buffer size, etc).
     pub fn new_with_options(
         volume_handle: HANDLE,
         journal_id: u64,
@@ -92,6 +112,9 @@ impl UsnJournal {
         }
     }
 
+    /// Read the next chunk of USN journal data into the buffer.
+    ///
+    /// Returns `Ok(true)` if data was read, `Ok(false)` if EOF, or an error.
     fn get_data(&mut self) -> anyhow::Result<bool> {
         let read_data = READ_USN_JOURNAL_DATA_V0 {
             StartUsn: self.next_start_usn,
@@ -125,6 +148,9 @@ impl UsnJournal {
         Ok(true)
     }
 
+    /// Find the next USN record in the buffer, reading more data if needed.
+    ///
+    /// Returns `Ok(Some(&USN_RECORD_V2))` if a record is found, `Ok(None)` if EOF, or an error.
     fn find_next_entry(&mut self) -> anyhow::Result<Option<&USN_RECORD_V2>> {
         if self.offset < self.bytes_read {
             let record = unsafe {
@@ -171,6 +197,15 @@ impl Iterator for UsnJournal {
     }
 }
 
+/// Query the USN journal state for a volume, optionally creating it if not active.
+///
+/// # Arguments
+/// * `volume_handle` - Handle to the NTFS volume.
+/// * `create_if_not_active` - If true, create the journal if it does not exist.
+///
+/// # Returns
+/// * `Ok(USN_JOURNAL_DATA_V0)` - The current journal state.
+/// * `Err(anyhow::Error)` - If the query or creation fails.
 pub fn query(
     volume_handle: HANDLE,
     create_if_not_active: bool,
@@ -226,6 +261,15 @@ fn query_core(volume_handle: HANDLE) -> Result<USN_JOURNAL_DATA_V0, windows::cor
     Ok(journal_data)
 }
 
+/// Create or update the USN journal on a volume.
+///
+/// # Arguments
+/// * `volume_handle` - Handle to the NTFS volume.
+/// * `max_size` - Maximum size of the journal in bytes.
+/// * `allocation_delta` - Allocation delta in bytes.
+///
+/// # Returns
+/// * `Ok(())` on success, or `Err(anyhow::Error)` on failure.
 pub fn create_or_update(
     volume_handle: HANDLE,
     max_size: u64,
@@ -257,6 +301,14 @@ pub fn create_or_update(
     Ok(())
 }
 
+/// Delete the USN journal from a volume.
+///
+/// # Arguments
+/// * `volume_handle` - Handle to the NTFS volume.
+/// * `journal_id` - The USN journal identifier.
+///
+/// # Returns
+/// * `Ok(())` on success, or `Err(anyhow::Error)` on failure.
 pub fn delete(volume_handle: HANDLE, journal_id: u64) -> anyhow::Result<()> {
     let delete_flags: USN_DELETE_FLAGS = USN_DELETE_FLAG_DELETE | USN_DELETE_FLAG_NOTIFY;
     let delete_data = DELETE_USN_JOURNAL_DATA {

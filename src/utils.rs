@@ -18,25 +18,14 @@ use windows::{
     core::HSTRING,
 };
 
-/// Obtains a handle to a volume for change journal operations.
-///
-/// This function uses the `CreateFileW` Windows API to open a handle to the specified volume.
-/// The volume is identified by its drive letter (e.g., 'C').
+/// Obtain a handle to a volume for USN change journal operations using a drive letter.
 ///
 /// # Arguments
-///
-/// * `drive_letter`: A character representing the drive letter of the volume (e.g., 'C', 'D').
+/// * `drive_letter` - The drive letter of the volume (e.g., 'C').
 ///
 /// # Returns
-///
-/// * `Ok(HANDLE)`: A `HANDLE` to the volume if successful.
-/// * `Err(anyhow::Error)`: An error if `CreateFileW` fails or if any other issue occurs.
-///
-/// # Remarks
-///
-/// The path format used for `CreateFileW` is `\\.\X:`, where `X` is the drive letter.
-/// This is the required format for obtaining a volume handle for USN change journal operations.
-/// The handle is opened with `FILE_GENERIC_READ` access and `FILE_SHARE_READ | FILE_SHARE_WRITE` sharing mode.
+/// * `Ok(HANDLE)` - Handle to the volume.
+/// * `Err(anyhow::Error)` - If the handle cannot be obtained.
 pub fn get_volume_handle(drive_letter: char) -> anyhow::Result<HANDLE> {
     // https://learn.microsoft.com/en-us/windows/win32/fileio/obtaining-a-volume-handle-for-change-journal-operations
     // To obtain a handle to a volume for use with update sequence number (USN) change journal operations,
@@ -66,37 +55,14 @@ pub fn get_volume_handle(drive_letter: char) -> anyhow::Result<HANDLE> {
     Ok(volume_handle)
 }
 
-/// Obtains a handle to a volume for change journal operations, using a mount point path.
-///
-/// This function first resolves the given `mount_point` to its underlying volume's unique
-/// GUID-based path (e.g., `\\?\Volume{xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}\`) using the
-/// `GetVolumeNameForVolumeMountPointW` Windows API.
-/// It then uses this volume GUID path to open a handle to the volume via `CreateFileW`.
-///
-/// This method is particularly useful for accessing volumes that are mounted as folders
-/// (e.g., `C:\MountPoints\MyVolume`) or when a drive letter is not directly available.
+/// Obtain a handle to a volume for USN change journal operations using a mount point path.
 ///
 /// # Arguments
-///
-/// * `mount_point`: A `&Path` to the mount point of the volume. This can be a drive root
-///   (e.g., `Path::new("C:\\")`) or a path to a mounted folder.
+/// * `mount_point` - Path to the mount point (e.g., `C:\` or a mounted folder).
 ///
 /// # Returns
-///
-/// * `Ok(HANDLE)`: A `HANDLE` to the volume if successful.
-/// * `Err(anyhow::Error)`: An error if `GetVolumeNameForVolumeMountPointW` or `CreateFileW` fails,
-///   or if any other issue occurs during the process.
-///
-/// # Remarks
-///
-/// - The `GetVolumeNameForVolumeMountPointW` API requires the input mount point path to end with a
-///   trailing backslash. This function ensures the path is correctly formatted before calling the API.
-/// - Conversely, `CreateFileW`, when used with a volume GUID path (as returned by
-///   `GetVolumeNameForVolumeMountPointW`), requires the path *not* to
-///   have a trailing backslash. This function also handles this formatting adjustment.
-/// - The volume handle is opened with `FILE_GENERIC_READ` access and
-///   `FILE_SHARE_READ | FILE_SHARE_WRITE` sharing mode, which is standard for
-///   USN change journal operations.
+/// * `Ok(HANDLE)` - Handle to the volume.
+/// * `Err(anyhow::Error)` - If the handle cannot be obtained.
 pub fn get_volume_handle_from_mount_point(mount_point: &Path) -> anyhow::Result<HANDLE> {
     // GetVolumeNameForVolumeMountPointW requires trailing backslash
     let mount_path = format!("{}\\", mount_point.to_string_lossy());
@@ -150,6 +116,16 @@ pub fn get_volume_handle_from_mount_point(mount_point: &Path) -> anyhow::Result<
     Ok(volume_handle)
 }
 
+/// Resolve a file ID to its full path on the given volume.
+///
+/// # Arguments
+/// * `volume_handle` - Handle to the NTFS volume.
+/// * `drive_letter` - The drive letter (e.g., 'C').
+/// * `file_id` - The file ID to resolve.
+///
+/// # Returns
+/// * `Ok(PathBuf)` - The resolved full path.
+/// * `Err(anyhow::Error)` - If the path cannot be resolved.
 pub fn file_id_to_path(
     volume_handle: HANDLE,
     drive_letter: char,
@@ -229,8 +205,15 @@ pub fn file_id_to_path(
     Ok(full_path)
 }
 
-/// Converts a Windows FILETIME (64-bit value, number of 100-nanosecond intervals since January 1, 1601 UTC)
-/// to a std::time::SystemTime.
+/// Convert a Windows FILETIME (number of 100-nanosecond intervals since 1601-01-01 UTC)
+/// to a `std::time::SystemTime`.
+///
+/// # Arguments
+/// * `filetime` - The FILETIME value as i64.
+///
+/// # Returns
+/// * `Ok(SystemTime)` - The corresponding system time.
+/// * `Err(anyhow::Error)` - If the conversion fails.
 pub fn filetime_to_systemtime(filetime: i64) -> anyhow::Result<SystemTime> {
     // Constant defining the number of 100-nanosecond intervals between the Windows epoch (1601-01-01)
     // and the Unix epoch (1970-01-01).

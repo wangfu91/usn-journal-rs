@@ -21,6 +21,9 @@ pub(crate) fn get_workspace_root() -> anyhow::Result<PathBuf> {
     Ok(PathBuf::from(workspace_root))
 }
 
+/// Set up a test VHD and mount point for integration tests.
+///
+/// Returns the mount point path and UUID. Runs a PowerShell script to create and mount a VHDX file.
 pub(crate) fn setup() -> anyhow::Result<(PathBuf, Uuid)> {
     const SETUP_SCRIPT_NAME: &str = "test-setup.ps1";
 
@@ -83,6 +86,9 @@ pub(crate) fn setup() -> anyhow::Result<(PathBuf, Uuid)> {
     Ok((mount_point, uuid))
 }
 
+/// Tear down the test VHD and mount point created by `setup`.
+///
+/// Unmounts and deletes the VHDX file using a PowerShell script.
 pub(crate) fn teardown(uuid: Uuid) -> anyhow::Result<()> {
     const TEARDOWN_SCRIPT_NAME: &str = "test-teardown.ps1";
 

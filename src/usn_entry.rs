@@ -22,6 +22,13 @@ pub struct UsnEntry {
 }
 
 impl UsnEntry {
+    /// Create a new `UsnEntry` from a raw USN_RECORD_V2 record.
+    ///
+    /// # Arguments
+    /// * `record` - Reference to a USN_RECORD_V2 structure from the Windows API.
+    ///
+    /// # Returns
+    /// A parsed `UsnEntry` with decoded fields and file name.
     pub fn new(record: &USN_RECORD_V2) -> Self {
         let file_name_len = record.FileNameLength as usize / std::mem::size_of::<u16>();
 
@@ -49,10 +56,12 @@ impl UsnEntry {
         }
     }
 
+    /// Returns true if this entry represents a directory.
     pub fn is_dir(&self) -> bool {
         self.file_attributes.contains(FILE_ATTRIBUTE_DIRECTORY)
     }
 
+    /// Returns true if this entry represents a hidden file or directory.
     pub fn is_hidden(&self) -> bool {
         self.file_attributes.contains(FILE_ATTRIBUTE_HIDDEN)
     }

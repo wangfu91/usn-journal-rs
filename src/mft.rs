@@ -1,3 +1,32 @@
+/// Represents the Master File Table (MFT) enumerator for a given NTFS volume.
+///
+/// The `Mft` struct provides an iterator interface to enumerate USN (Update Sequence Number) records
+/// from the MFT using the Windows FSCTL_ENUM_USN_DATA control code. It manages the buffer and state
+/// required to sequentially retrieve and parse USN records from the volume.
+///
+/// # Fields
+/// - `volume_handle`: Handle to the NTFS volume.
+/// - `buffer`: Buffer for reading raw USN data.
+/// - `bytes_read`: Number of bytes read into the buffer.
+/// - `offset`: Current offset within the buffer.
+/// - `next_start_fid`: File reference number to start the next enumeration.
+/// - `low_usn`: Lower bound of USN to enumerate.
+/// - `high_usn`: Upper bound of USN to enumerate.
+///
+/// # Usage
+/// Create an `Mft` instance using [`Mft::new`] or [`Mft::new_with_options`], then iterate over it to
+/// retrieve [`UsnEntry`] items representing MFT records.
+///
+/// # Example
+/// ```rust
+/// let mft = Mft::new(volume_handle);
+/// for entry in mft {
+///     println!("{:?}", entry);
+/// }
+/// ```
+///
+/// # Errors
+/// Errors encountered during enumeration are logged and cause the iterator to end.
 use log::warn;
 use windows::Win32::{
     Foundation::{ERROR_HANDLE_EOF, HANDLE},
@@ -19,6 +48,9 @@ pub struct Mft {
     high_usn: Usn,
 }
 
+/// Options for enumerating the Master File Table (MFT).
+///
+/// Allows customization of the USN range and buffer size for enumeration.
 pub struct MftEnumOptions {
     pub low_usn: Usn,
     pub high_usn: Usn,
@@ -36,6 +68,9 @@ impl Default for MftEnumOptions {
 }
 
 impl Mft {
+    /// Creates a new MFT enumerator for the given NTFS volume handle.
+    ///
+    /// Uses default options to enumerate all records.
     pub fn new(volume_handle: HANDLE) -> Self {
         Mft {
             volume_handle,
@@ -48,6 +83,11 @@ impl Mft {
         }
     }
 
+    /// Creates a new MFT enumerator with custom options.
+    ///
+    /// # Arguments
+    /// * `volume_handle` - Handle to the NTFS volume.
+    /// * `options` - Enumeration options (USN range, buffer size).
     pub fn new_with_options(volume_handle: HANDLE, options: MftEnumOptions) -> Self {
         Mft {
             volume_handle,
@@ -60,6 +100,9 @@ impl Mft {
         }
     }
 
+    /// Reads the next chunk of MFT data into the buffer.
+    ///
+    /// Returns `Ok(true)` if data was read, `Ok(false)` if EOF, or an error.
     fn get_data(&mut self) -> anyhow::Result<bool> {
         // To enumerate files on a volume, use the FSCTL_ENUM_USN_DATA operation one or more times.
         // On the first call, set the starting point, the StartFileReferenceNumber member of the MFT_ENUM_DATA structure, to (DWORDLONG)0.
@@ -92,6 +135,9 @@ impl Mft {
         Ok(true)
     }
 
+    /// Finds the next USN record in the buffer, reading more data if needed.
+    ///
+    /// Returns `Ok(Some(&USN_RECORD_V2))` if a record is found, `Ok(None)` if EOF, or an error.
     fn find_next_entry(&mut self) -> anyhow::Result<Option<&USN_RECORD_V2>> {
         if self.offset < self.bytes_read {
             let record = unsafe {

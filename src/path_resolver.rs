@@ -7,6 +7,7 @@ use crate::{usn_entry::UsnEntry, utils};
 
 const CACHE_CAPACITY: usize = 4 * 1024; // 4KB
 
+/// A struct to resolve file paths from file IDs on an NTFS volume.
 pub struct PathResolver {
     volume_handle: HANDLE,
     drive_letter: char,
@@ -14,6 +15,11 @@ pub struct PathResolver {
 }
 
 impl PathResolver {
+    /// Create a new `PathResolver` for a given NTFS volume and drive letter.
+    ///
+    /// # Arguments
+    /// * `volume_handle` - Handle to the NTFS volume.
+    /// * `drive_letter` - The drive letter (e.g., 'C').
     pub fn new(volume_handle: HANDLE, drive_letter: char) -> Self {
         let fid_path_cache = LruCache::new(NonZeroUsize::new(CACHE_CAPACITY).unwrap());
         PathResolver {
@@ -23,6 +29,10 @@ impl PathResolver {
         }
     }
 
+    /// Resolve the full path for a given USN entry.
+    ///
+    /// Uses an LRU cache to speed up repeated lookups.
+    /// Returns `Some(PathBuf)` if the path can be resolved, or `None` if not found.
     pub fn resolve_path(&mut self, usn_entry: &UsnEntry) -> Option<PathBuf> {
         let fid = usn_entry.fid;
         if let Some(path) = self.fid_path_cache.get(&fid) {
