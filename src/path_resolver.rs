@@ -1,0 +1,58 @@
+use std::{num::NonZeroUsize, path::PathBuf};
+
+use lru::LruCache;
+use windows::Win32::Foundation::HANDLE;
+
+use crate::{usn_entry::UsnEntry, utils};
+
+const CACHE_CAPACITY: usize = 4 * 1024; // 4KB
+
+pub struct PathResolver {
+    volume_handle: HANDLE,
+    drive_letter: char,
+    fid_path_cache: LruCache<u64, PathBuf>,
+}
+
+impl PathResolver {
+    pub fn new(volume_handle: HANDLE, drive_letter: char) -> Self {
+        let fid_path_cache = LruCache::new(NonZeroUsize::new(CACHE_CAPACITY).unwrap());
+        PathResolver {
+            volume_handle,
+            drive_letter,
+            fid_path_cache,
+        }
+    }
+
+    /*
+    fid: u64,
+    parent_fid: u64,
+    file_name: &OsString,
+    */
+
+    pub fn resolve_path(&mut self, usn_entry: &UsnEntry) -> Option<PathBuf> {
+        let fid = usn_entry.fid;
+        if let Some(path) = self.fid_path_cache.get(&fid) {
+            return Some(path.clone());
+        }
+
+        let parent_fid = usn_entry.parent_fid;
+        let file_name = &usn_entry.file_name; // Borrow file_name instead of moving
+        if let Some(parent_path) = self.fid_path_cache.get(&parent_fid) {
+            let path = parent_path.join(file_name);
+            self.fid_path_cache.put(fid, path.clone());
+            return Some(path);
+        }
+
+        // If not in cache, try to get parent path from file system
+        if let Ok(parent_path) =
+            utils::file_id_to_path(self.volume_handle, self.drive_letter, parent_fid)
+        {
+            let path = parent_path.join(file_name);
+            self.fid_path_cache.put(parent_fid, parent_path);
+            self.fid_path_cache.put(fid, path.clone());
+            return Some(path);
+        }
+
+        None
+    }
+}
