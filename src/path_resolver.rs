@@ -23,12 +23,6 @@ impl PathResolver {
         }
     }
 
-    /*
-    fid: u64,
-    parent_fid: u64,
-    file_name: &OsString,
-    */
-
     pub fn resolve_path(&mut self, usn_entry: &UsnEntry) -> Option<PathBuf> {
         let fid = usn_entry.fid;
         if let Some(path) = self.fid_path_cache.get(&fid) {
