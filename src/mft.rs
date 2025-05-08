@@ -51,15 +51,15 @@ pub struct Mft {
 /// Options for enumerating the Master File Table (MFT).
 ///
 /// Allows customization of the USN range and buffer size for enumeration.
-pub struct MftEnumOptions {
+pub struct EnumOptions {
     pub low_usn: Usn,
     pub high_usn: Usn,
     pub buffer_size: usize,
 }
 
-impl Default for MftEnumOptions {
+impl Default for EnumOptions {
     fn default() -> Self {
-        MftEnumOptions {
+        EnumOptions {
             low_usn: 0,
             high_usn: i64::MAX,
             buffer_size: DEFAULT_BUFFER_SIZE,
@@ -88,7 +88,7 @@ impl Mft {
     /// # Arguments
     /// * `volume_handle` - Handle to the NTFS volume.
     /// * `options` - Enumeration options (USN range, buffer size).
-    pub fn new_with_options(volume_handle: HANDLE, options: MftEnumOptions) -> Self {
+    pub fn new_with_options(volume_handle: HANDLE, options: EnumOptions) -> Self {
         Mft {
             volume_handle,
             buffer: vec![0u8; options.buffer_size],

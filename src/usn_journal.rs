@@ -46,7 +46,7 @@ pub struct UsnJournal {
 /// Options for enumerating the USN journal.
 ///
 /// Allows customization of the starting USN, reason mask, buffer size, and other parameters.
-pub struct UsnJournalEnumOptions {
+pub struct EnumOptions {
     pub start_usn: Usn,
     pub reason_mask: u32,
     pub only_on_close: bool,
@@ -55,9 +55,9 @@ pub struct UsnJournalEnumOptions {
     pub buffer_size: usize,
 }
 
-impl Default for UsnJournalEnumOptions {
+impl Default for EnumOptions {
     fn default() -> Self {
-        UsnJournalEnumOptions {
+        EnumOptions {
             start_usn: 0,
             reason_mask: USN_REASON_MASK_ALL,
             only_on_close: false,
@@ -93,11 +93,7 @@ impl UsnJournal {
     /// * `volume_handle` - Handle to the NTFS volume.
     /// * `journal_id` - The USN journal identifier.
     /// * `options` - Enumeration options (start USN, reason mask, buffer size, etc).
-    pub fn new_with_options(
-        volume_handle: HANDLE,
-        journal_id: u64,
-        options: UsnJournalEnumOptions,
-    ) -> Self {
+    pub fn new_with_options(volume_handle: HANDLE, journal_id: u64, options: EnumOptions) -> Self {
         Self {
             volume_handle,
             journal_id,
@@ -418,7 +414,7 @@ mod tests {
             let volume_handle = utils::get_volume_handle_from_mount_point(mount_point.as_path())?;
             let journal_data = super::query(volume_handle, true)?;
             println!("USN journal data: {:?}", journal_data);
-            let option = super::UsnJournalEnumOptions::default();
+            let option = super::EnumOptions::default();
             let usn_journal = super::UsnJournal::new_with_options(
                 volume_handle,
                 journal_data.UsnJournalID,
