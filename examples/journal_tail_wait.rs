@@ -28,7 +28,9 @@ fn main() -> anyhow::Result<()> {
         let full_path = path_resolver.resolve_path(&entry);
         println!(
             "usn={:?}, reason={:?}, path={:?}",
-            entry.usn, entry.reason, full_path
+            entry.usn,
+            entry.reason_to_string(),
+            full_path
         );
     }
 
