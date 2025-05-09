@@ -1,6 +1,6 @@
 # This script creates a VHD file, mounts it, initializes the disk, creates a partition, formats it with NTFS, and assigns a mount point.
 # It requires administrator privileges to run.
-# Note: This script needs the Hypwer-V feature to be enabled on the system.
+# Note: This script needs the Hyper-V feature to be enabled on the system.
 
 param(
     [Parameter(Mandatory=$true)]
