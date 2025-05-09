@@ -176,13 +176,23 @@ impl UsnJournal {
         // EOF, no more data to read
         Ok(None)
     }
+
+    /// Returns an iterator over the USN journal entries.
+    pub fn iter(&mut self) -> UsnJournalIter<'_> {
+        UsnJournalIter { usn_journal: self }
+    }
 }
 
-impl Iterator for UsnJournal {
+/// Iterate over USN journal entries.
+pub struct UsnJournalIter<'a> {
+    usn_journal: &'a mut UsnJournal,
+}
+
+impl Iterator for UsnJournalIter<'_> {
     type Item = UsnEntry;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match self.find_next_entry() {
+        match self.usn_journal.find_next_entry() {
             Ok(Some(record)) => Some(UsnEntry::new(record)),
             Ok(None) => None,
             Err(err) => {
@@ -415,13 +425,13 @@ mod tests {
             let journal_data = super::query(volume_handle, true)?;
             println!("USN journal data: {:?}", journal_data);
             let option = super::EnumOptions::default();
-            let usn_journal = super::UsnJournal::new_with_options(
+            let mut usn_journal = super::UsnJournal::new_with_options(
                 volume_handle,
                 journal_data.UsnJournalID,
                 option,
             );
             let mut previous_usn = -1i64;
-            for entry in usn_journal {
+            for entry in usn_journal.iter() {
                 println!("USN entry: {:?}", entry);
                 // Check if the USN entry is valid
                 assert!(entry.usn >= 0, "USN is not valid");

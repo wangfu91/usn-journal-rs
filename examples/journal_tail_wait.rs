@@ -13,18 +13,17 @@ fn main() -> anyhow::Result<()> {
 
     let enum_options = usn_journal::EnumOptions {
         start_usn: journal_data.NextUsn,
-        timeout: 0,
-        only_on_close: false,
+        only_on_close: true,
         wait_for_more: true,
         ..Default::default()
     };
 
-    let journal =
+    let mut journal =
         UsnJournal::new_with_options(volume_handle, journal_data.UsnJournalID, enum_options);
 
     let mut path_resolver = PathResolver::new(volume_handle, drive_letter);
 
-    for entry in journal {
+    for entry in journal.iter() {
         let full_path = path_resolver.resolve_path_from_usn(&entry);
         println!(
             "usn={:?}, reason={:?}, path={:?}",

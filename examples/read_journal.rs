@@ -11,11 +11,11 @@ fn main() -> anyhow::Result<()> {
 
     let journal_data = usn_journal::query(volume_handle, true)?;
 
-    let journal = UsnJournal::new(volume_handle, journal_data.UsnJournalID);
+    let mut journal = UsnJournal::new(volume_handle, journal_data.UsnJournalID);
 
     let mut path_resolver = PathResolver::new(volume_handle, drive_letter);
 
-    for entry in journal {
+    for entry in journal.iter() {
         let full_path = path_resolver.resolve_path_from_usn(&entry);
         println!(
             "usn={:?}, file_id={:?}, path={:?}",
