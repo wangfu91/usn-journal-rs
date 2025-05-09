@@ -1,6 +1,6 @@
 # This script unmounts and deletes a VHD file and its mount point in PowerShell.
 # This script is designed to be run with administrator privileges.
-# Note: This script needs the Hypwer-V feature to be enabled on the system.
+# Note: This script needs the Hyper-V feature to be enabled on the system.
 
 param(
     [Parameter(Mandatory = $true)]
