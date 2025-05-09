@@ -1,35 +1,26 @@
-use std::{ffi::OsString, os::windows::ffi::OsStringExt, path::Path};
+//! Represents the Master File Table (MFT) enumerator for a given NTFS volume.
+//!
+//! The `Mft` struct provides an iterator interface to enumerate USN (Update Sequence Number) records
+//! from the MFT using the Windows FSCTL_ENUM_USN_DATA control code. It manages the buffer and state
+//! required to sequentially retrieve and parse USN records from the volume.
+//!
+//! # Example: Enumerating MFT Entries
+//! ```rust
+//! use usn_journal_rs::mft::Mft;
+//!
+//! let drive_letter = 'C';
+//! let mft = Mft::new_from_drive_letter(drive_letter).unwrap();
+//! for entry in mft.iter().take(10) {
+//!     println!("{:?}", entry);
+//! }
+//! ```
+//!
+//! # Errors
+//! Errors encountered during enumeration are logged and cause the iterator to end.
 
-/// Represents the Master File Table (MFT) enumerator for a given NTFS volume.
-///
-/// The `Mft` struct provides an iterator interface to enumerate USN (Update Sequence Number) records
-/// from the MFT using the Windows FSCTL_ENUM_USN_DATA control code. It manages the buffer and state
-/// required to sequentially retrieve and parse USN records from the volume.
-///
-/// # Fields
-/// - `volume_handle`: Handle to the NTFS volume.
-/// - `buffer`: Buffer for reading raw USN data.
-/// - `bytes_read`: Number of bytes read into the buffer.
-/// - `offset`: Current offset within the buffer.
-/// - `next_start_fid`: File reference number to start the next enumeration.
-/// - `low_usn`: Lower bound of USN to enumerate.
-/// - `high_usn`: Upper bound of USN to enumerate.
-///
-/// # Usage
-/// Create an `Mft` instance using [`Mft::new`] or [`Mft::new_with_options`], then iterate over it to
-/// retrieve [`MftEntry`] items representing MFT records.
-///
-/// # Example
-/// ```rust
-/// let mft = Mft::new(volume_handle);
-/// for entry in mft {
-///     println!("{:?}", entry);
-/// }
-/// ```
-///
-/// # Errors
-/// Errors encountered during enumeration are logged and cause the iterator to end.
+use crate::{DEFAULT_BUFFER_SIZE, Usn, utils};
 use log::warn;
+use std::{ffi::OsString, os::windows::ffi::OsStringExt, path::Path};
 use windows::Win32::{
     Foundation::{ERROR_HANDLE_EOF, HANDLE},
     Storage::FileSystem::{
@@ -40,8 +31,6 @@ use windows::Win32::{
         Ioctl::{self, USN_RECORD_V2},
     },
 };
-
-use crate::{DEFAULT_BUFFER_SIZE, Usn, utils};
 
 /// Represents a single entry in the Master File Table (MFT).
 #[derive(Debug)]
@@ -247,7 +236,7 @@ impl Iterator for MftIter<'_> {
 
 #[cfg(test)]
 mod tests {
-    use crate::tests_utils::{setup, teardown};
+    use crate::test_utils::{setup, teardown};
 
     use super::*;
 

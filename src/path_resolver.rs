@@ -1,16 +1,13 @@
-use std::{ffi::OsString, num::NonZeroUsize, path::PathBuf};
-
-use lru::LruCache;
-use windows::Win32::Foundation::HANDLE;
-
 use crate::{
     mft::{Mft, MftEntry},
-    usn_entry::UsnEntry,
-    usn_journal::UsnJournal,
+    usn_journal::{UsnEntry, UsnJournal},
     utils,
 };
+use lru::LruCache;
+use std::{ffi::OsString, num::NonZeroUsize, path::PathBuf};
+use windows::Win32::Foundation::HANDLE;
 
-const CACHE_CAPACITY: usize = 4 * 1024; // 4KB
+const LRU_CACHE_CAPACITY: usize = 4 * 1024; // 4KB
 
 /// A struct to resolve file paths from file IDs on an NTFS/ReFS volume.
 #[derive(Debug)]
@@ -59,7 +56,7 @@ impl PathResolver {
     /// * `volume_handle` - Handle to the NTFS/ReFS volume.
     /// * `drive_letter` - The drive letter (e.g., 'C').
     fn new(volume_handle: HANDLE, drive_letter: Option<char>) -> Self {
-        let fid_path_cache = LruCache::new(NonZeroUsize::new(CACHE_CAPACITY).unwrap());
+        let fid_path_cache = LruCache::new(NonZeroUsize::new(LRU_CACHE_CAPACITY).unwrap());
         PathResolver {
             volume_handle,
             drive_letter,
