@@ -5,7 +5,7 @@ edition = "2021"
 description = "A library to manipulate the Windows USN change journal and enumerating the NTFS Master File Table (MFT)."
 license = "MIT"
 repository = "https://github.com/wangfu91/usn-journal-rs"
-keywords = ["usn journal", "change journal", "windows", "filesystem", "ntfs", "mft", "refs"]
+keywords = ["usn journal", "filesystem", "ntfs", "mft", "refs"]
 categories = ["filesystem", "os::windows-apis"]
 
 [dependencies]
