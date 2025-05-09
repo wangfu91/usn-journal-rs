@@ -1,30 +1,24 @@
 use usn_journal_rs::{
-    path_resolver::PathResolver,
+    path_resolver::UsnJournalPathResolver,
     usn_journal::{self, UsnJournal},
-    utils,
 };
 
 fn main() -> anyhow::Result<()> {
     let drive_letter = 'C';
 
-    let volume_handle = utils::get_volume_handle(drive_letter)?;
-
-    let journal_data = usn_journal::query(volume_handle, true)?;
+    let journal = UsnJournal::new_from_drive_letter(drive_letter)?;
 
     let enum_options = usn_journal::EnumOptions {
-        start_usn: journal_data.NextUsn,
+        start_usn: journal.next_usn,
         only_on_close: true,
         wait_for_more: true,
         ..Default::default()
     };
 
-    let mut journal =
-        UsnJournal::new_with_options(volume_handle, journal_data.UsnJournalID, enum_options);
+    let mut path_resolver = UsnJournalPathResolver::new(&journal);
 
-    let mut path_resolver = PathResolver::new(volume_handle, drive_letter);
-
-    for entry in journal.iter() {
-        let full_path = path_resolver.resolve_path_from_usn(&entry);
+    for entry in journal.iter_with_options(enum_options) {
+        let full_path = path_resolver.resolve_path(&entry);
         println!(
             "usn={:?}, reason={:?}, path={:?}",
             entry.usn,
