@@ -26,23 +26,6 @@ use crate::{
 };
 
 #[derive(Debug, Clone)]
-/// Iterator for enumerating USN journal records on an NTFS volume.
-///
-/// Use [`UsnJournal::new`] or [`UsnJournal::new_with_options`] to create an instance.
-pub struct UsnJournal {
-    pub volume_handle: HANDLE,
-    pub journal_id: u64,
-    buffer: Vec<u8>,
-    bytes_read: u32,
-    offset: u32,
-    next_start_usn: Usn,
-    reason_mask: u32,
-    return_only_on_close: u32,
-    timeout: u64,
-    bytes_to_wait_for: u64,
-}
-
-#[derive(Debug, Clone)]
 /// Options for enumerating the USN journal.
 ///
 /// Allows customization of the starting USN, reason mask, buffer size, and other parameters.
@@ -68,14 +51,44 @@ impl Default for EnumOptions {
     }
 }
 
+#[derive(Debug, Clone)]
+/// Iterator for enumerating USN journal records on NTFS/ReFS volume.
+pub struct UsnJournal {
+    pub(crate) volume_handle: HANDLE,
+    journal_id: u64,
+    pub(crate) drive_letter: Option<char>,
+    pub next_usn: Usn,
+}
+
 impl UsnJournal {
-    /// Create a new USN journal enumerator for the given volume and journal ID.
-    ///
-    /// Uses default options to enumerate all records.
-    pub fn new(volume_handle: HANDLE, journal_id: u64) -> Self {
-        Self {
+    /// Create a new `UsnJournal` instance with the given drive letter.
+    pub fn new_from_drive_letter(drive_letter: char) -> anyhow::Result<Self> {
+        let volume_handle = crate::utils::get_volume_handle(drive_letter)?;
+        let journal_data = query(volume_handle, true)?;
+        Ok(UsnJournal {
             volume_handle,
-            journal_id,
+            journal_id: journal_data.UsnJournalID,
+            drive_letter: Some(drive_letter),
+            next_usn: journal_data.NextUsn,
+        })
+    }
+
+    /// Create a new `UsnJournal` instance with the given volume mount point.
+    pub fn new_from_mount_point(mount_point: &std::path::Path) -> anyhow::Result<Self> {
+        let volume_handle = crate::utils::get_volume_handle_from_mount_point(mount_point)?;
+        let journal_data = query(volume_handle, true)?;
+        Ok(UsnJournal {
+            volume_handle,
+            journal_id: journal_data.UsnJournalID,
+            drive_letter: None,
+            next_usn: journal_data.NextUsn,
+        })
+    }
+
+    /// Returns an iterator over the USN journal entries.
+    pub fn iter(&self) -> UsnJournalIter<'_> {
+        UsnJournalIter {
+            usn_journal: self,
             buffer: vec![0u8; DEFAULT_BUFFER_SIZE],
             bytes_read: 0,
             offset: 0,
@@ -87,16 +100,9 @@ impl UsnJournal {
         }
     }
 
-    /// Create a new USN journal enumerator with custom options.
-    ///
-    /// # Arguments
-    /// * `volume_handle` - Handle to the NTFS volume.
-    /// * `journal_id` - The USN journal identifier.
-    /// * `options` - Enumeration options (start USN, reason mask, buffer size, etc).
-    pub fn new_with_options(volume_handle: HANDLE, journal_id: u64, options: EnumOptions) -> Self {
-        Self {
-            volume_handle,
-            journal_id,
+    pub fn iter_with_options(&self, options: EnumOptions) -> UsnJournalIter<'_> {
+        UsnJournalIter {
+            usn_journal: self,
             buffer: vec![0u8; options.buffer_size],
             bytes_read: 0,
             offset: 0,
@@ -107,7 +113,22 @@ impl UsnJournal {
             bytes_to_wait_for: options.wait_for_more as u64,
         }
     }
+}
 
+/// Iterate over USN journal entries.
+pub struct UsnJournalIter<'a> {
+    usn_journal: &'a UsnJournal,
+    buffer: Vec<u8>,
+    bytes_read: u32,
+    offset: u32,
+    next_start_usn: Usn,
+    reason_mask: u32,
+    return_only_on_close: u32,
+    timeout: u64,
+    bytes_to_wait_for: u64,
+}
+
+impl UsnJournalIter<'_> {
     /// Read the next chunk of USN journal data into the buffer.
     ///
     /// Returns `Ok(true)` if data was read, `Ok(false)` if EOF, or an error.
@@ -118,12 +139,12 @@ impl UsnJournal {
             ReturnOnlyOnClose: self.return_only_on_close,
             Timeout: self.timeout,
             BytesToWaitFor: self.bytes_to_wait_for,
-            UsnJournalID: self.journal_id,
+            UsnJournalID: self.usn_journal.journal_id,
         };
 
         if let Err(err) = unsafe {
             DeviceIoControl(
-                self.volume_handle,
+                self.usn_journal.volume_handle,
                 FSCTL_READ_USN_JOURNAL,
                 Some(&read_data as *const _ as *mut _),
                 size_of::<READ_USN_JOURNAL_DATA_V0>() as u32,
@@ -176,23 +197,13 @@ impl UsnJournal {
         // EOF, no more data to read
         Ok(None)
     }
-
-    /// Returns an iterator over the USN journal entries.
-    pub fn iter(&mut self) -> UsnJournalIter<'_> {
-        UsnJournalIter { usn_journal: self }
-    }
-}
-
-/// Iterate over USN journal entries.
-pub struct UsnJournalIter<'a> {
-    usn_journal: &'a mut UsnJournal,
 }
 
 impl Iterator for UsnJournalIter<'_> {
     type Item = UsnEntry;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match self.usn_journal.find_next_entry() {
+        match self.find_next_entry() {
             Ok(Some(record)) => Some(UsnEntry::new(record)),
             Ok(None) => None,
             Err(err) => {
@@ -421,15 +432,7 @@ mod tests {
         let (mount_point, uuid) = setup()?;
 
         let result = {
-            let volume_handle = utils::get_volume_handle_from_mount_point(mount_point.as_path())?;
-            let journal_data = super::query(volume_handle, true)?;
-            println!("USN journal data: {:?}", journal_data);
-            let option = super::EnumOptions::default();
-            let mut usn_journal = super::UsnJournal::new_with_options(
-                volume_handle,
-                journal_data.UsnJournalID,
-                option,
-            );
+            let usn_journal = super::UsnJournal::new_from_mount_point(&mount_point)?;
             let mut previous_usn = -1i64;
             for entry in usn_journal.iter() {
                 println!("USN entry: {:?}", entry);

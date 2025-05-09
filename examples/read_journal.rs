@@ -1,22 +1,14 @@
-use usn_journal_rs::{
-    path_resolver::PathResolver,
-    usn_journal::{self, UsnJournal},
-    utils,
-};
+use usn_journal_rs::{path_resolver::UsnJournalPathResolver, usn_journal::UsnJournal};
 
 fn main() -> anyhow::Result<()> {
     let drive_letter = 'C';
 
-    let volume_handle = utils::get_volume_handle(drive_letter)?;
+    let journal = UsnJournal::new_from_drive_letter(drive_letter)?;
 
-    let journal_data = usn_journal::query(volume_handle, true)?;
-
-    let mut journal = UsnJournal::new(volume_handle, journal_data.UsnJournalID);
-
-    let mut path_resolver = PathResolver::new(volume_handle, drive_letter);
+    let mut path_resolver = UsnJournalPathResolver::new(&journal);
 
     for entry in journal.iter() {
-        let full_path = path_resolver.resolve_path_from_usn(&entry);
+        let full_path = path_resolver.resolve_path(&entry);
         println!(
             "usn={:?}, file_id={:?}, path={:?}",
             entry.usn, entry.fid, full_path

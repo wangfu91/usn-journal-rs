@@ -1,4 +1,4 @@
-use std::{ffi::OsString, os::windows::ffi::OsStringExt};
+use std::{ffi::OsString, os::windows::ffi::OsStringExt, path::Path};
 
 /// Represents the Master File Table (MFT) enumerator for a given NTFS volume.
 ///
@@ -32,14 +32,16 @@ use std::{ffi::OsString, os::windows::ffi::OsStringExt};
 use log::warn;
 use windows::Win32::{
     Foundation::{ERROR_HANDLE_EOF, HANDLE},
-    Storage::FileSystem::FILE_FLAGS_AND_ATTRIBUTES,
+    Storage::FileSystem::{
+        FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_HIDDEN, FILE_FLAGS_AND_ATTRIBUTES,
+    },
     System::{
         IO::DeviceIoControl,
         Ioctl::{self, USN_RECORD_V2},
     },
 };
 
-use crate::{DEFAULT_BUFFER_SIZE, Usn};
+use crate::{DEFAULT_BUFFER_SIZE, Usn, utils};
 
 /// Represents a single entry in the Master File Table (MFT).
 #[derive(Debug)]
@@ -67,17 +69,16 @@ impl MftEntry {
             file_attributes: FILE_FLAGS_AND_ATTRIBUTES(record.FileAttributes),
         }
     }
-}
 
-/// Represents the Master File Table (MFT) enumerator.
-pub struct Mft {
-    volume_handle: HANDLE,
-    buffer: Vec<u8>,
-    bytes_read: u32,
-    offset: u32,
-    next_start_fid: u64,
-    low_usn: Usn,
-    high_usn: Usn,
+    /// Returns true if this entry represents a directory.
+    pub fn is_dir(&self) -> bool {
+        self.file_attributes.contains(FILE_ATTRIBUTE_DIRECTORY)
+    }
+
+    /// Returns true if this entry represents a hidden file or directory.
+    pub fn is_hidden(&self) -> bool {
+        self.file_attributes.contains(FILE_ATTRIBUTE_HIDDEN)
+    }
 }
 
 /// Options for enumerating the Master File Table (MFT).
@@ -99,39 +100,70 @@ impl Default for EnumOptions {
     }
 }
 
+/// Represents the Master File Table (MFT) enumerator.
+pub struct Mft {
+    pub(crate) volume_handle: HANDLE,
+    pub(crate) drive_letter: Option<char>,
+}
+
 impl Mft {
-    /// Creates a new MFT enumerator for the given NTFS volume handle.
-    ///
-    /// Uses default options to enumerate all records.
-    pub fn new(volume_handle: HANDLE) -> Self {
-        Mft {
+    /// Creates a new `Mft` instance with the given drive letter.
+    pub fn new_from_drive_letter(drive_letter: char) -> anyhow::Result<Self> {
+        let volume_handle = utils::get_volume_handle(drive_letter)?;
+        Ok(Mft {
             volume_handle,
+            drive_letter: Some(drive_letter),
+        })
+    }
+
+    /// Creates a new `Mft` instance with the given volume mount point.
+    pub fn new_from_mount_point(mount_point: &Path) -> anyhow::Result<Self> {
+        let volume_handle = utils::get_volume_handle_from_mount_point(mount_point)?;
+        Ok(Mft {
+            volume_handle,
+            drive_letter: None,
+        })
+    }
+
+    /// Returns an iterator over the MFT entries.
+    pub fn iter(&self) -> MftIter<'_> {
+        MftIter {
+            mft: self,
+            low_usn: 0,
+            high_usn: i64::MAX,
             buffer: vec![0u8; DEFAULT_BUFFER_SIZE],
             bytes_read: 0,
             offset: 0,
             next_start_fid: 0,
-            low_usn: 0,
-            high_usn: i64::MAX,
         }
     }
 
-    /// Creates a new MFT enumerator with custom options.
-    ///
-    /// # Arguments
-    /// * `volume_handle` - Handle to the NTFS volume.
-    /// * `options` - Enumeration options (USN range, buffer size).
-    pub fn new_with_options(volume_handle: HANDLE, options: EnumOptions) -> Self {
-        Mft {
-            volume_handle,
+    /// Returns an iterator over the MFT entries with custom options.
+    pub fn iter_with_options(&self, options: EnumOptions) -> MftIter<'_> {
+        MftIter {
+            mft: self,
+            low_usn: options.low_usn,
+            high_usn: options.high_usn,
             buffer: vec![0u8; options.buffer_size],
             bytes_read: 0,
             offset: 0,
             next_start_fid: options.low_usn as u64,
-            low_usn: options.low_usn,
-            high_usn: options.high_usn,
         }
     }
+}
 
+/// Iterator over MFT entries.
+pub struct MftIter<'a> {
+    mft: &'a Mft,
+    low_usn: Usn,
+    high_usn: Usn,
+    buffer: Vec<u8>,
+    bytes_read: u32,
+    offset: u32,
+    next_start_fid: u64,
+}
+
+impl MftIter<'_> {
     /// Reads the next chunk of MFT data into the buffer.
     ///
     /// Returns `Ok(true)` if data was read, `Ok(false)` if EOF, or an error.
@@ -146,7 +178,7 @@ impl Mft {
 
         if let Err(err) = unsafe {
             DeviceIoControl(
-                self.volume_handle,
+                self.mft.volume_handle,
                 Ioctl::FSCTL_ENUM_USN_DATA,
                 Some(&mft_enum_data as *const _ as _),
                 size_of::<Ioctl::MFT_ENUM_DATA_V0>() as u32,
@@ -196,23 +228,13 @@ impl Mft {
         // EOF, no more data to read
         Ok(None)
     }
-
-    /// Returns an iterator over the MFT entries.
-    pub fn iter(&mut self) -> MftIter<'_> {
-        MftIter { mft: self }
-    }
-}
-
-/// Iterator over MFT entries.
-pub struct MftIter<'a> {
-    mft: &'a mut Mft,
 }
 
 impl Iterator for MftIter<'_> {
     type Item = MftEntry;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match self.mft.find_next_entry() {
+        match self.find_next_entry() {
             Ok(Some(record)) => Some(MftEntry::new(record)),
             Ok(None) => None,
             Err(err) => {
@@ -225,10 +247,7 @@ impl Iterator for MftIter<'_> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        tests_utils::{setup, teardown},
-        utils,
-    };
+    use crate::tests_utils::{setup, teardown};
 
     use super::*;
 
@@ -238,8 +257,7 @@ mod tests {
         let (mount_point, uuid) = setup()?;
 
         let result = {
-            let volume_handle = utils::get_volume_handle_from_mount_point(mount_point.as_path())?;
-            let mut mft = Mft::new(volume_handle);
+            let mft = Mft::new_from_mount_point(mount_point.as_path())?;
             for entry in mft.iter() {
                 println!("MFT entry: {:?}", entry);
                 // Check if the Mft entry is valid

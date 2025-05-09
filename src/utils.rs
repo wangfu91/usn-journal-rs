@@ -120,7 +120,7 @@ pub fn get_volume_handle_from_mount_point(mount_point: &Path) -> anyhow::Result<
 ///
 /// # Arguments
 /// * `volume_handle` - Handle to the NTFS volume.
-/// * `drive_letter` - The drive letter (e.g., 'C').
+/// * `drive_letter` - The drive letter (e.g., 'C'), Optional.
 /// * `file_id` - The file ID to resolve.
 ///
 /// # Returns
@@ -128,7 +128,7 @@ pub fn get_volume_handle_from_mount_point(mount_point: &Path) -> anyhow::Result<
 /// * `Err(anyhow::Error)` - If the path cannot be resolved.
 pub fn file_id_to_path(
     volume_handle: HANDLE,
-    drive_letter: char,
+    drive_letter: Option<char>,
     file_id: u64,
 ) -> anyhow::Result<PathBuf> {
     let file_id_desc = FILE_ID_DESCRIPTOR {
@@ -191,16 +191,21 @@ pub fn file_id_to_path(
     let name_len = info.FileNameLength as usize / size_of::<u16>();
     let name_u16 = unsafe { std::slice::from_raw_parts(info.FileName.as_ptr(), name_len) };
     let sub_path = OsString::from_wide(name_u16);
-    // Only convert to uppercase if it's lowercase
-    let drive_char = if drive_letter.is_ascii_lowercase() {
-        drive_letter.to_ascii_uppercase()
-    } else {
-        drive_letter
-    };
 
     // Create the full path directly with a single allocation
     let mut full_path = PathBuf::new();
-    full_path.push(format!("{}:\\", drive_char));
+
+    if let Some(drive_letter) = drive_letter {
+        // Only convert to uppercase if it's lowercase
+        let drive_letter = if drive_letter.is_ascii_lowercase() {
+            drive_letter.to_ascii_uppercase()
+        } else {
+            drive_letter
+        };
+
+        full_path.push(format!("{}:\\", drive_letter));
+    }
+
     full_path.push(sub_path);
     Ok(full_path)
 }
