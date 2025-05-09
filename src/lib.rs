@@ -1,8 +1,9 @@
 //! # usn-journal-rs
 //!
-//! A Rust library for reading and enumerating the Windows NTFS USN (Update Sequence Number) change journal and Master File Table (MFT).
+//! A Rust library for manipulating the NTFS/ReFS USN change journal and enumerating the NTFS Master File Table (MFT).
 //!
-//! This crate provides safe, ergonomic abstractions for accessing the USN change journal and MFT records on NTFS volumes. It enables applications to efficiently monitor, enumerate, and resolve file system changes and metadata on Windows systems.
+//! This crate provides safe, ergonomic abstractions for accessing the USN change journal and MFT records on NTFS volumes.
+//! It enables applications to efficiently monitor, enumerate, and resolve file system changes and metadata on Windows systems.
 //!
 //! ## Features
 //! - Enumerate USN journal records and MFT entries as Rust iterators
@@ -12,18 +13,17 @@
 //!
 //! ## Example: Enumerate USN Journal
 //! ```rust
-//! use usn_journal_rs::{usn_journal, utils};
+//! use usn_journal_rs::{usn_journal::UsnJournal};
 //!
-//! let volume_handle = utils::get_volume_handle('C').unwrap();
-//! let journal_data = usn_journal::query(volume_handle, true).unwrap();
-//! let journal = usn_journal::UsnJournal::new(volume_handle, journal_data.UsnJournalID);
-//! for entry in journal {
-//!     println!("USN entry: {{:?}}", entry);
+//! let drive_letter = 'C';
+//! let journal = UsnJournal::new_from_drive_letter(drive_letter)?;
+//! for entry in journal.iter() {
+//!     println!("USN entry: {:?}", entry);
 //! }
 //! ```
 //!
 //! ## Platform
-//! - Windows NTFS volumes only
+//! - Windows NTFS/ReFS volumes
 //! - Requires appropriate privileges to access the USN journal
 //!
 //! ## License
