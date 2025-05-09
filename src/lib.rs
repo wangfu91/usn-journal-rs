@@ -8,7 +8,6 @@
 //! ## Features
 //! - Enumerate USN journal records and MFT entries as Rust iterators
 //! - Resolve file IDs to full paths
-//! - Utilities for working with NTFS volumes and file metadata
 //! - Safe wrappers over Windows API calls
 //!
 //! ## Example: Enumerate USN Journal
