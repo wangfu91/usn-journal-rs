@@ -285,6 +285,7 @@ fn query_core(volume_handle: HANDLE) -> Result<USN_JOURNAL_DATA_V0, windows::cor
         // https://learn.microsoft.com/en-us/windows/win32/fileio/using-the-change-journal-identifier
         // To obtain the identifier of the current change journal on a specified volume,
         // use the FSCTL_QUERY_USN_JOURNAL control code.
+        //
         // To perform this and all other change journal operations,
         // you must have system administrator privileges.
         // That is, you must be a member of the Administrators group.
