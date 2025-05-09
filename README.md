@@ -40,7 +40,7 @@ use usn_journal_rs::mft::Mft;
 let drive_letter = 'C';
 let mft = Mft::new_from_drive_letter(drive_letter).unwrap();
 for entry in mft.iter().take(10) {
-    println!("{:?}", entry);
+    println!("MFT entry: {:?}", entry);
 }
 ```
 
