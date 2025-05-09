@@ -38,6 +38,7 @@ use windows::Win32::{
 
 use crate::{DEFAULT_BUFFER_SIZE, Usn, usn_entry::UsnEntry};
 
+/// Represents the Master File Table (MFT) enumerator.
 pub struct Mft {
     volume_handle: HANDLE,
     buffer: Vec<u8>,

@@ -19,6 +19,7 @@ use windows::Win32::{
 
 use crate::utils;
 
+/// Represents a USN entry in the USN journal.
 #[derive(Debug)]
 pub struct UsnEntry {
     pub usn: i64,
