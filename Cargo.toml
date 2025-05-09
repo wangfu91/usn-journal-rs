@@ -8,6 +8,9 @@ repository = "https://github.com/wangfu91/usn-journal-rs"
 keywords = ["usn-journal", "filesystem", "ntfs", "mft", "refs"]
 categories = ["filesystem", "os::windows-apis"]
 
+[package.metadata.docs.rs]
+targets = ["x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc", "i686-pc-windows-msvc"]
+
 [dependencies]
 anyhow = "1.0"
 log = "0.4"
