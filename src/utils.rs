@@ -1,5 +1,7 @@
+//! Utility functions for NTFS volume and file ID handling.
+
 use std::{
-    ffi::{OsString, c_void},
+    ffi::{c_void, OsString},
     os::windows::ffi::OsStringExt,
     path::{Path, PathBuf},
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -8,24 +10,25 @@ use std::{
 use anyhow::Context;
 use log::{debug, warn};
 use windows::{
+    core::HSTRING,
     Win32::{
         Foundation::{self, HANDLE},
         Storage::FileSystem::{
-            self, CreateFileW, FILE_FLAGS_AND_ATTRIBUTES, FILE_GENERIC_READ, FILE_ID_DESCRIPTOR,
-            FILE_SHARE_READ, FILE_SHARE_WRITE, GetVolumeNameForVolumeMountPointW, OPEN_EXISTING,
+            self, CreateFileW, GetVolumeNameForVolumeMountPointW, FILE_FLAGS_AND_ATTRIBUTES,
+            FILE_GENERIC_READ, FILE_ID_DESCRIPTOR, FILE_SHARE_READ, FILE_SHARE_WRITE,
+            OPEN_EXISTING,
         },
     },
-    core::HSTRING,
 };
 
-/// Obtain a handle to a volume for USN change journal operations using a drive letter.
+/// Opens a handle to an NTFS volume for USN change journal operations using a drive letter.
 ///
 /// # Arguments
-/// * `drive_letter` - The drive letter of the volume (e.g., 'C').
+/// * `drive_letter` - The drive letter of the NTFS volume (e.g., 'C').
 ///
 /// # Returns
-/// * `Ok(HANDLE)` - Handle to the volume.
-/// * `Err(anyhow::Error)` - If the handle cannot be obtained.
+/// * `Ok(HANDLE)` - Handle to the NTFS volume.
+/// * `Err(anyhow::Error)` - If the handle cannot be opened.
 pub fn get_volume_handle(drive_letter: char) -> anyhow::Result<HANDLE> {
     // https://learn.microsoft.com/en-us/windows/win32/fileio/obtaining-a-volume-handle-for-change-journal-operations
     // To obtain a handle to a volume for use with update sequence number (USN) change journal operations,
@@ -55,14 +58,14 @@ pub fn get_volume_handle(drive_letter: char) -> anyhow::Result<HANDLE> {
     Ok(volume_handle)
 }
 
-/// Obtain a handle to a volume for USN change journal operations using a mount point path.
+/// Opens a handle to an NTFS volume for USN change journal operations using a mount point path.
 ///
 /// # Arguments
 /// * `mount_point` - Path to the mount point (e.g., `C:\` or a mounted folder).
 ///
 /// # Returns
-/// * `Ok(HANDLE)` - Handle to the volume.
-/// * `Err(anyhow::Error)` - If the handle cannot be obtained.
+/// * `Ok(HANDLE)` - Handle to the NTFS volume.
+/// * `Err(anyhow::Error)` - If the handle cannot be opened.
 pub fn get_volume_handle_from_mount_point(mount_point: &Path) -> anyhow::Result<HANDLE> {
     // GetVolumeNameForVolumeMountPointW requires trailing backslash
     let mount_path = format!("{}\\", mount_point.to_string_lossy());
@@ -116,15 +119,15 @@ pub fn get_volume_handle_from_mount_point(mount_point: &Path) -> anyhow::Result<
     Ok(volume_handle)
 }
 
-/// Resolve a file ID to its full path on the given volume.
+/// Resolves a file ID to its full path on the specified NTFS volume.
 ///
 /// # Arguments
 /// * `volume_handle` - Handle to the NTFS volume.
-/// * `drive_letter` - The drive letter (e.g., 'C'), Optional.
+/// * `drive_letter` - Optional drive letter (e.g., 'C').
 /// * `file_id` - The file ID to resolve.
 ///
 /// # Returns
-/// * `Ok(PathBuf)` - The resolved full path.
+/// * `Ok(PathBuf)` - The resolved absolute path.
 /// * `Err(anyhow::Error)` - If the path cannot be resolved.
 pub fn file_id_to_path(
     volume_handle: HANDLE,
@@ -210,11 +213,11 @@ pub fn file_id_to_path(
     Ok(full_path)
 }
 
-/// Convert a Windows FILETIME (number of 100-nanosecond intervals since 1601-01-01 UTC)
+/// Converts a Windows FILETIME (100-nanosecond intervals since 1601-01-01 UTC)
 /// to a `std::time::SystemTime`.
 ///
 /// # Arguments
-/// * `filetime` - The FILETIME value as i64.
+/// * `filetime` - FILETIME value as i64.
 ///
 /// # Returns
 /// * `Ok(SystemTime)` - The corresponding system time.
