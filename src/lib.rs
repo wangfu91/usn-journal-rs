@@ -16,9 +16,20 @@
 //! use usn_journal_rs::{usn_journal::UsnJournal};
 //!
 //! let drive_letter = 'C';
-//! let journal = UsnJournal::new_from_drive_letter(drive_letter)?;
-//! for entry in journal.iter() {
+//! let journal = UsnJournal::new_from_drive_letter(drive_letter).unwrap();
+//! for entry in journal.iter().take(10) {
 //!     println!("USN entry: {:?}", entry);
+//! }
+//! ```
+//!
+//! # Example: Enumerating MFT Entries
+//! ```rust
+//! use usn_journal_rs::mft::Mft;
+//!
+//! let drive_letter = 'C';
+//! let mft = Mft::new_from_drive_letter(drive_letter).unwrap();
+//! for entry in mft.iter().take(10) {
+//!     println!("{:?}", entry);
 //! }
 //! ```
 //!
@@ -31,16 +42,13 @@
 
 pub mod mft;
 pub mod path_resolver;
-mod tests_utils;
-pub mod usn_entry;
+mod test_utils;
 pub mod usn_journal;
 pub mod utils;
 
 pub type Usn = i64;
 
 pub(crate) const DEFAULT_BUFFER_SIZE: usize = 64 * 1024; // 64KB
-
 pub const DEFAULT_JOURNAL_MAX_SIZE: u64 = 32 * 1024 * 1024; // 32MB
 pub const DEFAULT_JOURNAL_ALLOCATION_DELTA: u64 = 8 * 1024 * 1024; // 4MB
-
 pub const USN_REASON_MASK_ALL: u32 = 0xFFFFFFFF;

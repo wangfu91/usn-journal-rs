@@ -1,7 +1,5 @@
 #![allow(dead_code)]
-
 use std::path::PathBuf;
-
 use uuid::Uuid;
 
 pub(crate) const VHD_MOUNT_POINT_BASE: &str = "test-vhd-mount-point";
@@ -9,13 +7,8 @@ pub(crate) const VHD_NAME_BASE_NAME: &str = "usn-journal-test";
 pub(crate) const VHD_EXT: &str = "vhdx";
 
 pub(crate) fn get_workspace_root() -> anyhow::Result<PathBuf> {
-    let workspace_root = std::env::var("CARGO_WORKSPACE_DIR").or_else(|_| {
-        let crate_dir = std::env::var("CARGO_MANIFEST_DIR")?;
-        std::path::Path::new(&crate_dir)
-            .parent()
-            .map(|p| p.to_string_lossy().to_string())
-            .ok_or(std::env::VarError::NotPresent)
-    })?;
+    let workspace_root =
+        std::env::var("CARGO_WORKSPACE_DIR").or_else(|_| std::env::var("CARGO_MANIFEST_DIR"))?;
     println!("Current workspace root: {}", workspace_root);
 
     Ok(PathBuf::from(workspace_root))
@@ -28,7 +21,7 @@ pub(crate) fn setup() -> anyhow::Result<(PathBuf, Uuid)> {
     const SETUP_SCRIPT_NAME: &str = "test-setup.ps1";
 
     let workspace_root = get_workspace_root()?;
-    let script_path = workspace_root.join(SETUP_SCRIPT_NAME);
+    let script_path = workspace_root.join("tests").join(SETUP_SCRIPT_NAME);
 
     let uuid = Uuid::new_v4();
     let mount_point = workspace_root
@@ -93,7 +86,7 @@ pub(crate) fn teardown(uuid: Uuid) -> anyhow::Result<()> {
     const TEARDOWN_SCRIPT_NAME: &str = "test-teardown.ps1";
 
     let workspace_root = get_workspace_root()?;
-    let script_path = workspace_root.join(TEARDOWN_SCRIPT_NAME);
+    let script_path = workspace_root.join("tests").join(TEARDOWN_SCRIPT_NAME);
 
     let mount_point = workspace_root
         .join("target")
