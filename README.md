@@ -1,3 +1,7 @@
+[![Crates.io](https://img.shields.io/crates/v/usn-journal-rs.svg)](https://crates.io/crates/usn-journal-rs)
+[![Docs.rs](https://docs.rs/usn-journal-rs/badge.svg)](https://docs.rs/usn-journal-rs)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 # usn-journal-rs 🚀
 
 A Rust library for working with the Windows NTFS/ReFS USN change journal and enumerating the NTFS Master File Table (MFT).
@@ -8,13 +12,15 @@ A Rust library for working with the Windows NTFS/ReFS USN change journal and enu
 
 ## Features ✨
 
-- 🔍 Read and enumerate USN journal records
+- 🔍 Read and monitor USN journal records
 - 📂 Enumerate NTFS MFT entries
 - 🏷️ Resolve file IDs to full paths
 - 🦀 High-level, idiomatic Rust API
 - 🛡️ Safe abstractions over Windows FFI
 
-## Example: Enumerate USN Journal
+## Examples 🧑‍💻
+
+### Enumerate USN Journal
 
 ```rust
 use usn_journal_rs::{usn_journal::UsnJournal};
@@ -26,7 +32,7 @@ for entry in journal.iter().take(10) {
 }
 ```
 
-## Example: Enumerate MFT Entries
+### Enumerate MFT Entries
 
 ```rust
 use usn_journal_rs::mft::Mft;
@@ -37,6 +43,14 @@ for entry in mft.iter().take(10) {
     println!("{:?}", entry);
 }
 ```
+
+You can find more usage examples in the [`examples/`](examples/) directory. To run an example, use:
+
+```sh
+cargo run --example change_monitor
+```
+
+Replace `change_monitor` with any example file name in the directory.
 
 ## Platform Support 🖥️
 
@@ -68,3 +82,7 @@ Contributions are welcome! Please open issues or pull requests on [GitHub](https
 ## License 📝
 
 MIT License. See [LICENSE](LICENSE) for details.
+
+---
+
+> **Note:** This crate is Windows-only.
