@@ -18,7 +18,7 @@
 //! # Errors
 //! Errors encountered during enumeration are logged and cause the iterator to end.
 
-use crate::{DEFAULT_BUFFER_SIZE, Usn, utils};
+use crate::{utils, Usn, DEFAULT_BUFFER_SIZE};
 use log::warn;
 use std::{ffi::OsString, os::windows::ffi::OsStringExt, path::Path};
 use windows::Win32::{
@@ -27,8 +27,8 @@ use windows::Win32::{
         FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_HIDDEN, FILE_FLAGS_AND_ATTRIBUTES,
     },
     System::{
-        IO::DeviceIoControl,
         Ioctl::{self, USN_RECORD_V2},
+        IO::DeviceIoControl,
     },
 };
 
