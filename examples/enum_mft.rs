@@ -5,12 +5,12 @@ fn main() -> anyhow::Result<()> {
 
     let volume_handle = utils::get_volume_handle(drive_letter)?;
 
-    let mft = Mft::new(volume_handle);
+    let mut mft = Mft::new(volume_handle);
 
     let mut path_resolver = PathResolver::new(volume_handle, drive_letter);
 
-    for entry in mft {
-        let full_path = path_resolver.resolve_path(&entry);
+    for entry in mft.iter() {
+        let full_path = path_resolver.resolve_path_from_mft(&entry);
         println!("fid={:?}, path={:?}", entry.fid, full_path);
     }
 

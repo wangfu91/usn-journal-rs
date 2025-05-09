@@ -1,3 +1,5 @@
+use std::{ffi::OsString, os::windows::ffi::OsStringExt};
+
 /// Represents the Master File Table (MFT) enumerator for a given NTFS volume.
 ///
 /// The `Mft` struct provides an iterator interface to enumerate USN (Update Sequence Number) records
@@ -15,7 +17,7 @@
 ///
 /// # Usage
 /// Create an `Mft` instance using [`Mft::new`] or [`Mft::new_with_options`], then iterate over it to
-/// retrieve [`UsnEntry`] items representing MFT records.
+/// retrieve [`MftEntry`] items representing MFT records.
 ///
 /// # Example
 /// ```rust
@@ -30,13 +32,42 @@
 use log::warn;
 use windows::Win32::{
     Foundation::{ERROR_HANDLE_EOF, HANDLE},
+    Storage::FileSystem::FILE_FLAGS_AND_ATTRIBUTES,
     System::{
         IO::DeviceIoControl,
         Ioctl::{self, USN_RECORD_V2},
     },
 };
 
-use crate::{DEFAULT_BUFFER_SIZE, Usn, usn_entry::UsnEntry};
+use crate::{DEFAULT_BUFFER_SIZE, Usn};
+
+/// Represents a single entry in the Master File Table (MFT).
+#[derive(Debug)]
+pub struct MftEntry {
+    pub usn: Usn,
+    pub fid: u64,
+    pub parent_fid: u64,
+    pub file_name: OsString,
+    pub file_attributes: FILE_FLAGS_AND_ATTRIBUTES,
+}
+
+impl MftEntry {
+    /// Creates a new `MftEntry` from a raw USN_RECORD_V2 record.
+    pub(crate) fn new(record: &USN_RECORD_V2) -> Self {
+        let file_name_len = record.FileNameLength as usize / std::mem::size_of::<u16>();
+        let file_name_data =
+            unsafe { std::slice::from_raw_parts(record.FileName.as_ptr(), file_name_len) };
+        let file_name = OsString::from_wide(file_name_data);
+
+        MftEntry {
+            usn: record.Usn,
+            fid: record.FileReferenceNumber,
+            parent_fid: record.ParentFileReferenceNumber,
+            file_name,
+            file_attributes: FILE_FLAGS_AND_ATTRIBUTES(record.FileAttributes),
+        }
+    }
+}
 
 /// Represents the Master File Table (MFT) enumerator.
 pub struct Mft {
@@ -165,14 +196,24 @@ impl Mft {
         // EOF, no more data to read
         Ok(None)
     }
+
+    /// Returns an iterator over the MFT entries.
+    pub fn iter(&mut self) -> MftIter<'_> {
+        MftIter { mft: self }
+    }
 }
 
-impl Iterator for Mft {
-    type Item = UsnEntry;
+/// Iterator over MFT entries.
+pub struct MftIter<'a> {
+    mft: &'a mut Mft,
+}
+
+impl Iterator for MftIter<'_> {
+    type Item = MftEntry;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match self.find_next_entry() {
-            Ok(Some(record)) => Some(UsnEntry::new(record)),
+        match self.mft.find_next_entry() {
+            Ok(Some(record)) => Some(MftEntry::new(record)),
             Ok(None) => None,
             Err(err) => {
                 warn!("Error finding next MFT entry: {}", err);
@@ -198,15 +239,14 @@ mod tests {
 
         let result = {
             let volume_handle = utils::get_volume_handle_from_mount_point(mount_point.as_path())?;
-            let mft = Mft::new(volume_handle);
-            for entry in mft {
+            let mut mft = Mft::new(volume_handle);
+            for entry in mft.iter() {
                 println!("MFT entry: {:?}", entry);
-                // Check if the USN entry is valid
+                // Check if the Mft entry is valid
                 assert!(entry.usn >= 0, "USN is not valid");
                 assert!(entry.fid > 0, "File ID is not valid");
                 assert!(!entry.file_name.is_empty(), "File name is not valid");
                 assert!(entry.parent_fid > 0, "Parent File ID is not valid");
-                assert!(entry.reason == 0, "Reason is not valid");
                 assert!(entry.file_attributes.0 > 0, "File attributes are not valid");
             }
 

@@ -16,7 +16,7 @@ fn main() -> anyhow::Result<()> {
     let mut path_resolver = PathResolver::new(volume_handle, drive_letter);
 
     for entry in journal {
-        let full_path = path_resolver.resolve_path(&entry);
+        let full_path = path_resolver.resolve_path_from_usn(&entry);
         println!(
             "usn={:?}, file_id={:?}, path={:?}",
             entry.usn, entry.fid, full_path

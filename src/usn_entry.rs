@@ -17,12 +17,12 @@ use windows::Win32::{
     System::Ioctl::USN_RECORD_V2,
 };
 
-use crate::utils;
+use crate::{Usn, utils};
 
 /// Represents a USN entry in the USN journal.
 #[derive(Debug)]
 pub struct UsnEntry {
-    pub usn: i64,
+    pub usn: Usn,
     pub time: SystemTime,
     pub fid: u64,
     pub parent_fid: u64,
@@ -40,7 +40,7 @@ impl UsnEntry {
     ///
     /// # Returns
     /// A parsed `UsnEntry` with decoded fields and file name.
-    pub fn new(record: &USN_RECORD_V2) -> Self {
+    pub(crate) fn new(record: &USN_RECORD_V2) -> Self {
         let file_name_len = record.FileNameLength as usize / std::mem::size_of::<u16>();
 
         // https://learn.microsoft.com/en-us/windows/win32/api/winioctl/ns-winioctl-usn_record_v2
