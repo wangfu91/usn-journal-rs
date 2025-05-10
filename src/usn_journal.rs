@@ -17,13 +17,13 @@
 
 use crate::utils;
 use crate::{
-    DEFAULT_BUFFER_SIZE, DEFAULT_JOURNAL_ALLOCATION_DELTA, DEFAULT_JOURNAL_MAX_SIZE,
-    USN_REASON_MASK_ALL, Usn,
+    Usn, DEFAULT_BUFFER_SIZE, DEFAULT_JOURNAL_ALLOCATION_DELTA, DEFAULT_JOURNAL_MAX_SIZE,
+    USN_REASON_MASK_ALL,
 };
 use anyhow::Context;
 use log::{debug, warn};
-use std::{ffi::OsString, os::windows::ffi::OsStringExt, time::SystemTime};
 use std::{ffi::c_void, mem::size_of};
+use std::{ffi::OsString, os::windows::ffi::OsStringExt, time::SystemTime};
 use windows::Win32::Storage::FileSystem::{
     FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_HIDDEN, FILE_FLAGS_AND_ATTRIBUTES,
 };
@@ -40,13 +40,13 @@ use windows::Win32::System::Ioctl::{
 use windows::Win32::{
     Foundation::{ERROR_HANDLE_EOF, ERROR_JOURNAL_NOT_ACTIVE, HANDLE},
     System::{
-        IO::DeviceIoControl,
         Ioctl::{
             CREATE_USN_JOURNAL_DATA, DELETE_USN_JOURNAL_DATA, FSCTL_CREATE_USN_JOURNAL,
             FSCTL_DELETE_USN_JOURNAL, FSCTL_QUERY_USN_JOURNAL, FSCTL_READ_USN_JOURNAL,
-            READ_USN_JOURNAL_DATA_V0, USN_DELETE_FLAG_DELETE, USN_DELETE_FLAG_NOTIFY,
-            USN_DELETE_FLAGS, USN_JOURNAL_DATA_V0, USN_RECORD_V2,
+            READ_USN_JOURNAL_DATA_V0, USN_DELETE_FLAGS, USN_DELETE_FLAG_DELETE,
+            USN_DELETE_FLAG_NOTIFY, USN_JOURNAL_DATA_V0, USN_RECORD_V2,
         },
+        IO::DeviceIoControl,
     },
 };
 
@@ -387,7 +387,7 @@ pub struct UsnEntry {
     pub reason: u32,
     pub source_info: u32,
     pub file_name: OsString,
-    pub file_attributes: FILE_FLAGS_AND_ATTRIBUTES,
+    pub file_attributes: u32,
 }
 
 impl UsnEntry {
@@ -421,18 +421,20 @@ impl UsnEntry {
             reason: record.Reason,
             source_info: record.SourceInfo,
             file_name,
-            file_attributes: FILE_FLAGS_AND_ATTRIBUTES(record.FileAttributes),
+            file_attributes: record.FileAttributes,
         }
     }
 
     /// Returns true if this entry represents a directory.
     pub fn is_dir(&self) -> bool {
-        self.file_attributes.contains(FILE_ATTRIBUTE_DIRECTORY)
+        let attributes = FILE_FLAGS_AND_ATTRIBUTES(self.file_attributes);
+        attributes.contains(FILE_ATTRIBUTE_DIRECTORY)
     }
 
     /// Returns true if this entry represents a hidden file or directory.
     pub fn is_hidden(&self) -> bool {
-        self.file_attributes.contains(FILE_ATTRIBUTE_HIDDEN)
+        let attributes = FILE_FLAGS_AND_ATTRIBUTES(self.file_attributes);
+        attributes.contains(FILE_ATTRIBUTE_HIDDEN)
     }
 
     /// Converts a USN reason bitfield to a human-readable string using Windows constants.
@@ -521,9 +523,8 @@ impl UsnEntry {
 #[cfg(test)]
 mod tests {
     use crate::{
-        DEFAULT_JOURNAL_ALLOCATION_DELTA, DEFAULT_JOURNAL_MAX_SIZE,
         test_utils::{setup, teardown},
-        utils,
+        utils, DEFAULT_JOURNAL_ALLOCATION_DELTA, DEFAULT_JOURNAL_MAX_SIZE,
     };
     use anyhow::Ok;
 

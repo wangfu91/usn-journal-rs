@@ -39,7 +39,7 @@ pub struct MftEntry {
     pub fid: u64,
     pub parent_fid: u64,
     pub file_name: OsString,
-    pub file_attributes: FILE_FLAGS_AND_ATTRIBUTES,
+    pub file_attributes: u32,
 }
 
 impl MftEntry {
@@ -55,18 +55,20 @@ impl MftEntry {
             fid: record.FileReferenceNumber,
             parent_fid: record.ParentFileReferenceNumber,
             file_name,
-            file_attributes: FILE_FLAGS_AND_ATTRIBUTES(record.FileAttributes),
+            file_attributes: record.FileAttributes,
         }
     }
 
     /// Returns true if this entry represents a directory.
     pub fn is_dir(&self) -> bool {
-        self.file_attributes.contains(FILE_ATTRIBUTE_DIRECTORY)
+        let attributes = FILE_FLAGS_AND_ATTRIBUTES(self.file_attributes);
+        attributes.contains(FILE_ATTRIBUTE_DIRECTORY)
     }
 
     /// Returns true if this entry represents a hidden file or directory.
     pub fn is_hidden(&self) -> bool {
-        self.file_attributes.contains(FILE_ATTRIBUTE_HIDDEN)
+        let attributes = FILE_FLAGS_AND_ATTRIBUTES(self.file_attributes);
+        attributes.contains(FILE_ATTRIBUTE_HIDDEN)
     }
 }
 
