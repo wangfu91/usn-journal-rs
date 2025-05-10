@@ -611,7 +611,7 @@ mod tests {
                 assert!(!entry.file_name.is_empty(), "File name is not valid");
                 assert!(entry.parent_fid > 0, "Parent File ID is not valid");
                 assert!(entry.reason > 0, "Reason is not valid");
-                assert!(entry.file_attributes.0 > 0, "File attributes are not valid");
+                assert!(entry.file_attributes > 0, "File attributes are not valid");
                 assert!(entry.time > std::time::UNIX_EPOCH, "Time is not valid");
 
                 previous_usn = entry.usn;
