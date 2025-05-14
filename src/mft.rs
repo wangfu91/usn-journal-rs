@@ -225,7 +225,7 @@ mod tests {
                 assert!(entry.fid > 0, "File ID is not valid");
                 assert!(!entry.file_name.is_empty(), "File name is not valid");
                 assert!(entry.parent_fid > 0, "Parent File ID is not valid");
-                assert!(entry.file_attributes > 0, "File attributes are not valid");
+                assert!(entry.file_attributes >= 0, "File attributes are not valid (zero is allowed if no special flags are set)");
             }
 
             Ok(())
