@@ -59,14 +59,6 @@ Replace `change_monitor` with any example file name in the directory.
 - 🪟 **Windows** NTFS/ReFS volumes
 - 🔑 Requires appropriate privileges to access the USN journal or MFT.
 
-## Installation 📦
-
-Add the following to your `Cargo.toml`:
-
-```toml
-usn-journal-rs = "0.1"
-```
-
 ## Documentation 📚
 
 See [docs.rs/usn-journal-rs](https://docs.rs/usn-journal-rs) for full API documentation.
