@@ -18,8 +18,7 @@
 //! # Errors
 //! Errors encountered during enumeration are logged and cause the iterator to end.
 
-use crate::{utils, Usn, DEFAULT_BUFFER_SIZE};
-use log::warn;
+use crate::{errors::UsnError, volume, Usn, DEFAULT_BUFFER_SIZE};
 use std::{ffi::OsString, os::windows::ffi::OsStringExt, path::Path};
 use windows::Win32::{
     Foundation::{ERROR_HANDLE_EOF, HANDLE},
@@ -99,8 +98,8 @@ pub struct Mft {
 
 impl Mft {
     /// Creates a new `Mft` instance with the given drive letter.
-    pub fn new_from_drive_letter(drive_letter: char) -> anyhow::Result<Self> {
-        let volume_handle = utils::get_volume_handle(drive_letter)?;
+    pub fn new_from_drive_letter(drive_letter: char) -> Result<Self, UsnError> {
+        let volume_handle = volume::get_volume_handle(drive_letter)?;
         Ok(Mft {
             volume_handle,
             drive_letter: Some(drive_letter),
@@ -108,8 +107,8 @@ impl Mft {
     }
 
     /// Creates a new `Mft` instance with the given volume mount point.
-    pub fn new_from_mount_point(mount_point: &Path) -> anyhow::Result<Self> {
-        let volume_handle = utils::get_volume_handle_from_mount_point(mount_point)?;
+    pub fn new_from_mount_point(mount_point: &Path) -> Result<Self, UsnError> {
+        let volume_handle = volume::get_volume_handle_from_mount_point(mount_point)?;
         Ok(Mft {
             volume_handle,
             drive_letter: None,
@@ -158,7 +157,7 @@ impl MftIter<'_> {
     /// Reads the next chunk of MFT data into the buffer.
     ///
     /// Returns `Ok(true)` if data was read, `Ok(false)` if EOF, or an error.
-    fn get_data(&mut self) -> anyhow::Result<bool> {
+    fn get_data(&mut self) -> Result<bool, UsnError> {
         // To enumerate files on a volume, use the FSCTL_ENUM_USN_DATA operation one or more times.
         // On the first call, set the starting point, the StartFileReferenceNumber member of the MFT_ENUM_DATA structure, to (DWORDLONG)0.
         let mft_enum_data = Ioctl::MFT_ENUM_DATA_V0 {
@@ -182,18 +181,15 @@ impl MftIter<'_> {
             if err.code() == ERROR_HANDLE_EOF.into() {
                 return Ok(false);
             }
-
-            warn!("Error reading MFT data: {}", err);
-            return Err(err.into());
+            return Err(UsnError::WinApiError(err));
         }
-
         Ok(true)
     }
 
     /// Finds the next USN record in the buffer, reading more data if needed.
     ///
     /// Returns `Ok(Some(&USN_RECORD_V2))` if a record is found, `Ok(None)` if EOF, or an error.
-    fn find_next_entry(&mut self) -> anyhow::Result<Option<&USN_RECORD_V2>> {
+    fn find_next_entry(&mut self) -> Result<Option<&USN_RECORD_V2>, UsnError> {
         if self.offset < self.bytes_read {
             let record = unsafe {
                 &*(self.buffer.as_ptr().offset(self.offset as isize) as *const USN_RECORD_V2)
@@ -228,22 +224,19 @@ impl Iterator for MftIter<'_> {
         match self.find_next_entry() {
             Ok(Some(record)) => Some(MftEntry::new(record)),
             Ok(None) => None,
-            Err(err) => {
-                warn!("Error finding next MFT entry: {}", err);
-                None
-            }
+            Err(_) => None,
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::test_utils::{setup, teardown};
+    use crate::tests::{setup, teardown};
 
     use super::*;
 
     #[test]
-    fn mft_iter_test() -> anyhow::Result<()> {
+    fn mft_iter_test() -> Result<(), super::UsnError> {
         // Setup the test environment
         let (mount_point, uuid) = setup()?;
 

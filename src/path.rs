@@ -3,13 +3,20 @@
 //! Provides types and logic to resolve full file paths from file IDs using MFT or USN journal data.
 
 use crate::{
+    journal::{UsnEntry, UsnJournal},
     mft::{Mft, MftEntry},
-    usn_journal::{UsnEntry, UsnJournal},
-    utils,
 };
 use lru::LruCache;
-use std::{ffi::OsString, num::NonZeroUsize, path::PathBuf};
-use windows::Win32::Foundation::HANDLE;
+use std::{
+    ffi::{c_void, OsString},
+    num::NonZeroUsize,
+    os::windows::ffi::OsStringExt,
+    path::PathBuf,
+};
+use windows::Win32::{
+    Foundation::{self, HANDLE},
+    Storage::FileSystem::{self, FILE_FLAGS_AND_ATTRIBUTES, FILE_ID_DESCRIPTOR},
+};
 
 const LRU_CACHE_CAPACITY: usize = 4 * 1024; // 4KB
 
@@ -124,8 +131,7 @@ impl PathResolver {
         }
 
         // If not in cache, try to get parent path from file system
-        if let Ok(parent_path) =
-            utils::file_id_to_path(self.volume_handle, self.drive_letter, parent_fid)
+        if let Ok(parent_path) = file_id_to_path(self.volume_handle, self.drive_letter, parent_fid)
         {
             let path = parent_path.join(file_name);
             self.fid_path_cache.put(parent_fid, parent_path);
@@ -135,4 +141,99 @@ impl PathResolver {
 
         None
     }
+}
+
+/// Resolves a file ID to its full path on the specified NTFS volume.
+///
+/// # Arguments
+/// * `volume_handle` - Handle to the NTFS volume.
+/// * `drive_letter` - Optional drive letter (e.g., 'C').
+/// * `file_id` - The file ID to resolve.
+///
+/// # Returns
+/// * `Ok(PathBuf)` - The resolved absolute path.
+/// * `Err(anyhow::Error)` - If the path cannot be resolved.
+pub fn file_id_to_path(
+    volume_handle: HANDLE,
+    drive_letter: Option<char>,
+    file_id: u64,
+) -> windows::core::Result<PathBuf> {
+    let file_id_desc = FILE_ID_DESCRIPTOR {
+        Type: FileSystem::FileIdType,
+        dwSize: size_of::<FileSystem::FILE_ID_DESCRIPTOR>() as u32,
+        Anonymous: FileSystem::FILE_ID_DESCRIPTOR_0 {
+            FileId: file_id.try_into()?,
+        },
+    };
+
+    let file_handle = unsafe {
+        FileSystem::OpenFileById(
+            volume_handle,
+            &file_id_desc,
+            FileSystem::FILE_GENERIC_READ.0,
+            FileSystem::FILE_SHARE_READ
+                | FileSystem::FILE_SHARE_WRITE
+                | FileSystem::FILE_SHARE_DELETE,
+            None,
+            FILE_FLAGS_AND_ATTRIBUTES::default(),
+        )?
+    };
+
+    let init_len = size_of::<u32>() + (Foundation::MAX_PATH as usize) * size_of::<u16>();
+    let mut info_buffer = vec![0u8; init_len];
+
+    loop {
+        if let Err(err) = unsafe {
+            FileSystem::GetFileInformationByHandleEx(
+                file_handle,
+                FileSystem::FileNameInfo,
+                &mut *info_buffer as *mut _ as *mut c_void,
+                info_buffer.len() as u32,
+            )
+        } {
+            if err.code() == Foundation::ERROR_MORE_DATA.into() {
+                // Long paths, needs to extend buffer size to hold it.
+                let name_info = unsafe {
+                    std::ptr::read(info_buffer.as_ptr() as *const FileSystem::FILE_NAME_INFO)
+                };
+
+                let needed_len = name_info.FileNameLength + size_of::<u32>() as u32;
+                // expand info_buffer capacity to needed_len to hold the long path
+                info_buffer.resize(needed_len as usize, 0);
+                // try again
+                continue;
+            }
+
+            return Err(err);
+        }
+
+        break;
+    }
+
+    unsafe { Foundation::CloseHandle(file_handle) }?;
+    // SAFETY: The buffer is guaranteed to be large enough for FILE_NAME_INFO
+    // and the pointer is valid for the lifetime of the buffer.
+    let info: &FileSystem::FILE_NAME_INFO =
+        unsafe { &*(info_buffer.as_ptr() as *const FileSystem::FILE_NAME_INFO) };
+
+    let name_len = info.FileNameLength as usize / size_of::<u16>();
+    let name_u16 = unsafe { std::slice::from_raw_parts(info.FileName.as_ptr(), name_len) };
+    let sub_path = OsString::from_wide(name_u16);
+
+    // Create the full path directly with a single allocation
+    let mut full_path = PathBuf::new();
+
+    if let Some(drive_letter) = drive_letter {
+        // Only convert to uppercase if it's lowercase
+        let drive_letter = if drive_letter.is_ascii_lowercase() {
+            drive_letter.to_ascii_uppercase()
+        } else {
+            drive_letter
+        };
+
+        full_path.push(format!("{}:\\", drive_letter));
+    }
+
+    full_path.push(sub_path);
+    Ok(full_path)
 }

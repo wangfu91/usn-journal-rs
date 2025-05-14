@@ -39,11 +39,14 @@
 //! ## License
 //! MIT License. See [LICENSE](https://github.com/wangfu91/usn-journal-rs/blob/main/LICENSE).
 
+pub mod errors;
+pub mod journal;
 pub mod mft;
-pub mod path_resolver;
-mod test_utils;
-pub mod usn_journal;
-pub mod utils;
+pub mod path;
+pub mod privilege;
+mod tests;
+pub mod time;
+pub mod volume;
 
 pub type Usn = i64;
 

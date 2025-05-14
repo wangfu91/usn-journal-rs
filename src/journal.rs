@@ -15,12 +15,11 @@
 //! ```
 //!
 
-use crate::utils;
+use crate::errors::UsnError;
 use crate::{
-    Usn, DEFAULT_BUFFER_SIZE, DEFAULT_JOURNAL_ALLOCATION_DELTA, DEFAULT_JOURNAL_MAX_SIZE,
-    USN_REASON_MASK_ALL,
+    time, volume, Usn, DEFAULT_BUFFER_SIZE, DEFAULT_JOURNAL_ALLOCATION_DELTA,
+    DEFAULT_JOURNAL_MAX_SIZE, USN_REASON_MASK_ALL,
 };
-use anyhow::Context;
 use log::{debug, warn};
 use std::{ffi::c_void, mem::size_of};
 use std::{ffi::OsString, os::windows::ffi::OsStringExt, time::SystemTime};
@@ -87,8 +86,8 @@ pub struct UsnJournal {
 
 impl UsnJournal {
     /// Create a new `UsnJournal` instance with the given drive letter.
-    pub fn new_from_drive_letter(drive_letter: char) -> anyhow::Result<Self> {
-        let volume_handle = crate::utils::get_volume_handle(drive_letter)?;
+    pub fn new_from_drive_letter(drive_letter: char) -> Result<Self, UsnError> {
+        let volume_handle = volume::get_volume_handle(drive_letter)?;
         let journal_data = query(volume_handle, true)?;
         Ok(UsnJournal {
             volume_handle,
@@ -99,8 +98,8 @@ impl UsnJournal {
     }
 
     /// Create a new `UsnJournal` instance with the given volume mount point.
-    pub fn new_from_mount_point(mount_point: &std::path::Path) -> anyhow::Result<Self> {
-        let volume_handle = crate::utils::get_volume_handle_from_mount_point(mount_point)?;
+    pub fn new_from_mount_point(mount_point: &std::path::Path) -> Result<Self, UsnError> {
+        let volume_handle = volume::get_volume_handle_from_mount_point(mount_point)?;
         let journal_data = query(volume_handle, true)?;
         Ok(UsnJournal {
             volume_handle,
@@ -157,7 +156,7 @@ impl UsnJournalIter<'_> {
     /// Read the next chunk of USN journal data into the buffer.
     ///
     /// Returns `Ok(true)` if data was read, `Ok(false)` if EOF, or an error.
-    fn get_data(&mut self) -> anyhow::Result<bool> {
+    fn get_data(&mut self) -> windows::core::Result<bool> {
         let read_data = READ_USN_JOURNAL_DATA_V0 {
             StartUsn: self.next_start_usn,
             ReasonMask: self.reason_mask,
@@ -184,7 +183,7 @@ impl UsnJournalIter<'_> {
             }
 
             warn!("Error reading USN data: {}", err);
-            return Err(err.into());
+            return Err(err);
         }
 
         Ok(true)
@@ -193,7 +192,7 @@ impl UsnJournalIter<'_> {
     /// Find the next USN record in the buffer, reading more data if needed.
     ///
     /// Returns `Ok(Some(&USN_RECORD_V2))` if a record is found, `Ok(None)` if EOF, or an error.
-    fn find_next_entry(&mut self) -> anyhow::Result<Option<&USN_RECORD_V2>> {
+    fn find_next_entry(&mut self) -> windows::core::Result<Option<&USN_RECORD_V2>> {
         if self.offset < self.bytes_read {
             let record = unsafe {
                 &*(self.buffer.as_ptr().offset(self.offset as isize) as *const USN_RECORD_V2)
@@ -251,7 +250,7 @@ impl Iterator for UsnJournalIter<'_> {
 pub fn query(
     volume_handle: HANDLE,
     create_if_not_active: bool,
-) -> anyhow::Result<USN_JOURNAL_DATA_V0> {
+) -> Result<USN_JOURNAL_DATA_V0, UsnError> {
     match query_core(volume_handle) {
         Err(err) => {
             if err.code() == ERROR_JOURNAL_NOT_ACTIVE.into() && create_if_not_active {
@@ -259,11 +258,9 @@ pub fn query(
                     volume_handle,
                     DEFAULT_JOURNAL_MAX_SIZE,
                     DEFAULT_JOURNAL_ALLOCATION_DELTA,
-                )
-                .context("Failed to create USN journal")?;
+                )?;
 
-                let journal_data =
-                    query_core(volume_handle).context("Failed to query USN journal")?;
+                let journal_data = query_core(volume_handle)?;
                 Ok(journal_data)
             } else {
                 warn!("Error querying USN journal: {}", err);
@@ -317,7 +314,7 @@ pub fn create_or_update(
     volume_handle: HANDLE,
     max_size: u64,
     allocation_delta: u64,
-) -> anyhow::Result<()> {
+) -> Result<(), UsnError> {
     let create_data = CREATE_USN_JOURNAL_DATA {
         MaximumSize: max_size,
         AllocationDelta: allocation_delta,
@@ -352,7 +349,7 @@ pub fn create_or_update(
 ///
 /// # Returns
 /// * `Ok(())` on success, or `Err(anyhow::Error)` on failure.
-pub fn delete(volume_handle: HANDLE, journal_id: u64) -> anyhow::Result<()> {
+pub fn delete(volume_handle: HANDLE, journal_id: u64) -> Result<(), UsnError> {
     let delete_flags: USN_DELETE_FLAGS = USN_DELETE_FLAG_DELETE | USN_DELETE_FLAG_NOTIFY;
     let delete_data = DELETE_USN_JOURNAL_DATA {
         UsnJournalID: journal_id,
@@ -411,8 +408,8 @@ impl UsnEntry {
             unsafe { std::slice::from_raw_parts(record.FileName.as_ptr(), file_name_len) };
         let file_name = OsString::from_wide(file_name_data);
 
-        let sys_time =
-            utils::filetime_to_systemtime(record.TimeStamp).unwrap_or(SystemTime::UNIX_EPOCH);
+        let sys_time = time::filetime_to_systemtime(record.TimeStamp);
+
         UsnEntry {
             usn: record.Usn,
             time: sys_time,
@@ -523,18 +520,18 @@ impl UsnEntry {
 #[cfg(test)]
 mod tests {
     use crate::{
-        test_utils::{setup, teardown},
-        utils, DEFAULT_JOURNAL_ALLOCATION_DELTA, DEFAULT_JOURNAL_MAX_SIZE,
+        errors::UsnError,
+        tests::{setup, teardown},
+        volume, DEFAULT_JOURNAL_ALLOCATION_DELTA, DEFAULT_JOURNAL_MAX_SIZE,
     };
-    use anyhow::Ok;
 
     #[test]
-    fn query_usn_journal_test() -> anyhow::Result<()> {
+    fn query_usn_journal_test() -> Result<(), UsnError> {
         // Setup the test environment
         let (mount_point, uuid) = setup()?;
 
         let result = {
-            let volume_handle = utils::get_volume_handle_from_mount_point(mount_point.as_path())?;
+            let volume_handle = volume::get_volume_handle_from_mount_point(mount_point.as_path())?;
             let journal_data = super::query(volume_handle, true)?;
             println!("USN journal data: {:?}", journal_data);
 
@@ -549,12 +546,12 @@ mod tests {
     }
 
     #[test]
-    fn delete_usn_journal_test() -> anyhow::Result<()> {
+    fn delete_usn_journal_test() -> Result<(), UsnError> {
         // Setup the test environment
         let (mount_point, uuid) = setup()?;
 
         let result = {
-            let volume_handle = utils::get_volume_handle_from_mount_point(mount_point.as_path())?;
+            let volume_handle = volume::get_volume_handle_from_mount_point(mount_point.as_path())?;
             let journal_data = super::query(volume_handle, true)?;
             println!("USN journal data: {:?}", journal_data);
             super::delete(volume_handle, journal_data.UsnJournalID)?;
@@ -570,12 +567,12 @@ mod tests {
     }
 
     #[test]
-    fn create_usn_journal_test() -> anyhow::Result<()> {
+    fn create_usn_journal_test() -> Result<(), UsnError> {
         // Setup the test environment
         let (mount_point, uuid) = setup()?;
 
         let result = {
-            let volume_handle = utils::get_volume_handle_from_mount_point(mount_point.as_path())?;
+            let volume_handle = volume::get_volume_handle_from_mount_point(mount_point.as_path())?;
             let journal_data = super::query(volume_handle, true)?;
             println!("USN journal data: {:?}", journal_data);
             super::create_or_update(
@@ -595,7 +592,7 @@ mod tests {
     }
 
     #[test]
-    fn usn_journal_iter_test() -> anyhow::Result<()> {
+    fn usn_journal_iter_test() -> Result<(), UsnError> {
         // Setup the test environment
         let (mount_point, uuid) = setup()?;
 

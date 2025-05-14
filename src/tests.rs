@@ -2,13 +2,17 @@
 use std::path::PathBuf;
 use uuid::Uuid;
 
+use crate::errors::UsnError;
+
 pub(crate) const VHD_MOUNT_POINT_BASE: &str = "test-vhd-mount-point";
 pub(crate) const VHD_NAME_BASE_NAME: &str = "usn-journal-test";
 pub(crate) const VHD_EXT: &str = "vhdx";
 
-pub(crate) fn get_workspace_root() -> anyhow::Result<PathBuf> {
-    let workspace_root =
-        std::env::var("CARGO_WORKSPACE_DIR").or_else(|_| std::env::var("CARGO_MANIFEST_DIR"))?;
+pub(crate) fn get_workspace_root() -> Result<PathBuf, UsnError> {
+    let workspace_root = std::env::var("CARGO_WORKSPACE_DIR")
+        .or_else(|_| std::env::var("CARGO_MANIFEST_DIR"))
+        .map_err(|e| UsnError::OtherError(format!("Failed to get workspace root: {}", e)))?;
+
     println!("Current workspace root: {}", workspace_root);
 
     Ok(PathBuf::from(workspace_root))
@@ -17,7 +21,7 @@ pub(crate) fn get_workspace_root() -> anyhow::Result<PathBuf> {
 /// Set up a test VHD and mount point for integration tests.
 ///
 /// Returns the mount point path and UUID. Runs a PowerShell script to create and mount a VHDX file.
-pub(crate) fn setup() -> anyhow::Result<(PathBuf, Uuid)> {
+pub(crate) fn setup() -> Result<(PathBuf, Uuid), UsnError> {
     const SETUP_SCRIPT_NAME: &str = "test-setup.ps1";
 
     let workspace_root = get_workspace_root()?;
@@ -65,11 +69,11 @@ pub(crate) fn setup() -> anyhow::Result<(PathBuf, Uuid)> {
     }
 
     if !output.status.success() {
-        return Err(anyhow::anyhow!(
+        return Err(UsnError::OtherError(format!(
             "Failed to run {}: {}",
             SETUP_SCRIPT_NAME,
             String::from_utf8_lossy(&output.stderr)
-        ));
+        )));
     }
     println!(
         "VHDX file created and mounted successfully at {}",
@@ -82,7 +86,7 @@ pub(crate) fn setup() -> anyhow::Result<(PathBuf, Uuid)> {
 /// Tear down the test VHD and mount point created by `setup`.
 ///
 /// Unmounts and deletes the VHDX file using a PowerShell script.
-pub(crate) fn teardown(uuid: Uuid) -> anyhow::Result<()> {
+pub(crate) fn teardown(uuid: Uuid) -> Result<(), UsnError> {
     const TEARDOWN_SCRIPT_NAME: &str = "test-teardown.ps1";
 
     let workspace_root = get_workspace_root()?;
@@ -125,10 +129,13 @@ pub(crate) fn teardown(uuid: Uuid) -> anyhow::Result<()> {
     }
 
     if !output.status.success() {
-        return Err(anyhow::anyhow!(
-            "Failed to run {}: {}",
-            TEARDOWN_SCRIPT_NAME,
-            String::from_utf8_lossy(&output.stderr)
+        return Err(UsnError::OtherError(
+            format!(
+                "Failed to run {}: {}",
+                TEARDOWN_SCRIPT_NAME,
+                String::from_utf8_lossy(&output.stderr)
+            )
+            .to_string(),
         ));
     }
     println!(
