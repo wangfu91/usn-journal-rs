@@ -1,14 +1,15 @@
 use usn_journal_rs::{
-    path_resolver::UsnJournalPathResolver,
-    usn_journal::{self, UsnJournal},
+    errors::UsnError,
+    journal::{self, UsnJournal},
+    path::UsnJournalPathResolver,
 };
 
-fn main() -> anyhow::Result<()> {
+fn main() -> Result<(), UsnError> {
     let drive_letter = 'C';
 
     let journal = UsnJournal::new_from_drive_letter(drive_letter)?;
 
-    let enum_options = usn_journal::EnumOptions {
+    let enum_options = journal::EnumOptions {
         start_usn: journal.next_usn,
         only_on_close: true,
         wait_for_more: true,

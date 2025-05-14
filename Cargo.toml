@@ -12,9 +12,10 @@ categories = ["filesystem", "os::windows-apis"]
 targets = ["x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc", "i686-pc-windows-msvc"]
 
 [dependencies]
-anyhow = "1.0"
+#anyhow = "1.0"
 log = "0.4"
 lru = "0.14"
+thiserror = "2.0.12"
 uuid = { version = "1.0", features = ["v4"] }
 
 [dependencies.windows]
@@ -27,4 +28,5 @@ features = [
     "Win32_System_WindowsProgramming",
     "Win32_System_Ioctl",
     "Win32_System_Time",
+    "Win32_System_Threading",
 ]

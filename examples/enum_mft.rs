@@ -1,6 +1,6 @@
-use usn_journal_rs::{mft::Mft, path_resolver::MftPathResolver};
+use usn_journal_rs::{errors::UsnError, mft::Mft, path::MftPathResolver};
 
-fn main() -> anyhow::Result<()> {
+fn main() -> Result<(), UsnError> {
     let drive_letter = 'C';
 
     let mft = Mft::new_from_drive_letter(drive_letter)?;

@@ -1,6 +1,6 @@
-use usn_journal_rs::{path_resolver::UsnJournalPathResolver, usn_journal::UsnJournal};
+use usn_journal_rs::{errors::UsnError, journal::UsnJournal, path::UsnJournalPathResolver};
 
-fn main() -> anyhow::Result<()> {
+fn main() -> Result<(), UsnError> {
     let drive_letter = 'C';
 
     let journal = UsnJournal::new_from_drive_letter(drive_letter)?;
