@@ -5,7 +5,7 @@
 //! required to sequentially retrieve and parse USN records from the volume.
 //!
 
-use crate::{errors::UsnError, volume::Volume, Usn, DEFAULT_BUFFER_SIZE};
+use crate::{DEFAULT_BUFFER_SIZE, Usn, errors::UsnError, volume::Volume};
 use std::{ffi::OsString, os::windows::ffi::OsStringExt};
 use windows::Win32::{
     Foundation::ERROR_HANDLE_EOF,
@@ -13,8 +13,8 @@ use windows::Win32::{
         FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_HIDDEN, FILE_FLAGS_AND_ATTRIBUTES,
     },
     System::{
-        Ioctl::{self, USN_RECORD_V2},
         IO::DeviceIoControl,
+        Ioctl::{self, USN_RECORD_V2},
     },
 };
 
@@ -225,7 +225,10 @@ mod tests {
                 assert!(entry.fid > 0, "File ID is not valid");
                 assert!(!entry.file_name.is_empty(), "File name is not valid");
                 assert!(entry.parent_fid > 0, "Parent File ID is not valid");
-                assert!(entry.file_attributes >= 0, "File attributes are not valid (zero is allowed if no special flags are set)");
+                assert!(
+                    entry.file_attributes > 0,
+                    "File attributes are not valid (zero is allowed if no special flags are set)"
+                );
             }
 
             Ok(())

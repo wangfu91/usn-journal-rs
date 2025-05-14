@@ -4,14 +4,14 @@ use crate::{errors::UsnError, privilege};
 use log::{debug, warn};
 use std::path::Path;
 use windows::{
-    core::HSTRING,
     Win32::{
         Foundation::{ERROR_ACCESS_DENIED, HANDLE},
         Storage::FileSystem::{
-            CreateFileW, GetVolumeNameForVolumeMountPointW, FILE_FLAGS_AND_ATTRIBUTES,
-            FILE_GENERIC_READ, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+            CreateFileW, FILE_FLAGS_AND_ATTRIBUTES, FILE_GENERIC_READ, FILE_SHARE_READ,
+            FILE_SHARE_WRITE, GetVolumeNameForVolumeMountPointW, OPEN_EXISTING,
         },
     },
+    core::HSTRING,
 };
 
 #[derive(Debug, Clone)]

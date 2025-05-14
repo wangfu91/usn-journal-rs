@@ -9,7 +9,7 @@ use crate::{
 };
 use lru::LruCache;
 use std::{
-    ffi::{c_void, OsString},
+    ffi::{OsString, c_void},
     num::NonZeroUsize,
     os::windows::ffi::OsStringExt,
     path::PathBuf,

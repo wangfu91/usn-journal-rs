@@ -2,7 +2,7 @@ use std::mem::size_of;
 
 use windows::Win32::{
     Foundation::HANDLE,
-    Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY},
+    Security::{GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation},
     System::Threading::{GetCurrentProcess, OpenProcessToken},
 };
 
