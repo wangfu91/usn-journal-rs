@@ -1,6 +1,12 @@
 use usn_journal_rs::{errors::UsnError, mft::Mft, path::MftPathResolver};
 
-fn main() -> Result<(), UsnError> {
+fn main() {
+    if let Err(e) = run() {
+        eprintln!("Error: {}", e);
+    }
+}
+
+fn run() -> Result<(), UsnError> {
     let drive_letter = 'C';
 
     let mft = Mft::new_from_drive_letter(drive_letter)?;
@@ -9,7 +15,7 @@ fn main() -> Result<(), UsnError> {
 
     for entry in mft.iter() {
         let full_path = path_resolver.resolve_path(&entry);
-        println!("fid={:?}, path={:?}", entry.fid, full_path);
+        println!("fid={}, path={:?}", entry.fid, full_path);
     }
 
     Ok(())

@@ -4,7 +4,13 @@ use usn_journal_rs::{
     path::UsnJournalPathResolver,
 };
 
-fn main() -> Result<(), UsnError> {
+fn main() {
+    if let Err(e) = run() {
+        eprintln!("Error: {}", e);
+    }
+}
+
+fn run() -> Result<(), UsnError> {
     let drive_letter = 'C';
 
     let journal = UsnJournal::new_from_drive_letter(drive_letter)?;
@@ -21,7 +27,7 @@ fn main() -> Result<(), UsnError> {
     for entry in journal.iter_with_options(enum_options) {
         let full_path = path_resolver.resolve_path(&entry);
         println!(
-            "usn={:?}, reason={:?}, path={:?}",
+            "usn={}, reason={}, path={:?}",
             entry.usn,
             entry.reason_to_string(),
             full_path

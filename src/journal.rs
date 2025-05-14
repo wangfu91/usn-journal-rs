@@ -1,18 +1,7 @@
-//! USN Journal module: provides access to the Windows NTFS Update Sequence Number (USN) change journal.
+//! Provides access to the Windows NTFS/ReFS USN change journal.
 //!
-//! This module enables querying, creating, deleting, and iterating over the USN change journal on NTFS volumes.
+//! This module enables querying, creating, deleting, and iterating over the USN change journal on NTFS/ReFS volumes.
 //! It provides safe Rust abstractions over the Windows API for monitoring file system changes efficiently.
-//!
-//! ## Example: Enumerate USN Journal
-//! ```rust
-//! use usn_journal_rs::{usn_journal::UsnJournal};
-//!
-//! let drive_letter = 'C';
-//! let journal = UsnJournal::new_from_drive_letter(drive_letter).unwrap();
-//! for entry in journal.iter().take(10) {
-//!     println!("USN entry: {:?}", entry);
-//! }
-//! ```
 //!
 
 use crate::errors::UsnError;

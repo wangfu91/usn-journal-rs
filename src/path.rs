@@ -153,7 +153,7 @@ impl PathResolver {
 /// # Returns
 /// * `Ok(PathBuf)` - The resolved absolute path.
 /// * `Err(anyhow::Error)` - If the path cannot be resolved.
-pub fn file_id_to_path(
+fn file_id_to_path(
     volume_handle: HANDLE,
     drive_letter: Option<char>,
     file_id: u64,

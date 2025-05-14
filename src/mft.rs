@@ -4,19 +4,6 @@
 //! from the MFT using the Windows FSCTL_ENUM_USN_DATA control code. It manages the buffer and state
 //! required to sequentially retrieve and parse USN records from the volume.
 //!
-//! # Example: Enumerating MFT Entries
-//! ```rust
-//! use usn_journal_rs::mft::Mft;
-//!
-//! let drive_letter = 'C';
-//! let mft = Mft::new_from_drive_letter(drive_letter).unwrap();
-//! for entry in mft.iter().take(10) {
-//!     println!("MFT entry: {:?}", entry);
-//! }
-//! ```
-//!
-//! # Errors
-//! Errors encountered during enumeration are logged and cause the iterator to end.
 
 use crate::{errors::UsnError, volume, Usn, DEFAULT_BUFFER_SIZE};
 use std::{ffi::OsString, os::windows::ffi::OsStringExt, path::Path};

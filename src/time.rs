@@ -8,7 +8,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 ///
 /// # Returns
 /// * `SystemTime` - The corresponding system time.
-pub fn filetime_to_systemtime(filetime: i64) -> SystemTime {
+pub(crate) fn filetime_to_systemtime(filetime: i64) -> SystemTime {
     // Constant defining the number of 100-nanosecond intervals between the Windows epoch (1601-01-01)
     // and the Unix epoch (1970-01-01).
     // Corrected value: 116_444_736_000_000_000
