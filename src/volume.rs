@@ -1,6 +1,6 @@
 //! Utility functions for NTFS volume.
 
-use crate::errors::UsnError;
+use crate::{errors::UsnError, privilege};
 use log::{debug, warn};
 use std::path::Path;
 use windows::{
@@ -22,7 +22,11 @@ use windows::{
 /// # Returns
 /// * `Ok(HANDLE)` - Handle to the NTFS volume.
 /// * `Err(anyhow::Error)` - If the handle cannot be opened.
-pub fn get_volume_handle(drive_letter: char) -> Result<HANDLE, UsnError> {
+pub(crate) fn get_volume_handle(drive_letter: char) -> Result<HANDLE, UsnError> {
+    if !privilege::is_elevated()? {
+        return Err(UsnError::PermissionError);
+    }
+
     // https://learn.microsoft.com/en-us/windows/win32/fileio/obtaining-a-volume-handle-for-change-journal-operations
     // To obtain a handle to a volume for use with update sequence number (USN) change journal operations,
     // call the CreateFile function with the lpFileName parameter set to a string of the following form: \\.\X:
@@ -54,7 +58,11 @@ pub fn get_volume_handle(drive_letter: char) -> Result<HANDLE, UsnError> {
 /// # Returns
 /// * `Ok(HANDLE)` - Handle to the NTFS volume.
 /// * `Err(anyhow::Error)` - If the handle cannot be opened.
-pub fn get_volume_handle_from_mount_point(mount_point: &Path) -> Result<HANDLE, UsnError> {
+pub(crate) fn get_volume_handle_from_mount_point(mount_point: &Path) -> Result<HANDLE, UsnError> {
+    if !privilege::is_elevated()? {
+        return Err(UsnError::PermissionError);
+    }
+
     // GetVolumeNameForVolumeMountPointW requires trailing backslash
     let mount_path = format!("{}\\", mount_point.to_string_lossy());
 

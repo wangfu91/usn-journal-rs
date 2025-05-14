@@ -44,7 +44,7 @@ for entry in mft.iter().take(10) {
 }
 ```
 
-You can find more usage examples in the [`examples/`](examples/) directory. To run an example, use:
+You can find more usage examples in the [`examples`](examples/) directory. To run an example, use:
 
 ```sh
 cargo run --example change_monitor
@@ -72,12 +72,6 @@ See [docs.rs/usn-journal-rs](https://docs.rs/usn-journal-rs) for full API docume
 ## Contributing 🤝
 
 Contributions are welcome! Please open issues or pull requests on [GitHub](https://github.com/wangfu91/usn-journal-rs).
-
-1. 🍴 Fork the repository
-2. 🌱 Create your feature branch (`git checkout -b feature/foo`)
-3. 💾 Commit your changes (`git commit -am 'Add new feature'`)
-4. 🚀 Push to the branch (`git push origin feature/foo`)
-5. 📬 Open a pull request
 
 ## License 📝
 
