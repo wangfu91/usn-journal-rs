@@ -1,7 +1,8 @@
 use usn_journal_rs::{
     errors::UsnError,
     journal::{self, UsnJournal},
-    path::UsnJournalPathResolver,
+    path::JournalPathResolver,
+    volume::Volume,
 };
 
 fn main() {
@@ -12,8 +13,8 @@ fn main() {
 
 fn run() -> Result<(), UsnError> {
     let drive_letter = 'C';
-
-    let journal = UsnJournal::new_from_drive_letter(drive_letter)?;
+    let volume = Volume::from_drive_letter(drive_letter)?;
+    let journal = UsnJournal::new(volume)?;
 
     let enum_options = journal::EnumOptions {
         start_usn: journal.next_usn,
@@ -22,7 +23,7 @@ fn run() -> Result<(), UsnError> {
         ..Default::default()
     };
 
-    let mut path_resolver = UsnJournalPathResolver::new(&journal);
+    let mut path_resolver = JournalPathResolver::new(&journal);
 
     for entry in journal.iter_with_options(enum_options) {
         let full_path = path_resolver.resolve_path(&entry);

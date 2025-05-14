@@ -1,4 +1,4 @@
-//! Utility functions for NTFS volume.
+//! Volume handle management for NTFS/ReFS
 
 use crate::{errors::UsnError, privilege};
 use log::{debug, warn};
@@ -14,15 +14,38 @@ use windows::{
     },
 };
 
-/// Opens a handle to an NTFS volume for USN change journal operations using a drive letter.
-///
-/// # Arguments
-/// * `drive_letter` - The drive letter of the NTFS volume (e.g., 'C').
-///
-/// # Returns
-/// * `Ok(HANDLE)` - Handle to the NTFS volume.
-/// * `Err(anyhow::Error)` - If the handle cannot be opened.
-pub(crate) fn get_volume_handle(drive_letter: char) -> Result<HANDLE, UsnError> {
+#[derive(Debug, Clone)]
+/// Represents an NTFS/ReFS volume handle and its associated drive letter or mount point.
+pub struct Volume {
+    pub(crate) handle: HANDLE,
+    pub drive_letter: Option<char>,
+    pub mount_point: Option<String>,
+}
+
+impl Volume {
+    /// Creates a new `Volume` instance with the given drive letter.
+    pub fn from_drive_letter(drive_letter: char) -> Result<Self, UsnError> {
+        let handle = get_volume_handle_from_drive_letter(drive_letter)?;
+        Ok(Volume {
+            handle,
+            drive_letter: Some(drive_letter),
+            mount_point: None,
+        })
+    }
+
+    /// Creates a new `Volume` instance with the given mount point.
+    pub fn from_mount_point(mount_point: &Path) -> Result<Self, UsnError> {
+        let handle = get_volume_handle_from_mount_point(mount_point)?;
+        Ok(Volume {
+            handle,
+            drive_letter: None,
+            mount_point: Some(mount_point.to_string_lossy().to_string()),
+        })
+    }
+}
+
+/// Opens a handle to an NTFS/ReFS volume using a drive letter.
+fn get_volume_handle_from_drive_letter(drive_letter: char) -> Result<HANDLE, UsnError> {
     if !privilege::is_elevated()? {
         return Err(UsnError::PermissionError);
     }
@@ -50,15 +73,8 @@ pub(crate) fn get_volume_handle(drive_letter: char) -> Result<HANDLE, UsnError> 
     }
 }
 
-/// Opens a handle to an NTFS volume for USN change journal operations using a mount point path.
-///
-/// # Arguments
-/// * `mount_point` - Path to the mount point (e.g., `C:\` or a mounted folder).
-///
-/// # Returns
-/// * `Ok(HANDLE)` - Handle to the NTFS volume.
-/// * `Err(anyhow::Error)` - If the handle cannot be opened.
-pub(crate) fn get_volume_handle_from_mount_point(mount_point: &Path) -> Result<HANDLE, UsnError> {
+/// Opens a handle to an NTFS/ReFS volume using a mount point path.
+fn get_volume_handle_from_mount_point(mount_point: &Path) -> Result<HANDLE, UsnError> {
     if !privilege::is_elevated()? {
         return Err(UsnError::PermissionError);
     }

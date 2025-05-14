@@ -1,14 +1,14 @@
 //! Represents the Master File Table (MFT) enumerator for a given NTFS volume.
 //!
-//! The `Mft` struct provides an iterator interface to enumerate USN (Update Sequence Number) records
+//! The `Mft` struct provides an iterator interface to enumerate USN records
 //! from the MFT using the Windows FSCTL_ENUM_USN_DATA control code. It manages the buffer and state
 //! required to sequentially retrieve and parse USN records from the volume.
 //!
 
-use crate::{errors::UsnError, volume, Usn, DEFAULT_BUFFER_SIZE};
-use std::{ffi::OsString, os::windows::ffi::OsStringExt, path::Path};
+use crate::{errors::UsnError, volume::Volume, Usn, DEFAULT_BUFFER_SIZE};
+use std::{ffi::OsString, os::windows::ffi::OsStringExt};
 use windows::Win32::{
-    Foundation::{ERROR_HANDLE_EOF, HANDLE},
+    Foundation::ERROR_HANDLE_EOF,
     Storage::FileSystem::{
         FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_HIDDEN, FILE_FLAGS_AND_ATTRIBUTES,
     },
@@ -61,6 +61,7 @@ impl MftEntry {
 /// Options for enumerating the Master File Table (MFT).
 ///
 /// Allows customization of the USN range and buffer size for enumeration.
+#[derive(Debug)]
 pub struct EnumOptions {
     pub low_usn: Usn,
     pub high_usn: Usn,
@@ -78,28 +79,15 @@ impl Default for EnumOptions {
 }
 
 /// Represents the Master File Table (MFT) enumerator.
+#[derive(Debug)]
 pub struct Mft {
-    pub(crate) volume_handle: HANDLE,
-    pub(crate) drive_letter: Option<char>,
+    pub(crate) volume: Volume,
 }
 
 impl Mft {
-    /// Creates a new `Mft` instance with the given drive letter.
-    pub fn new_from_drive_letter(drive_letter: char) -> Result<Self, UsnError> {
-        let volume_handle = volume::get_volume_handle(drive_letter)?;
-        Ok(Mft {
-            volume_handle,
-            drive_letter: Some(drive_letter),
-        })
-    }
-
-    /// Creates a new `Mft` instance with the given volume mount point.
-    pub fn new_from_mount_point(mount_point: &Path) -> Result<Self, UsnError> {
-        let volume_handle = volume::get_volume_handle_from_mount_point(mount_point)?;
-        Ok(Mft {
-            volume_handle,
-            drive_letter: None,
-        })
+    /// Creates a new `Mft` instance.
+    pub fn new(volume: Volume) -> Result<Self, UsnError> {
+        Ok(Mft { volume })
     }
 
     /// Returns an iterator over the MFT entries.
@@ -155,7 +143,7 @@ impl MftIter<'_> {
 
         if let Err(err) = unsafe {
             DeviceIoControl(
-                self.mft.volume_handle,
+                self.mft.volume.handle,
                 Ioctl::FSCTL_ENUM_USN_DATA,
                 Some(&mft_enum_data as *const _ as _),
                 size_of::<Ioctl::MFT_ENUM_DATA_V0>() as u32,
@@ -228,7 +216,8 @@ mod tests {
         let (mount_point, uuid) = setup()?;
 
         let result = {
-            let mft = Mft::new_from_mount_point(mount_point.as_path())?;
+            let volume = Volume::from_mount_point(mount_point.as_path())?;
+            let mft = Mft::new(volume)?;
             for entry in mft.iter() {
                 println!("MFT entry: {:?}", entry);
                 // Check if the Mft entry is valid

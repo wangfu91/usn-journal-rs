@@ -5,6 +5,7 @@
 use crate::{
     journal::{UsnEntry, UsnJournal},
     mft::{Mft, MftEntry},
+    volume::Volume,
 };
 use lru::LruCache;
 use std::{
@@ -36,7 +37,7 @@ pub struct MftPathResolver {
 impl MftPathResolver {
     /// Create a new `MftPathResolver` from an MFT reference.
     pub fn new(mft: &Mft) -> Self {
-        let path_resolver = PathResolver::new(mft.volume_handle, mft.drive_letter);
+        let path_resolver = PathResolver::new(&mft.volume);
         MftPathResolver { path_resolver }
     }
 
@@ -54,15 +55,15 @@ impl MftPathResolver {
 }
 
 /// Path resolver for USN journal-based lookups.
-pub struct UsnJournalPathResolver {
+pub struct JournalPathResolver {
     path_resolver: PathResolver,
 }
 
-impl UsnJournalPathResolver {
+impl JournalPathResolver {
     /// Create a new `UsnJournalPathResolver` from a USN journal reference.
     pub fn new(journal: &UsnJournal) -> Self {
-        let path_resolver = PathResolver::new(journal.volume_handle, journal.drive_letter);
-        UsnJournalPathResolver { path_resolver }
+        let path_resolver = PathResolver::new(&journal.volume);
+        JournalPathResolver { path_resolver }
     }
 
     /// Resolve the full path for a given USN entry.
@@ -82,13 +83,12 @@ impl PathResolver {
     /// Create a new `PathResolver` for a given NTFS/ReFs volume and drive letter.
     ///
     /// # Arguments
-    /// * `volume_handle` - Handle to the NTFS/ReFS volume.
-    /// * `drive_letter` - Optional drive letter (e.g., 'C').
-    fn new(volume_handle: HANDLE, drive_letter: Option<char>) -> Self {
+    /// * `volume` - Reference to the `Volume` struct representing the NTFS/ReFS volume.
+    fn new(volume: &Volume) -> Self {
         let fid_path_cache = LruCache::new(NonZeroUsize::new(LRU_CACHE_CAPACITY).unwrap());
         PathResolver {
-            volume_handle,
-            drive_letter,
+            volume_handle: volume.handle,
+            drive_letter: volume.drive_letter,
             fid_path_cache,
         }
     }
@@ -143,16 +143,7 @@ impl PathResolver {
     }
 }
 
-/// Resolves a file ID to its full path on the specified NTFS volume.
-///
-/// # Arguments
-/// * `volume_handle` - Handle to the NTFS volume.
-/// * `drive_letter` - Optional drive letter (e.g., 'C').
-/// * `file_id` - The file ID to resolve.
-///
-/// # Returns
-/// * `Ok(PathBuf)` - The resolved absolute path.
-/// * `Err(anyhow::Error)` - If the path cannot be resolved.
+/// Resolves a file ID to its full path on the specified NTFS/ReFS volume.
 fn file_id_to_path(
     volume_handle: HANDLE,
     drive_letter: Option<char>,

@@ -1,4 +1,6 @@
-use usn_journal_rs::{errors::UsnError, journal::UsnJournal, path::UsnJournalPathResolver};
+use usn_journal_rs::{
+    errors::UsnError, journal::UsnJournal, path::JournalPathResolver, volume::Volume,
+};
 
 fn main() {
     if let Err(e) = run() {
@@ -8,10 +10,10 @@ fn main() {
 
 fn run() -> Result<(), UsnError> {
     let drive_letter = 'C';
+    let volume = Volume::from_drive_letter(drive_letter)?;
+    let journal = UsnJournal::new(volume)?;
 
-    let journal = UsnJournal::new_from_drive_letter(drive_letter)?;
-
-    let mut path_resolver = UsnJournalPathResolver::new(&journal);
+    let mut path_resolver = JournalPathResolver::new(&journal);
 
     for entry in journal.iter() {
         let full_path = path_resolver.resolve_path(&entry);

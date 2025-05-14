@@ -1,4 +1,4 @@
-use usn_journal_rs::{errors::UsnError, mft::Mft, path::MftPathResolver};
+use usn_journal_rs::{errors::UsnError, mft::Mft, path::MftPathResolver, volume::Volume};
 
 fn main() {
     if let Err(e) = run() {
@@ -8,8 +8,8 @@ fn main() {
 
 fn run() -> Result<(), UsnError> {
     let drive_letter = 'C';
-
-    let mft = Mft::new_from_drive_letter(drive_letter)?;
+    let volume = Volume::from_drive_letter(drive_letter)?;
+    let mft = Mft::new(volume)?;
 
     let mut path_resolver = MftPathResolver::new(&mft);
 

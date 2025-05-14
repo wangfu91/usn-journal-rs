@@ -23,10 +23,11 @@ A Rust library for working with the Windows NTFS/ReFS USN change journal and enu
 ### Enumerate USN Journal
 
 ```rust
-use usn_journal_rs::{usn_journal::UsnJournal};
+use usn_journal_rs::{volume::Volume, journal::UsnJournal};
 
 let drive_letter = 'C';
-let journal = UsnJournal::new_from_drive_letter(drive_letter).unwrap();
+let volume = Volume::from_drive_letter(drive_letter).unwrap();
+let journal = UsnJournal::new(volume).unwrap();
 for entry in journal.iter().take(10) {
     println!("USN entry: {:?}", entry);
 }
@@ -35,10 +36,11 @@ for entry in journal.iter().take(10) {
 ### Enumerate MFT Entries
 
 ```rust
-use usn_journal_rs::mft::Mft;
+use usn_journal_rs::{volume::Volume, mft::Mft};
 
 let drive_letter = 'C';
-let mft = Mft::new_from_drive_letter(drive_letter).unwrap();
+let volume = Volume::from_drive_letter(drive_letter).unwrap();
+let mft = Mft::new(volume).unwrap();
 for entry in mft.iter().take(10) {
     println!("MFT entry: {:?}", entry);
 }
