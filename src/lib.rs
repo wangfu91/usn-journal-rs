@@ -16,8 +16,8 @@
 //!
 //! let drive_letter = 'C';
 //! let volume = Volume::from_drive_letter(drive_letter).unwrap();
-//! let journal = UsnJournal::new(volume).unwrap();
-//! for entry in journal.iter().take(10) {
+//! let journal = UsnJournal::new(volume);
+//! for entry in journal.iter().unwrap().take(10) {
 //!     println!("USN entry: {:?}", entry);
 //! }
 //! ```
@@ -28,7 +28,7 @@
 //!
 //! let drive_letter = 'C';
 //! let volume = Volume::from_drive_letter(drive_letter).unwrap();
-//! let mft = Mft::new(volume).unwrap();
+//! let mft = Mft::new(volume);
 //! for entry in mft.iter().take(10) {
 //!     println!("MFT entry: {:?}", entry);
 //! }
