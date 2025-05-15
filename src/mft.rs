@@ -3,12 +3,11 @@
 //! The `Mft` struct provides an iterator interface to enumerate USN records
 //! from the MFT using the Windows FSCTL_ENUM_USN_DATA control code. It manages the buffer and state
 //! required to sequentially retrieve and parse USN records from the volume.
-//!
 
 use crate::{DEFAULT_BUFFER_SIZE, Usn, errors::UsnError, volume::Volume};
 use std::{ffi::OsString, os::windows::ffi::OsStringExt};
 use windows::Win32::{
-    Foundation::ERROR_HANDLE_EOF,
+    Foundation::{ERROR_HANDLE_EOF, HANDLE},
     Storage::FileSystem::{
         FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_HIDDEN, FILE_FLAGS_AND_ATTRIBUTES,
     },
@@ -86,14 +85,14 @@ pub struct Mft {
 
 impl Mft {
     /// Creates a new `Mft` instance.
-    pub fn new(volume: Volume) -> Result<Self, UsnError> {
-        Ok(Mft { volume })
+    pub fn new(volume: Volume) -> Self {
+        Mft { volume }
     }
 
     /// Returns an iterator over the MFT entries.
-    pub fn iter(&self) -> MftIter<'_> {
+    pub fn iter(&self) -> MftIter {
         MftIter {
-            mft: self,
+            volume_handle: self.volume.handle,
             low_usn: 0,
             high_usn: i64::MAX,
             buffer: vec![0u8; DEFAULT_BUFFER_SIZE],
@@ -103,10 +102,10 @@ impl Mft {
         }
     }
 
-    /// Returns an iterator over the MFT entries with custom options.
-    pub fn iter_with_options(&self, options: EnumOptions) -> MftIter<'_> {
+    /// Returns an iterator over the MFT entries with custom enumerate options.
+    pub fn iter_with_options(&self, options: EnumOptions) -> MftIter {
         MftIter {
-            mft: self,
+            volume_handle: self.volume.handle,
             low_usn: options.low_usn,
             high_usn: options.high_usn,
             buffer: vec![0u8; options.buffer_size],
@@ -118,8 +117,8 @@ impl Mft {
 }
 
 /// Iterator over MFT entries.
-pub struct MftIter<'a> {
-    mft: &'a Mft,
+pub struct MftIter {
+    volume_handle: HANDLE,
     low_usn: Usn,
     high_usn: Usn,
     buffer: Vec<u8>,
@@ -128,7 +127,7 @@ pub struct MftIter<'a> {
     next_start_fid: u64,
 }
 
-impl MftIter<'_> {
+impl MftIter {
     /// Reads the next chunk of MFT data into the buffer.
     ///
     /// Returns `Ok(true)` if data was read, `Ok(false)` if EOF, or an error.
@@ -143,7 +142,7 @@ impl MftIter<'_> {
 
         if let Err(err) = unsafe {
             DeviceIoControl(
-                self.mft.volume.handle,
+                self.volume_handle,
                 Ioctl::FSCTL_ENUM_USN_DATA,
                 Some(&mft_enum_data as *const _ as _),
                 size_of::<Ioctl::MFT_ENUM_DATA_V0>() as u32,
@@ -192,7 +191,7 @@ impl MftIter<'_> {
     }
 }
 
-impl Iterator for MftIter<'_> {
+impl Iterator for MftIter {
     type Item = MftEntry;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -217,7 +216,7 @@ mod tests {
 
         let result = {
             let volume = Volume::from_mount_point(mount_point.as_path())?;
-            let mft = Mft::new(volume)?;
+            let mft = Mft::new(volume);
             for entry in mft.iter() {
                 println!("MFT entry: {:?}", entry);
                 // Check if the Mft entry is valid

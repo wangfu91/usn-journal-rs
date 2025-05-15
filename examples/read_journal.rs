@@ -11,11 +11,11 @@ fn main() {
 fn run() -> Result<(), UsnError> {
     let drive_letter = 'C';
     let volume = Volume::from_drive_letter(drive_letter)?;
-    let journal = UsnJournal::new(volume)?;
+    let usn_journal = UsnJournal::new(volume);
 
-    let mut path_resolver = JournalPathResolver::new(&journal);
+    let mut path_resolver = JournalPathResolver::new(&usn_journal);
 
-    for entry in journal.iter() {
+    for entry in usn_journal.iter()? {
         let full_path = path_resolver.resolve_path(&entry);
         println!(
             "usn={}, file_id={}, path={:?}",

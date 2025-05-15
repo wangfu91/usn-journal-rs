@@ -14,18 +14,20 @@ fn main() {
 fn run() -> Result<(), UsnError> {
     let drive_letter = 'C';
     let volume = Volume::from_drive_letter(drive_letter)?;
-    let journal = UsnJournal::new(volume)?;
+    let usn_journal = UsnJournal::new(volume);
+
+    let journal_data = usn_journal.query(true)?;
 
     let enum_options = journal::EnumOptions {
-        start_usn: journal.next_usn,
+        start_usn: journal_data.NextUsn,
         only_on_close: true,
         wait_for_more: true,
         ..Default::default()
     };
 
-    let mut path_resolver = JournalPathResolver::new(&journal);
+    let mut path_resolver = JournalPathResolver::new(&usn_journal);
 
-    for entry in journal.iter_with_options(enum_options) {
+    for entry in usn_journal.iter_with_options(enum_options)? {
         let full_path = path_resolver.resolve_path(&entry);
         println!(
             "usn={}, reason={}, path={:?}",

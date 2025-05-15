@@ -4,11 +4,11 @@ use uuid::Uuid;
 
 use crate::errors::UsnError;
 
-pub(crate) const VHD_MOUNT_POINT_BASE: &str = "test-vhd-mount-point";
-pub(crate) const VHD_NAME_BASE_NAME: &str = "usn-journal-test";
-pub(crate) const VHD_EXT: &str = "vhdx";
+pub const VHD_MOUNT_POINT_BASE: &str = "test-vhd-mount-point";
+pub const VHD_NAME_BASE_NAME: &str = "usn-journal-test";
+pub const VHD_EXT: &str = "vhdx";
 
-pub(crate) fn get_workspace_root() -> Result<PathBuf, UsnError> {
+pub fn get_workspace_root() -> Result<PathBuf, UsnError> {
     let workspace_root = std::env::var("CARGO_WORKSPACE_DIR")
         .or_else(|_| std::env::var("CARGO_MANIFEST_DIR"))
         .map_err(|e| UsnError::OtherError(format!("Failed to get workspace root: {}", e)))?;
@@ -21,7 +21,7 @@ pub(crate) fn get_workspace_root() -> Result<PathBuf, UsnError> {
 /// Set up a test VHD and mount point for integration tests.
 ///
 /// Returns the mount point path and UUID. Runs a PowerShell script to create and mount a VHDX file.
-pub(crate) fn setup() -> Result<(PathBuf, Uuid), UsnError> {
+pub fn setup() -> Result<(PathBuf, Uuid), UsnError> {
     const SETUP_SCRIPT_NAME: &str = "test-setup.ps1";
 
     let workspace_root = get_workspace_root()?;
@@ -86,7 +86,7 @@ pub(crate) fn setup() -> Result<(PathBuf, Uuid), UsnError> {
 /// Tear down the test VHD and mount point created by `setup`.
 ///
 /// Unmounts and deletes the VHDX file using a PowerShell script.
-pub(crate) fn teardown(uuid: Uuid) -> Result<(), UsnError> {
+pub fn teardown(uuid: Uuid) -> Result<(), UsnError> {
     const TEARDOWN_SCRIPT_NAME: &str = "test-teardown.ps1";
 
     let workspace_root = get_workspace_root()?;

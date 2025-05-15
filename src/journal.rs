@@ -13,6 +13,7 @@ use crate::{
 use log::{debug, warn};
 use std::{ffi::OsString, os::windows::ffi::OsStringExt, time::SystemTime};
 use std::{ffi::c_void, mem::size_of};
+use windows::Win32::Foundation::HANDLE;
 use windows::Win32::Storage::FileSystem::{
     FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_HIDDEN, FILE_FLAGS_AND_ATTRIBUTES,
 };
@@ -69,25 +70,20 @@ impl Default for EnumOptions {
 /// Iterator for enumerating USN journal records on NTFS/ReFS volume.
 pub struct UsnJournal {
     pub(crate) volume: Volume,
-    journal_id: u64,
-    pub next_usn: Usn,
 }
 
 impl UsnJournal {
     /// Create a new `UsnJournal` instance.
-    pub fn new(volume: Volume) -> Result<Self, UsnError> {
-        let journal_data = query(&volume, true)?;
-        Ok(UsnJournal {
-            volume,
-            journal_id: journal_data.UsnJournalID,
-            next_usn: journal_data.NextUsn,
-        })
+    pub fn new(volume: Volume) -> Self {
+        UsnJournal { volume }
     }
 
     /// Returns an iterator over the USN journal entries.
-    pub fn iter(&self) -> UsnJournalIter<'_> {
-        UsnJournalIter {
-            usn_journal: self,
+    pub fn iter(&self) -> Result<UsnJournalIter, UsnError> {
+        let journal_data = self.query(true)?;
+        Ok(UsnJournalIter {
+            volume_handle: self.volume.handle,
+            journal_id: journal_data.UsnJournalID,
             buffer: vec![0u8; DEFAULT_BUFFER_SIZE],
             bytes_read: 0,
             offset: 0,
@@ -96,12 +92,15 @@ impl UsnJournal {
             return_only_on_close: 0,
             timeout: 0,
             bytes_to_wait_for: 1,
-        }
+        })
     }
 
-    pub fn iter_with_options(&self, options: EnumOptions) -> UsnJournalIter<'_> {
-        UsnJournalIter {
-            usn_journal: self,
+    /// Returns an iterator over the USN journal entries with custom enumerate options.
+    pub fn iter_with_options(&self, options: EnumOptions) -> Result<UsnJournalIter, UsnError> {
+        let journal_data = self.query(true)?;
+        Ok(UsnJournalIter {
+            volume_handle: self.volume.handle,
+            journal_id: journal_data.UsnJournalID,
             buffer: vec![0u8; options.buffer_size],
             bytes_read: 0,
             offset: 0,
@@ -110,13 +109,137 @@ impl UsnJournal {
             return_only_on_close: options.only_on_close as u32,
             timeout: options.timeout,
             bytes_to_wait_for: options.wait_for_more as u64,
+        })
+    }
+
+    /// Query the USN journal state for a volume, optionally creating it if not active.
+    ///
+    /// # Arguments
+    /// * `create_if_not_active` - If true, create the journal if it does not exist.
+    ///
+    /// # Returns
+    /// * `Ok(USN_JOURNAL_DATA_V0)` - The current journal state.
+    /// * `Err(UsnError)` - If the query or creation fails.
+    pub fn query(&self, create_if_not_active: bool) -> Result<USN_JOURNAL_DATA_V0, UsnError> {
+        match self.query_core() {
+            Err(err) => {
+                if err.code() == ERROR_JOURNAL_NOT_ACTIVE.into() && create_if_not_active {
+                    self.create_or_update(
+                        DEFAULT_JOURNAL_MAX_SIZE,
+                        DEFAULT_JOURNAL_ALLOCATION_DELTA,
+                    )?;
+
+                    let journal_data = self.query_core()?;
+                    Ok(journal_data)
+                } else {
+                    warn!("Error querying USN journal: {}", err);
+                    Err(err.into())
+                }
+            }
+            Ok(journal_data) => {
+                debug!("USN journal data: {:#?}", journal_data);
+                Ok(journal_data)
+            }
         }
+    }
+
+    /// Core function to query the USN journal state.
+    fn query_core(&self) -> Result<USN_JOURNAL_DATA_V0, windows::core::Error> {
+        let journal_data = USN_JOURNAL_DATA_V0::default();
+        let bytes_return = 0u32;
+
+        unsafe {
+            // https://learn.microsoft.com/en-us/windows/win32/fileio/using-the-change-journal-identifier
+            // To obtain the identifier of the current change journal on a specified volume,
+            // use the FSCTL_QUERY_USN_JOURNAL control code.
+            //
+            // To perform this and all other change journal operations,
+            // you must have system administrator privileges.
+            // That is, you must be a member of the Administrators group.
+            DeviceIoControl(
+                self.volume.handle,
+                FSCTL_QUERY_USN_JOURNAL,
+                None,
+                0,
+                Some(&journal_data as *const _ as *mut _),
+                std::mem::size_of::<USN_JOURNAL_DATA_V0>() as u32,
+                Some(&bytes_return as *const _ as *mut _),
+                None,
+            )
+        }?;
+
+        Ok(journal_data)
+    }
+
+    /// Create or update the USN journal on a volume.
+    ///
+    /// # Arguments
+    /// * `max_size` - Maximum size of the journal in bytes.
+    /// * `allocation_delta` - Allocation delta in bytes.
+    ///
+    /// # Returns
+    /// * `Ok(())` on success, or `Err(UsnError)` on failure.
+    pub fn create_or_update(&self, max_size: u64, allocation_delta: u64) -> Result<(), UsnError> {
+        let create_data = CREATE_USN_JOURNAL_DATA {
+            MaximumSize: max_size,
+            AllocationDelta: allocation_delta,
+        };
+
+        unsafe {
+            // https://learn.microsoft.com/en-us/windows/win32/api/winioctl/ni-winioctl-fsctl_create_usn_journal
+            // FSCTL_CREATE_USN_JOURNAL
+            // Creates an update sequence number (USN) change journal stream on a target volume, or modifies an existing change journal stream.
+            DeviceIoControl(
+                self.volume.handle,
+                FSCTL_CREATE_USN_JOURNAL,
+                Some(&create_data as *const _ as *mut _),
+                size_of::<CREATE_USN_JOURNAL_DATA>() as u32,
+                None,
+                0,
+                None,
+                None,
+            )
+        }?;
+
+        debug!("Created USN journal successfully.");
+
+        Ok(())
+    }
+
+    /// Delete the USN journal from a volume.
+    /// # Returns
+    /// * `Ok(())` on success, or `Err(UsnError)` on failure.
+    pub fn delete(&self) -> Result<(), UsnError> {
+        let journal_data = self.query(false)?;
+        let delete_flags: USN_DELETE_FLAGS = USN_DELETE_FLAG_DELETE | USN_DELETE_FLAG_NOTIFY;
+        let delete_data = DELETE_USN_JOURNAL_DATA {
+            UsnJournalID: journal_data.UsnJournalID,
+            DeleteFlags: delete_flags,
+        };
+
+        unsafe {
+            DeviceIoControl(
+                self.volume.handle,
+                FSCTL_DELETE_USN_JOURNAL,
+                Some(&delete_data as *const _ as *mut _),
+                size_of::<DELETE_USN_JOURNAL_DATA>() as u32,
+                None,
+                0,
+                None,
+                None,
+            )
+        }?;
+
+        debug!("Deleted USN journal successfully.");
+
+        Ok(())
     }
 }
 
 /// Iterate over USN journal entries.
-pub struct UsnJournalIter<'a> {
-    usn_journal: &'a UsnJournal,
+pub struct UsnJournalIter {
+    volume_handle: HANDLE,
+    journal_id: u64,
     buffer: Vec<u8>,
     bytes_read: u32,
     offset: u32,
@@ -127,7 +250,7 @@ pub struct UsnJournalIter<'a> {
     bytes_to_wait_for: u64,
 }
 
-impl UsnJournalIter<'_> {
+impl UsnJournalIter {
     /// Read the next chunk of USN journal data into the buffer.
     ///
     /// Returns `Ok(true)` if data was read, `Ok(false)` if EOF, or an error.
@@ -138,12 +261,12 @@ impl UsnJournalIter<'_> {
             ReturnOnlyOnClose: self.return_only_on_close,
             Timeout: self.timeout,
             BytesToWaitFor: self.bytes_to_wait_for,
-            UsnJournalID: self.usn_journal.journal_id,
+            UsnJournalID: self.journal_id,
         };
 
         if let Err(err) = unsafe {
             DeviceIoControl(
-                self.usn_journal.volume.handle,
+                self.volume_handle,
                 FSCTL_READ_USN_JOURNAL,
                 Some(&read_data as *const _ as *mut _),
                 size_of::<READ_USN_JOURNAL_DATA_V0>() as u32,
@@ -198,7 +321,7 @@ impl UsnJournalIter<'_> {
     }
 }
 
-impl Iterator for UsnJournalIter<'_> {
+impl Iterator for UsnJournalIter {
     type Item = UsnEntry;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -211,139 +334,6 @@ impl Iterator for UsnJournalIter<'_> {
             }
         }
     }
-}
-
-/// Query the USN journal state for a volume, optionally creating it if not active.
-///
-/// # Arguments
-/// * `volume` - The NTFS/ReFS volume.
-/// * `create_if_not_active` - If true, create the journal if it does not exist.
-///
-/// # Returns
-/// * `Ok(USN_JOURNAL_DATA_V0)` - The current journal state.
-/// * `Err(UsnError)` - If the query or creation fails.
-pub fn query(volume: &Volume, create_if_not_active: bool) -> Result<USN_JOURNAL_DATA_V0, UsnError> {
-    match query_core(volume) {
-        Err(err) => {
-            if err.code() == ERROR_JOURNAL_NOT_ACTIVE.into() && create_if_not_active {
-                create_or_update(
-                    volume,
-                    DEFAULT_JOURNAL_MAX_SIZE,
-                    DEFAULT_JOURNAL_ALLOCATION_DELTA,
-                )?;
-
-                let journal_data = query_core(volume)?;
-                Ok(journal_data)
-            } else {
-                warn!("Error querying USN journal: {}", err);
-                Err(err.into())
-            }
-        }
-        Ok(journal_data) => {
-            debug!("USN journal data: {:#?}", journal_data);
-            Ok(journal_data)
-        }
-    }
-}
-
-fn query_core(volume: &Volume) -> Result<USN_JOURNAL_DATA_V0, windows::core::Error> {
-    let journal_data = USN_JOURNAL_DATA_V0::default();
-    let bytes_return = 0u32;
-
-    unsafe {
-        // https://learn.microsoft.com/en-us/windows/win32/fileio/using-the-change-journal-identifier
-        // To obtain the identifier of the current change journal on a specified volume,
-        // use the FSCTL_QUERY_USN_JOURNAL control code.
-        //
-        // To perform this and all other change journal operations,
-        // you must have system administrator privileges.
-        // That is, you must be a member of the Administrators group.
-        DeviceIoControl(
-            volume.handle,
-            FSCTL_QUERY_USN_JOURNAL,
-            None,
-            0,
-            Some(&journal_data as *const _ as *mut _),
-            std::mem::size_of::<USN_JOURNAL_DATA_V0>() as u32,
-            Some(&bytes_return as *const _ as *mut _),
-            None,
-        )
-    }?;
-
-    Ok(journal_data)
-}
-
-/// Create or update the USN journal on a volume.
-///
-/// # Arguments
-/// * `volume` - The NTFS/ReFS volume.
-/// * `max_size` - Maximum size of the journal in bytes.
-/// * `allocation_delta` - Allocation delta in bytes.
-///
-/// # Returns
-/// * `Ok(())` on success, or `Err(UsnError)` on failure.
-pub fn create_or_update(
-    volume: &Volume,
-    max_size: u64,
-    allocation_delta: u64,
-) -> Result<(), UsnError> {
-    let create_data = CREATE_USN_JOURNAL_DATA {
-        MaximumSize: max_size,
-        AllocationDelta: allocation_delta,
-    };
-
-    unsafe {
-        // https://learn.microsoft.com/en-us/windows/win32/api/winioctl/ni-winioctl-fsctl_create_usn_journal
-        // FSCTL_CREATE_USN_JOURNAL
-        // Creates an update sequence number (USN) change journal stream on a target volume, or modifies an existing change journal stream.
-        DeviceIoControl(
-            volume.handle,
-            FSCTL_CREATE_USN_JOURNAL,
-            Some(&create_data as *const _ as *mut _),
-            size_of::<CREATE_USN_JOURNAL_DATA>() as u32,
-            None,
-            0,
-            None,
-            None,
-        )
-    }?;
-
-    debug!("Created USN journal successfully.");
-
-    Ok(())
-}
-
-/// Delete the USN journal from a volume.
-///
-/// # Arguments
-/// * `volume` - The NTFS/ReFS volume.
-/// * `journal_id` - The USN journal identifier.
-///
-/// # Returns
-/// * `Ok(())` on success, or `Err(UsnError)` on failure.
-pub fn delete(volume: &Volume, journal_id: u64) -> Result<(), UsnError> {
-    let delete_flags: USN_DELETE_FLAGS = USN_DELETE_FLAG_DELETE | USN_DELETE_FLAG_NOTIFY;
-    let delete_data = DELETE_USN_JOURNAL_DATA {
-        UsnJournalID: journal_id,
-        DeleteFlags: delete_flags,
-    };
-
-    unsafe {
-        DeviceIoControl(
-            volume.handle,
-            FSCTL_DELETE_USN_JOURNAL,
-            Some(&delete_data as *const _ as *mut _),
-            size_of::<DELETE_USN_JOURNAL_DATA>() as u32,
-            None,
-            0,
-            None,
-            None,
-        )
-    }?;
-
-    debug!("Deleted USN journal successfully.");
-
-    Ok(())
 }
 
 /// Represents a USN entry in the USN journal.
@@ -507,8 +497,17 @@ mod tests {
 
         let result = {
             let volume = Volume::from_mount_point(mount_point.as_path())?;
-            let journal_data = super::query(&volume, true)?;
-            println!("USN journal data: {:?}", journal_data);
+            let usn_journal = UsnJournal::new(volume);
+            let journal_data = usn_journal.query(true)?;
+            assert!(
+                journal_data.UsnJournalID > 0,
+                "USN journal ID should be valid"
+            );
+            assert!(journal_data.MaximumSize > 0, "Maximum size should be valid");
+            assert!(
+                journal_data.AllocationDelta > 0,
+                "Allocation delta should be valid"
+            );
 
             Ok(())
         };
@@ -527,9 +526,9 @@ mod tests {
 
         let result = {
             let volume = Volume::from_mount_point(mount_point.as_path())?;
-            let journal_data = super::query(&volume, true)?;
-            println!("USN journal data: {:?}", journal_data);
-            super::delete(&volume, journal_data.UsnJournalID)?;
+            let usn_journal = UsnJournal::new(volume);
+            let _ = usn_journal.query(true)?;
+            usn_journal.delete()?;
 
             Ok(())
         };
@@ -548,13 +547,9 @@ mod tests {
 
         let result = {
             let volume = Volume::from_mount_point(mount_point.as_path())?;
-            let journal_data = super::query(&volume, true)?;
-            println!("USN journal data: {:?}", journal_data);
-            super::create_or_update(
-                &volume,
-                DEFAULT_JOURNAL_MAX_SIZE,
-                DEFAULT_JOURNAL_ALLOCATION_DELTA,
-            )?;
+            let usn_journal = UsnJournal::new(volume);
+            usn_journal
+                .create_or_update(DEFAULT_JOURNAL_MAX_SIZE, DEFAULT_JOURNAL_ALLOCATION_DELTA)?;
 
             Ok(())
         };
@@ -573,9 +568,9 @@ mod tests {
 
         let result = {
             let volume = Volume::from_mount_point(mount_point.as_path())?;
-            let usn_journal = UsnJournal::new(volume)?;
+            let usn_journal = UsnJournal::new(volume);
             let mut previous_usn = -1i64;
-            for entry in usn_journal.iter() {
+            for entry in usn_journal.iter()? {
                 println!("USN entry: {:?}", entry);
                 // Check if the USN entry is valid
                 assert!(entry.usn >= 0, "USN is not valid");

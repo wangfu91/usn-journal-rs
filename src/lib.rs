@@ -46,9 +46,12 @@ pub mod journal;
 pub mod mft;
 pub mod path;
 mod privilege;
-mod tests;
 mod time;
 pub mod volume;
+
+// Utility functions for cargo tests
+#[cfg(test)]
+mod tests;
 
 pub type Usn = i64;
 

@@ -30,6 +30,7 @@ struct PathResolver {
 }
 
 /// Path resolver for MFT-based lookups.
+#[derive(Debug)]
 pub struct MftPathResolver {
     path_resolver: PathResolver,
 }
@@ -55,6 +56,7 @@ impl MftPathResolver {
 }
 
 /// Path resolver for USN journal-based lookups.
+#[derive(Debug)]
 pub struct JournalPathResolver {
     path_resolver: PathResolver,
 }
