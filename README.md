@@ -20,15 +20,15 @@ A Rust library for working with the Windows NTFS/ReFS USN change journal and enu
 
 ## Examples 🧑‍💻
 
-### Enumerate USN Journal
+### Enumerate USN Journal Entries
 
 ```rust
 use usn_journal_rs::{volume::Volume, journal::UsnJournal};
 
 let drive_letter = 'C';
-let volume = Volume::from_drive_letter(drive_letter).unwrap();
-let journal = UsnJournal::new(volume).unwrap();
-for entry in journal.iter().take(10) {
+let volume = Volume::from_drive_letter(drive_letter)?;
+let journal = UsnJournal::new(volume);
+for entry in journal.iter()? {
     println!("USN entry: {:?}", entry);
 }
 ```
@@ -39,9 +39,9 @@ for entry in journal.iter().take(10) {
 use usn_journal_rs::{volume::Volume, mft::Mft};
 
 let drive_letter = 'C';
-let volume = Volume::from_drive_letter(drive_letter).unwrap();
-let mft = Mft::new(volume).unwrap();
-for entry in mft.iter().take(10) {
+let volume = Volume::from_drive_letter(drive_letter)?;
+let mft = Mft::new(volume);
+for entry in mft.iter() {
     println!("MFT entry: {:?}", entry);
 }
 ```
@@ -49,7 +49,7 @@ for entry in mft.iter().take(10) {
 You can find more usage examples in the [`examples`](examples/) directory. To run an example, use:
 
 ```sh
-cargo run --example change_monitor
+sudo cargo run --example change_monitor
 ```
 
 Replace `change_monitor` with any example file name in the directory.
@@ -57,7 +57,7 @@ Replace `change_monitor` with any example file name in the directory.
 ## Platform Support 🖥️
 
 - 🪟 **Windows** NTFS/ReFS volumes
-- 🔑 Requires appropriate privileges to access the USN journal or MFT.
+- 🔑 Requires administrator privilege to access the USN journal or MFT.
 
 ## Documentation 📚
 
@@ -73,4 +73,6 @@ MIT License. See [LICENSE](LICENSE) for details.
 
 ---
 
-> **Note:** This crate is Windows-only.
+> **Note:** 
+ - This crate is Windows-only.
+ - ReFS does not have a Master File Table (MFT).
