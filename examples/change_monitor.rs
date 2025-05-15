@@ -19,7 +19,7 @@ fn run() -> Result<(), UsnError> {
     let journal_data = usn_journal.query(true)?;
 
     let enum_options = journal::EnumOptions {
-        start_usn: journal_data.NextUsn,
+        start_usn: journal_data.next_usn,
         only_on_close: true,
         wait_for_more: true,
         ..Default::default()

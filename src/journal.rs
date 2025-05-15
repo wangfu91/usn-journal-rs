@@ -66,6 +66,33 @@ impl Default for EnumOptions {
     }
 }
 
+/// Represents the USN journal state on an NTFS/ReFS volume.
+/// This is a thin wrapper around the USN_JOURNAL_DATA_V0 structure from the Windows API.
+#[derive(Debug, Clone)]
+pub struct UsnJournalData {
+    pub journal_id: u64,
+    pub first_usn: i64,
+    pub next_usn: i64,
+    pub lowest_valid_usn: i64,
+    pub max_usn: i64,
+    pub maximum_size: u64,
+    pub allocation_delta: u64,
+}
+
+impl From<USN_JOURNAL_DATA_V0> for UsnJournalData {
+    fn from(data: USN_JOURNAL_DATA_V0) -> Self {
+        UsnJournalData {
+            journal_id: data.UsnJournalID,
+            first_usn: data.FirstUsn,
+            next_usn: data.NextUsn,
+            lowest_valid_usn: data.LowestValidUsn,
+            max_usn: data.MaxUsn,
+            maximum_size: data.MaximumSize,
+            allocation_delta: data.AllocationDelta,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 /// Iterator for enumerating USN journal records on NTFS/ReFS volume.
 pub struct UsnJournal {
@@ -83,7 +110,7 @@ impl UsnJournal {
         let journal_data = self.query(true)?;
         Ok(UsnJournalIter {
             volume_handle: self.volume.handle,
-            journal_id: journal_data.UsnJournalID,
+            journal_id: journal_data.journal_id,
             buffer: vec![0u8; DEFAULT_BUFFER_SIZE],
             bytes_read: 0,
             offset: 0,
@@ -100,7 +127,7 @@ impl UsnJournal {
         let journal_data = self.query(true)?;
         Ok(UsnJournalIter {
             volume_handle: self.volume.handle,
-            journal_id: journal_data.UsnJournalID,
+            journal_id: journal_data.journal_id,
             buffer: vec![0u8; options.buffer_size],
             bytes_read: 0,
             offset: 0,
@@ -118,9 +145,9 @@ impl UsnJournal {
     /// * `create_if_not_active` - If true, create the journal if it does not exist.
     ///
     /// # Returns
-    /// * `Ok(USN_JOURNAL_DATA_V0)` - The current journal state.
+    /// * `Ok(UsnJournalData)` - The current journal state.
     /// * `Err(UsnError)` - If the query or creation fails.
-    pub fn query(&self, create_if_not_active: bool) -> Result<USN_JOURNAL_DATA_V0, UsnError> {
+    pub fn query(&self, create_if_not_active: bool) -> Result<UsnJournalData, UsnError> {
         match self.query_core() {
             Err(err) => {
                 if err.code() == ERROR_JOURNAL_NOT_ACTIVE.into() && create_if_not_active {
@@ -130,7 +157,7 @@ impl UsnJournal {
                     )?;
 
                     let journal_data = self.query_core()?;
-                    Ok(journal_data)
+                    Ok(journal_data.into())
                 } else {
                     warn!("Error querying USN journal: {}", err);
                     Err(err.into())
@@ -138,7 +165,7 @@ impl UsnJournal {
             }
             Ok(journal_data) => {
                 debug!("USN journal data: {:#?}", journal_data);
-                Ok(journal_data)
+                Ok(journal_data.into())
             }
         }
     }
@@ -213,7 +240,7 @@ impl UsnJournal {
         let journal_data = self.query(false)?;
         let delete_flags: USN_DELETE_FLAGS = USN_DELETE_FLAG_DELETE | USN_DELETE_FLAG_NOTIFY;
         let delete_data = DELETE_USN_JOURNAL_DATA {
-            UsnJournalID: journal_data.UsnJournalID,
+            UsnJournalID: journal_data.journal_id,
             DeleteFlags: delete_flags,
         };
 
@@ -500,12 +527,15 @@ mod tests {
             let usn_journal = UsnJournal::new(volume);
             let journal_data = usn_journal.query(true)?;
             assert!(
-                journal_data.UsnJournalID > 0,
+                journal_data.journal_id > 0,
                 "USN journal ID should be valid"
             );
-            assert!(journal_data.MaximumSize > 0, "Maximum size should be valid");
             assert!(
-                journal_data.AllocationDelta > 0,
+                journal_data.maximum_size > 0,
+                "Maximum size should be valid"
+            );
+            assert!(
+                journal_data.allocation_delta > 0,
                 "Allocation delta should be valid"
             );
 
