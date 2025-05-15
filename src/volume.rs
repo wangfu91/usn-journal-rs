@@ -82,7 +82,7 @@ fn get_volume_handle_from_mount_point(mount_point: &Path) -> Result<HANDLE, UsnE
     // GetVolumeNameForVolumeMountPointW requires trailing backslash
     let mount_path = format!("{}\\", mount_point.to_string_lossy());
 
-    let mut volume_name = [0u16; 64]; // Enough space for volume GUID path
+    let mut volume_name = [0u16; 50]; // Enough space for volume GUID path
     if let Err(err) =
         unsafe { GetVolumeNameForVolumeMountPointW(&HSTRING::from(&mount_path), &mut volume_name) }
     {
