@@ -1,5 +1,8 @@
 use usn_journal_rs::{
-    errors::UsnError, journal::UsnJournal, path::JournalPathResolver, volume::Volume,
+    errors::UsnError,
+    journal::UsnJournal,
+    path::{JournalPathResolver, PathResolveTrait},
+    volume::Volume,
 };
 
 fn main() {

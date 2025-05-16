@@ -1,4 +1,9 @@
-use usn_journal_rs::{errors::UsnError, mft::Mft, path::MftPathResolver, volume::Volume};
+use usn_journal_rs::{
+    errors::UsnError,
+    mft::Mft,
+    path::{MftPathResolver, PathResolveTrait},
+    volume::Volume,
+};
 
 fn main() {
     if let Err(e) = run() {

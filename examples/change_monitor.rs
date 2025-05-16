@@ -1,7 +1,7 @@
 use usn_journal_rs::{
     errors::UsnError,
     journal::{self, UsnJournal},
-    path::JournalPathResolver,
+    path::{JournalPathResolver, PathResolveTrait},
     volume::Volume,
 };
 
