@@ -1,6 +1,6 @@
 [package]
 name = "usn-journal-rs"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2024"
 description = "A library to manipulate the Windows USN change journal and enumerating the NTFS Master File Table (MFT)."
 license = "MIT"
