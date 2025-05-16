@@ -424,7 +424,7 @@ impl UsnEntry {
     }
 
     /// Converts a USN reason bitfield to a human-readable string using Windows constants.
-    pub fn reason_to_string(&self) -> String {
+    pub fn get_readable_reason_string(&self) -> String {
         let reason = self.reason;
         let mut reasons = Vec::new();
         if reason & USN_REASON_DATA_OVERWRITE != 0 {

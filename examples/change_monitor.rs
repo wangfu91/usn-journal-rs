@@ -32,7 +32,7 @@ fn run() -> Result<(), UsnError> {
         println!(
             "usn={}, reason={}, path={:?}",
             entry.usn,
-            entry.reason_to_string(),
+            entry.get_readable_reason_string(),
             full_path
         );
     }
