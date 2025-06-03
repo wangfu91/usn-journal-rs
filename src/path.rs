@@ -7,10 +7,8 @@ use crate::{
     mft::{Mft, MftEntry},
     volume::Volume,
 };
-use lru::LruCache;
 use std::{
     ffi::{OsString, c_void},
-    num::NonZeroUsize,
     os::windows::ffi::OsStringExt,
     path::PathBuf,
 };
@@ -35,14 +33,11 @@ pub trait PathResolveTrait {
     fn resolve_path(&mut self, entry: &Self::InputEntry) -> Option<PathBuf>;
 }
 
-const LRU_CACHE_CAPACITY: usize = 4 * 1024; // 4K
-
-/// Resolves file paths from file IDs on an NTFS/ReFS volume, using an LRU cache for efficiency.
+/// Resolves file paths from file IDs on an NTFS/ReFS volume.
 #[derive(Debug)]
 struct PathResolver {
-    volume_handle: HANDLE,                      // Handle to the NTFS/ReFS volume
-    drive_letter: Option<char>,                 // Optional drive letter (e.g., 'C')
-    dir_fid_path_cache: LruCache<u64, PathBuf>, // LRU cache for dir file ID to path mapping
+    volume_handle: HANDLE,      // Handle to the NTFS/ReFS volume
+    drive_letter: Option<char>, // Optional drive letter (e.g., 'C')
 }
 
 /// Path resolver for MFT-based lookups.
@@ -52,22 +47,12 @@ pub struct MftPathResolver {
 }
 
 impl MftPathResolver {
-    /// Create a new `MftPathResolver` from an MFT reference using the default LRU cache capacity.
+    /// Create a new `MftPathResolver` from an MFT reference.
     ///
     /// # Arguments
     /// * `mft` - Reference to the MFT.
     pub fn new(mft: &Mft) -> Self {
-        let path_resolver = PathResolver::new(&mft.volume, None);
-        MftPathResolver { path_resolver }
-    }
-
-    /// Create a new `MftPathResolver` from an MFT reference with a specified LRU cache capacity.
-    ///
-    /// # Arguments
-    /// * `mft` - Reference to the MFT.
-    /// * `capacity` - The capacity for the LRU cache. Should be greater than 0. Default is 4K.
-    pub fn with_capacity(mft: &Mft, capacity: usize) -> Self {
-        let path_resolver = PathResolver::new(&mft.volume, Some(capacity));
+        let path_resolver = PathResolver::new(&mft.volume);
         MftPathResolver { path_resolver }
     }
 }
@@ -95,22 +80,12 @@ pub struct JournalPathResolver {
 }
 
 impl JournalPathResolver {
-    /// Create a new `JournalPathResolver` from a USN journal reference using the default LRU cache capacity.
+    /// Create a new `JournalPathResolver` from a USN journal reference.
     ///
     /// # Arguments
     /// * `journal` - Reference to the USN journal.
     pub fn new(journal: &UsnJournal) -> Self {
-        let path_resolver = PathResolver::new(&journal.volume, None);
-        JournalPathResolver { path_resolver }
-    }
-
-    /// Create a new `JournalPathResolver` from a USN journal reference with a specified LRU cache capacity.
-    ///
-    /// # Arguments
-    /// * `journal` - Reference to the USN journal.
-    /// * `capacity` - The capacity for the LRU cache. Should be greater than 0. Default is 4K.
-    pub fn with_capacity(journal: &UsnJournal, capacity: usize) -> Self {
-        let path_resolver = PathResolver::new(&journal.volume, Some(capacity));
+        let path_resolver = PathResolver::new(&journal.volume);
         JournalPathResolver { path_resolver }
     }
 }
@@ -136,90 +111,48 @@ impl PathResolver {
     ///
     /// # Arguments
     /// * `volume` - Reference to the `Volume` struct representing the NTFS/ReFS volume.
-    /// * `capacity_opt` - Optional LRU cache capacity. If `None` or 0, uses default.
-    fn new(volume: &Volume, capacity_opt: Option<usize>) -> Self {
-        let capacity = capacity_opt
-            .filter(|&cap| cap > 0) // Ensure capacity is positive
-            .and_then(NonZeroUsize::new) // Convert to NonZeroUsize
-            .unwrap_or_else(|| NonZeroUsize::new(LRU_CACHE_CAPACITY).unwrap()); // Default if None or 0
-
-        let fid_path_cache = LruCache::new(capacity);
+    fn new(volume: &Volume) -> Self {
         PathResolver {
             volume_handle: volume.handle,
             drive_letter: volume.drive_letter,
-            dir_fid_path_cache: fid_path_cache,
         }
     }
 
     /// Resolve the full path for a given MFT entry.
     ///
-    /// Uses the LRU cache to speed up repeated lookups.
     /// Returns `Some(PathBuf)` if the path can be resolved, or `None` if not found.
     fn resolve_path_for_mft(&mut self, mft_entry: &MftEntry) -> Option<PathBuf> {
-        self.resolve_path(
-            mft_entry.fid,
-            mft_entry.parent_fid,
-            &mft_entry.file_name,
-            mft_entry.is_dir(),
-        )
+        self.resolve_path(mft_entry.parent_fid, &mft_entry.file_name)
     }
 
     /// Resolve the full path for a given USN entry.
     ///
-    /// Uses the LRU cache to speed up repeated lookups.
     /// Returns `Some(PathBuf)` if the path can be resolved, or `None` if not found.
     fn resolve_path_for_usn(&mut self, usn_entry: &UsnEntry) -> Option<PathBuf> {
-        self.resolve_path(
-            usn_entry.fid,
-            usn_entry.parent_fid,
-            &usn_entry.file_name,
-            usn_entry.is_dir(),
-        )
+        self.resolve_path(usn_entry.parent_fid, &usn_entry.file_name)
     }
 
     /// Internal: Resolve the full path from file ID, parent file ID, and file name.
     ///
     /// # Arguments
-    /// * `fid` - File ID of the target file.
     /// * `parent_fid` - File ID of the parent directory.
     /// * `file_name` - File or directory name.
-    /// * `is_dir` - Indicates if the target is a directory.
     ///
     /// # Returns
     /// * `Some(PathBuf)` - The resolved path if found.
     /// * `None` - If the path cannot be resolved.
-    fn resolve_path(
-        &mut self,
-        fid: u64,
-        parent_fid: u64,
-        file_name: &OsString,
-        is_dir: bool,
-    ) -> Option<PathBuf> {
-        if let Some(path) = self.dir_fid_path_cache.get(&fid) {
-            return Some(path.clone());
-        }
-
-        if let Some(parent_path) = self.dir_fid_path_cache.get(&parent_fid) {
-            let path = parent_path.join(file_name);
-
-            if is_dir {
-                self.dir_fid_path_cache.put(fid, path.clone());
+    fn resolve_path(&mut self, parent_fid: u64, file_name: &OsString) -> Option<PathBuf> {
+        match self.file_id_to_path(parent_fid) {
+            Ok(parent_path) => {
+                let path = parent_path.join(file_name);
+                return Some(path);
             }
-
-            return Some(path);
-        }
-
-        // If parent fid not in cache, try to get parent path from file system
-        if let Ok(parent_path) = self.file_id_to_path(parent_fid) {
-            let path = parent_path.join(file_name);
-
-            self.dir_fid_path_cache.put(parent_fid, parent_path);
-
-            if is_dir {
-                self.dir_fid_path_cache.put(fid, path.clone());
+            Err(err) => {
+                eprintln!(
+                    "===== Failed to resolve path for file ID {}: {}",
+                    parent_fid, err
+                );
             }
-
-            return Some(path);
         }
 
         None
@@ -236,16 +169,22 @@ impl PathResolver {
         };
 
         let file_handle = unsafe {
-            FileSystem::OpenFileById(
+            match FileSystem::OpenFileById(
                 self.volume_handle,
                 &file_id_desc,
-                FileSystem::FILE_GENERIC_READ.0,
+                0,
                 FileSystem::FILE_SHARE_READ
                     | FileSystem::FILE_SHARE_WRITE
                     | FileSystem::FILE_SHARE_DELETE,
                 None,
-                FILE_FLAGS_AND_ATTRIBUTES::default(),
-            )?
+                FileSystem::FILE_FLAG_BACKUP_SEMANTICS,
+            ) {
+                Ok(handle) => handle,
+                Err(err) => {
+                    eprintln!("Failed to open file by ID: {}", err);
+                    return Err(err);
+                }
+            }
         };
 
         let init_len = size_of::<u32>() + (Foundation::MAX_PATH as usize) * size_of::<u16>();

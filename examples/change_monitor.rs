@@ -12,7 +12,7 @@ fn main() {
 }
 
 fn run() -> Result<(), UsnError> {
-    let drive_letter = 'C';
+    let drive_letter = 'D';
     let volume = Volume::from_drive_letter(drive_letter)?;
     let usn_journal = UsnJournal::new(volume);
 
@@ -20,7 +20,7 @@ fn run() -> Result<(), UsnError> {
 
     let enum_options = journal::EnumOptions {
         start_usn: journal_data.next_usn,
-        only_on_close: true,
+        only_on_close: false,
         wait_for_more: true,
         ..Default::default()
     };
