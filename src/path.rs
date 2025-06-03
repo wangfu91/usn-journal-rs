@@ -40,9 +40,9 @@ const LRU_CACHE_CAPACITY: usize = 4 * 1024; // 4K
 /// Resolves file paths from file IDs on an NTFS/ReFS volume, using an LRU cache for efficiency.
 #[derive(Debug)]
 struct PathResolver {
-    volume_handle: HANDLE,                      // Handle to the NTFS/ReFS volume
-    drive_letter: Option<char>,                 // Optional drive letter (e.g., 'C')
-    dir_fid_path_cache: LruCache<u64, PathBuf>, // LRU cache for dir file ID to path mapping
+    volume_handle: HANDLE,      // Handle to the NTFS/ReFS volume
+    drive_letter: Option<char>, // Optional drive letter (e.g., 'C')
+    dir_fid_path_cache: LruCache<u64, (PathBuf, OsString)>, // LRU cache for dir file ID to (path, filename) mapping
 }
 
 /// Path resolver for MFT-based lookups.
@@ -195,34 +195,61 @@ impl PathResolver {
         file_name: &OsString,
         is_dir: bool,
     ) -> Option<PathBuf> {
-        if let Some(path) = self.dir_fid_path_cache.get(&fid) {
-            return Some(path.clone());
-        }
-
-        if let Some(parent_path) = self.dir_fid_path_cache.get(&parent_fid) {
-            let path = parent_path.join(file_name);
-
-            if is_dir {
-                self.dir_fid_path_cache.put(fid, path.clone());
+        // 1. Check cache for the current FID.
+        if let Some((cached_path, cached_file_name)) = self.dir_fid_path_cache.get(&fid) {
+            // If the FID is in cache, check if the filename matches the one used to create the cached path.
+            if cached_file_name == file_name {
+                // Names match. The cached path is valid for this FID with this name.
+                return Some(cached_path.clone());
+            } else {
+                // Names differ. This means the directory (fid) was renamed since it was cached.
+                // The cached_path is stale because its last component is the old name.
+                // Remove it and proceed to re-resolve.
+                self.dir_fid_path_cache.pop(&fid);
+                // Fall through to re-resolve using parent information.
             }
-
-            return Some(path);
         }
 
-        // If parent fid not in cache, try to get parent path from file system
-        if let Ok(parent_path) = self.file_id_to_path(parent_fid) {
-            let path = parent_path.join(file_name);
+        // At this point, 'fid' is not in cache with the correct 'file_name',
+        // or it wasn't in cache at all.
 
-            self.dir_fid_path_cache.put(parent_fid, parent_path);
+        // 2. Try to get the parent directory's path.
+        let parent_dir_path: PathBuf;
 
-            if is_dir {
-                self.dir_fid_path_cache.put(fid, path.clone());
-            }
-
-            return Some(path);
+        // 2a. Check cache for parent_fid.
+        if let Some((cached_parent_path, _)) = self.dir_fid_path_cache.get(&parent_fid) {
+            // We use the cached_parent_path. If the parent itself was renamed, this path might be
+            // stale. However, this strategy prioritizes using the cache. The check for 'fid' above
+            // handles if 'fid' itself was renamed. If this cached_parent_path leads to issues,
+            // eventually the parent's entry might get updated when it's resolved directly.
+            parent_dir_path = cached_parent_path.clone();
+        }
+        // 2b. Parent not in cache, resolve it from the file system.
+        else if let Ok(resolved_parent_path) = self.file_id_to_path(parent_fid) {
+            parent_dir_path = resolved_parent_path;
+            // Cache this newly resolved parent path.
+            // The name stored is the actual name of the parent directory as resolved.
+            let parent_actual_name = parent_dir_path
+                .file_name()
+                .map_or_else(OsString::new, |s| s.to_os_string());
+            self.dir_fid_path_cache
+                .put(parent_fid, (parent_dir_path.clone(), parent_actual_name));
+        }
+        // 2c. Parent path could not be resolved.
+        else {
+            return None; // Cannot determine parent path.
         }
 
-        None
+        // 3. Construct the current item's path using the parent's path and the current file_name.
+        let current_path = parent_dir_path.join(file_name);
+
+        // 4. If the current item is a directory, cache its path and current name.
+        if is_dir {
+            self.dir_fid_path_cache
+                .put(fid, (current_path.clone(), file_name.clone()));
+        }
+
+        Some(current_path)
     }
 
     /// Resolves a file ID to its full path on the specified NTFS/ReFS volume.
