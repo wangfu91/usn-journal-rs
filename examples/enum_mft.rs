@@ -16,7 +16,7 @@ fn run() -> Result<(), UsnError> {
     let volume = Volume::from_drive_letter(drive_letter)?;
     let mft = Mft::new(volume);
 
-    let mut path_resolver = MftPathResolver::new(&mft);
+    let mut path_resolver = MftPathResolver::new_with_cache(&mft);
 
     for entry in mft.iter() {
         let full_path = path_resolver.resolve_path(&entry);
