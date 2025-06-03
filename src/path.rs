@@ -15,7 +15,7 @@ use std::{
     path::PathBuf,
 };
 use windows::Win32::{
-    Foundation::{self, HANDLE},
+    Foundation::{self},
     Storage::FileSystem::{self, FILE_FLAGS_AND_ATTRIBUTES, FILE_ID_DESCRIPTOR},
 };
 
@@ -39,24 +39,23 @@ const LRU_CACHE_CAPACITY: usize = 4 * 1024; // 4K
 
 /// Resolves file paths from file IDs on an NTFS/ReFS volume, using an LRU cache for efficiency.
 #[derive(Debug)]
-struct PathResolver {
-    volume_handle: HANDLE,      // Handle to the NTFS/ReFS volume
-    drive_letter: Option<char>, // Optional drive letter (e.g., 'C')
+struct PathResolver<'a> {
+    volume: &'a Volume, // The NTFS/ReFS volume
     dir_fid_path_cache: Option<LruCache<u64, (PathBuf, OsString)>>, // LRU cache for dir file ID to (path, filename) mapping
 }
 
 /// Path resolver for MFT-based lookups.
 #[derive(Debug)]
-pub struct MftPathResolver {
-    path_resolver: PathResolver,
+pub struct MftPathResolver<'a> {
+    path_resolver: PathResolver<'a>,
 }
 
-impl MftPathResolver {
+impl<'a> MftPathResolver<'a> {
     /// Create a new `MftPathResolver` from an MFT reference.
     ///
     /// # Arguments
     /// * `mft` - Reference to the MFT.
-    pub fn new(mft: &Mft) -> Self {
+    pub fn new(mft: &'a Mft) -> Self {
         let path_resolver = PathResolver::new(&mft.volume);
         MftPathResolver { path_resolver }
     }
@@ -65,13 +64,13 @@ impl MftPathResolver {
     ///
     /// # Arguments
     /// * `mft` - Reference to the MFT.
-    pub fn new_with_cache(mft: &Mft) -> Self {
-        let path_resolver = PathResolver::new(&mft.volume);
+    pub fn new_with_cache(mft: &'a Mft) -> Self {
+        let path_resolver = PathResolver::new_with_cache(&mft.volume);
         MftPathResolver { path_resolver }
     }
 }
 
-impl PathResolveTrait for MftPathResolver {
+impl<'a> PathResolveTrait for MftPathResolver<'a> {
     type InputEntry = MftEntry;
 
     /// Resolve the full path for a given MFT entry.
@@ -89,16 +88,16 @@ impl PathResolveTrait for MftPathResolver {
 
 /// Path resolver for USN journal-based lookups.
 #[derive(Debug)]
-pub struct JournalPathResolver {
-    path_resolver: PathResolver,
+pub struct JournalPathResolver<'a> {
+    path_resolver: PathResolver<'a>,
 }
 
-impl JournalPathResolver {
+impl<'a> JournalPathResolver<'a> {
     /// Create a new `JournalPathResolver` from a USN journal reference.
     ///
     /// # Arguments
     /// * `journal` - Reference to the USN journal.
-    pub fn new(journal: &UsnJournal) -> Self {
+    pub fn new(journal: &'a UsnJournal) -> Self {
         let path_resolver = PathResolver::new(&journal.volume);
         JournalPathResolver { path_resolver }
     }
@@ -107,13 +106,13 @@ impl JournalPathResolver {
     ///
     /// # Arguments
     /// * `journal` - Reference to the USN journal.
-    pub fn new_with_cache(journal: &UsnJournal) -> Self {
+    pub fn new_with_cache(journal: &'a UsnJournal) -> Self {
         let path_resolver = PathResolver::new_with_cache(&journal.volume);
         JournalPathResolver { path_resolver }
     }
 }
 
-impl PathResolveTrait for JournalPathResolver {
+impl<'a> PathResolveTrait for JournalPathResolver<'a> {
     type InputEntry = UsnEntry;
 
     /// Resolve the full path for a given USN entry.
@@ -129,15 +128,14 @@ impl PathResolveTrait for JournalPathResolver {
     }
 }
 
-impl PathResolver {
+impl<'a> PathResolver<'a> {
     /// Create a new `PathResolver` for a given NTFS/ReFs volume and drive letter.
     ///
     /// # Arguments
     /// * `volume` - Reference to the `Volume` struct representing the NTFS/ReFS volume.
-    fn new(volume: &Volume) -> Self {
+    fn new(volume: &'a Volume) -> Self {
         PathResolver {
-            volume_handle: volume.handle,
-            drive_letter: volume.drive_letter,
+            volume,
             dir_fid_path_cache: None,
         }
     }
@@ -146,12 +144,11 @@ impl PathResolver {
     ///
     /// # Arguments
     /// * `volume` - Reference to the `Volume` struct representing the NTFS/ReFS volume.
-    fn new_with_cache(volume: &Volume) -> Self {
+    fn new_with_cache(volume: &'a Volume) -> Self {
         let capacity = NonZeroUsize::new(LRU_CACHE_CAPACITY).unwrap();
         let cache = LruCache::new(capacity);
         PathResolver {
-            volume_handle: volume.handle,
-            drive_letter: volume.drive_letter,
+            volume,
             dir_fid_path_cache: Some(cache),
         }
     }
@@ -163,16 +160,22 @@ impl PathResolver {
     fn resolve_path_for_mft(&mut self, mft_entry: &MftEntry) -> Option<PathBuf> {
         if let Some(cache) = &mut self.dir_fid_path_cache {
             // Use the cache to resolve the path
-            return resolve_path_with_cache(
+            resolve_path_with_cache(
+                self.volume,
                 mft_entry.fid,
                 mft_entry.parent_fid,
                 &mft_entry.file_name,
                 mft_entry.is_dir(),
                 cache,
-            );
+            )
         } else {
             // No cache available, resolve directly
-            return resolve_path(mft_entry.fid, mft_entry.parent_fid, &mft_entry.file_name);
+            resolve_path(
+                self.volume,
+                mft_entry.fid,
+                mft_entry.parent_fid,
+                &mft_entry.file_name,
+            )
         }
     }
 
@@ -183,24 +186,35 @@ impl PathResolver {
     fn resolve_path_for_usn(&mut self, usn_entry: &UsnEntry) -> Option<PathBuf> {
         if let Some(cache) = &mut self.dir_fid_path_cache {
             // Use the cache to resolve the path
-            return resolve_path_with_cache(
+            resolve_path_with_cache(
+                self.volume,
                 usn_entry.fid,
                 usn_entry.parent_fid,
                 &usn_entry.file_name,
                 usn_entry.is_dir(),
                 cache,
-            );
+            )
         } else {
             // No cache available, resolve directly
-            return resolve_path(usn_entry.fid, usn_entry.parent_fid, &usn_entry.file_name);
+            resolve_path(
+                self.volume,
+                usn_entry.fid,
+                usn_entry.parent_fid,
+                &usn_entry.file_name,
+            )
         }
     }
 }
 
-fn resolve_path(fid: u64, parent_fid: u64, file_name: &OsString) -> Option<PathBuf> {
-    if let Ok(resolved_parent_path) = file_id_to_path(parent_fid) {
+fn resolve_path(
+    volume: &Volume,
+    fid: u64,
+    parent_fid: u64,
+    file_name: &OsString,
+) -> Option<PathBuf> {
+    if let Ok(resolved_parent_path) = file_id_to_path(volume, parent_fid) {
         return Some(resolved_parent_path.join(file_name));
-    } else if let Ok(resolved_path) = file_id_to_path(fid) {
+    } else if let Ok(resolved_path) = file_id_to_path(volume, fid) {
         return Some(resolved_path);
     }
 
@@ -219,6 +233,7 @@ fn resolve_path(fid: u64, parent_fid: u64, file_name: &OsString) -> Option<PathB
 /// * `Some(PathBuf)` - The resolved path if found.
 /// * `None` - If the path cannot be resolved.
 fn resolve_path_with_cache(
+    volume: &Volume,
     fid: u64,
     parent_fid: u64,
     file_name: &OsString,
@@ -255,7 +270,7 @@ fn resolve_path_with_cache(
         parent_dir_path = cached_parent_path.clone();
     }
     // 2b. Parent not in cache, resolve it from the file system.
-    else if let Ok(resolved_parent_path) = file_id_to_path(parent_fid) {
+    else if let Ok(resolved_parent_path) = file_id_to_path(volume, parent_fid) {
         parent_dir_path = resolved_parent_path;
         // Cache this newly resolved parent path.
         // The name stored is the actual name of the parent directory as resolved.
@@ -281,7 +296,7 @@ fn resolve_path_with_cache(
 }
 
 /// Resolves a file ID to its full path on the specified NTFS/ReFS volume.
-fn file_id_to_path(file_id: u64) -> windows::core::Result<PathBuf> {
+fn file_id_to_path(volume: &Volume, file_id: u64) -> windows::core::Result<PathBuf> {
     let file_id_desc = FILE_ID_DESCRIPTOR {
         Type: FileSystem::FileIdType,
         dwSize: size_of::<FileSystem::FILE_ID_DESCRIPTOR>() as u32,
@@ -292,7 +307,7 @@ fn file_id_to_path(file_id: u64) -> windows::core::Result<PathBuf> {
 
     let file_handle = unsafe {
         FileSystem::OpenFileById(
-            self.volume_handle,
+            volume.handle,
             &file_id_desc,
             FileSystem::FILE_GENERIC_READ.0,
             FileSystem::FILE_SHARE_READ
@@ -347,8 +362,7 @@ fn file_id_to_path(file_id: u64) -> windows::core::Result<PathBuf> {
     // Create the full path directly with a single allocation
     let mut full_path = PathBuf::new();
 
-    if let Some(drive_letter) = self.drive_letter {
-        // Only convert to uppercase if it's lowercase
+    if let Some(drive_letter) = volume.drive_letter {
         let drive_letter = if drive_letter.is_ascii_lowercase() {
             drive_letter.to_ascii_uppercase()
         } else {
@@ -356,6 +370,8 @@ fn file_id_to_path(file_id: u64) -> windows::core::Result<PathBuf> {
         };
 
         full_path.push(format!("{}:\\", drive_letter));
+    } else if let Some(mount_point) = &volume.mount_point {
+        full_path.push(mount_point);
     }
 
     full_path.push(sub_path);

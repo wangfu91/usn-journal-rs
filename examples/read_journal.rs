@@ -16,7 +16,7 @@ fn run() -> Result<(), UsnError> {
     let volume = Volume::from_drive_letter(drive_letter)?;
     let usn_journal = UsnJournal::new(volume);
 
-    let mut path_resolver = JournalPathResolver::new(&usn_journal);
+    let mut path_resolver = JournalPathResolver::new_with_cache(&usn_journal);
 
     for entry in usn_journal.iter()? {
         let full_path = path_resolver.resolve_path(&entry);
