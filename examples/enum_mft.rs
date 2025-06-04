@@ -16,7 +16,7 @@ fn run() -> Result<(), UsnError> {
 
     for entry in mft.iter() {
         let full_path = path_resolver.resolve_path(&entry);
-        println!("fid={}, path={:?}", entry.fid, full_path);
+        println!("{}", entry.pretty_format(full_path));
     }
 
     Ok(())
