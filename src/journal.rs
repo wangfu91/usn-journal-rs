@@ -10,7 +10,9 @@ use crate::{
     DEFAULT_BUFFER_SIZE, DEFAULT_JOURNAL_ALLOCATION_DELTA, DEFAULT_JOURNAL_MAX_SIZE,
     USN_REASON_MASK_ALL, Usn, time,
 };
+use chrono::{DateTime, Local};
 use log::{debug, warn};
+use std::path::Path;
 use std::{ffi::OsString, os::windows::ffi::OsStringExt, time::SystemTime};
 use std::{ffi::c_void, mem::size_of};
 use windows::Win32::Foundation::HANDLE;
@@ -424,7 +426,7 @@ impl UsnEntry {
     }
 
     /// Converts a USN reason bitfield to a human-readable string using Windows constants.
-    pub fn get_readable_reason_string(&self) -> String {
+    pub fn get_reason_string(&self) -> String {
         let reason = self.reason;
         let mut reasons = Vec::new();
         if reason & USN_REASON_DATA_OVERWRITE != 0 {
@@ -503,6 +505,47 @@ impl UsnEntry {
             reasons.push("UNKNOWN");
         }
         reasons.join(" | ")
+    }
+
+    /// Formats the USN entry into a human-readable string.
+    pub fn pretty_format<P>(&self, full_path_opt: Option<P>) -> String
+    where
+        P: AsRef<Path>,
+    {
+        let mut output = String::new();
+        output.push_str(&format!("{:<20}: 0x{:x}\n", "USN", self.usn));
+        output.push_str(&format!(
+            "{:<20}: {}\n",
+            "Type",
+            if self.is_dir() { "Directory" } else { "File" }
+        ));
+        output.push_str(&format!("{:<20}: 0x{:x}\n", "File ID", self.fid));
+        output.push_str(&format!(
+            "{:<20}: 0x{:x}\n",
+            "Parent File ID", self.parent_fid
+        ));
+        let dt_local: DateTime<Local> = DateTime::from(self.time);
+        output.push_str(&format!(
+            "{:<20}: {}\n",
+            "Timestamp",
+            dt_local.format("%Y-%m-%d %H:%M:%S")
+        ));
+        output.push_str(&format!("{:<20}: {}\n", "Reason", self.get_reason_string()));
+        if let Some(full_path) = full_path_opt {
+            output.push_str(&format!(
+                "{:<20}: {}\n",
+                "Path",
+                full_path.as_ref().to_string_lossy()
+            ));
+        } else {
+            // Fallback to file name if full path is not available
+            output.push_str(&format!(
+                "{:<20}: {}\n",
+                "Path",
+                self.file_name.to_string_lossy()
+            ));
+        }
+        output
     }
 }
 

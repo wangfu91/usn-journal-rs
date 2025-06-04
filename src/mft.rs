@@ -5,7 +5,7 @@
 //! required to sequentially retrieve and parse USN records from the volume.
 
 use crate::{DEFAULT_BUFFER_SIZE, Usn, errors::UsnError, volume::Volume};
-use std::{ffi::OsString, os::windows::ffi::OsStringExt};
+use std::{ffi::OsString, os::windows::ffi::OsStringExt, path::Path};
 use windows::Win32::{
     Foundation::{ERROR_HANDLE_EOF, HANDLE},
     Storage::FileSystem::{
@@ -54,6 +54,38 @@ impl MftEntry {
     pub fn is_hidden(&self) -> bool {
         let attributes = FILE_FLAGS_AND_ATTRIBUTES(self.file_attributes);
         attributes.contains(FILE_ATTRIBUTE_HIDDEN)
+    }
+
+    pub fn pretty_format<P>(&self, full_path_opt: Option<P>) -> String
+    where
+        P: AsRef<Path>,
+    {
+        let mut output = String::new();
+        output.push_str(&format!("{:<20}: 0x{:x}\n", "File ID", self.fid));
+        output.push_str(&format!(
+            "{:<20}: 0x{:x}\n",
+            "Parent File ID", self.parent_fid
+        ));
+        output.push_str(&format!(
+            "{:<20}: {}\n",
+            "Type",
+            if self.is_dir() { "Directory" } else { "File" }
+        ));
+        if let Some(full_path) = full_path_opt {
+            output.push_str(&format!(
+                "{:<20}: {}\n",
+                "Path",
+                full_path.as_ref().to_string_lossy()
+            ));
+        } else {
+            // Fallback to file name if full path is not available
+            output.push_str(&format!(
+                "{:<20}: {}\n",
+                "Path",
+                self.file_name.to_string_lossy()
+            ));
+        }
+        output
     }
 }
 

@@ -20,21 +20,16 @@ fn run() -> Result<(), UsnError> {
 
     let enum_options = journal::EnumOptions {
         start_usn: journal_data.next_usn,
-        only_on_close: true,
+        only_on_close: false,
         wait_for_more: true,
         ..Default::default()
     };
 
-    let mut path_resolver = PathResolver::new_with_cache(&volume);
+    let mut path_resolver = PathResolver::new(&volume);
 
     for entry in usn_journal.iter_with_options(enum_options)? {
         let full_path = path_resolver.resolve_path(&entry);
-        println!(
-            "usn={}, reason={}, path={:?}",
-            entry.usn,
-            entry.get_readable_reason_string(),
-            full_path
-        );
+        println!("{}", entry.pretty_format(full_path));
     }
 
     Ok(())

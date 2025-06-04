@@ -7,7 +7,7 @@ fn main() {
 }
 
 fn run() -> Result<(), UsnError> {
-    let drive_letter = 'C';
+    let drive_letter = 'D';
     let volume = Volume::from_drive_letter(drive_letter)?;
     let usn_journal = UsnJournal::new(&volume);
 
@@ -15,10 +15,7 @@ fn run() -> Result<(), UsnError> {
 
     for entry in usn_journal.iter()? {
         let full_path = path_resolver.resolve_path(&entry);
-        println!(
-            "usn={}, file_id={}, path={:?}",
-            entry.usn, entry.fid, full_path
-        );
+        println!("{}", entry.pretty_format(full_path));
     }
 
     Ok(())
