@@ -1,7 +1,7 @@
 use usn_journal_rs::{
     errors::UsnError,
     journal::{self, UsnJournal},
-    path::{JournalPathResolver, PathResolveTrait},
+    path::PathResolver,
     volume::Volume,
 };
 
@@ -14,7 +14,7 @@ fn main() {
 fn run() -> Result<(), UsnError> {
     let drive_letter = 'D';
     let volume = Volume::from_drive_letter(drive_letter)?;
-    let usn_journal = UsnJournal::new(volume);
+    let usn_journal = UsnJournal::new(&volume);
 
     let journal_data = usn_journal.query(true)?;
 
@@ -25,7 +25,7 @@ fn run() -> Result<(), UsnError> {
         ..Default::default()
     };
 
-    let mut path_resolver = JournalPathResolver::new_with_cache(&usn_journal);
+    let mut path_resolver = PathResolver::new_with_cache(&volume);
 
     for entry in usn_journal.iter_with_options(enum_options)? {
         let full_path = path_resolver.resolve_path(&entry);
