@@ -4,7 +4,7 @@
 
 # usn-journal-rs 🚀
 
-A Rust library for working with the Windows NTFS/ReFS USN change journal and enumerating the NTFS Master File Table (MFT).
+A Rust library for working with the NTFS USN change journal and enumerating the MFT.
 
 ## Overview 📝
 
@@ -27,7 +27,7 @@ use usn_journal_rs::{volume::Volume, journal::UsnJournal};
 
 let drive_letter = 'C';
 let volume = Volume::from_drive_letter(drive_letter)?;
-let journal = UsnJournal::new(volume);
+let journal = UsnJournal::new(&volume);
 for entry in journal.iter()? {
     println!("USN entry: {:?}", entry);
 }
@@ -40,7 +40,7 @@ use usn_journal_rs::{volume::Volume, mft::Mft};
 
 let drive_letter = 'C';
 let volume = Volume::from_drive_letter(drive_letter)?;
-let mft = Mft::new(volume);
+let mft = Mft::new(&volume);
 for entry in mft.iter() {
     println!("MFT entry: {:?}", entry);
 }
