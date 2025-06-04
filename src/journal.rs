@@ -95,13 +95,13 @@ impl From<USN_JOURNAL_DATA_V0> for UsnJournalData {
 
 #[derive(Debug, Clone)]
 /// Iterator for enumerating USN journal records on NTFS/ReFS volume.
-pub struct UsnJournal {
-    pub(crate) volume: Volume,
+pub struct UsnJournal<'a> {
+    pub(crate) volume: &'a Volume,
 }
 
-impl UsnJournal {
+impl<'a> UsnJournal<'a> {
     /// Create a new `UsnJournal` instance.
-    pub fn new(volume: Volume) -> Self {
+    pub fn new(volume: &'a Volume) -> Self {
         UsnJournal { volume }
     }
 
@@ -524,7 +524,7 @@ mod tests {
 
         let result = {
             let volume = Volume::from_mount_point(mount_point.as_path())?;
-            let usn_journal = UsnJournal::new(volume);
+            let usn_journal = UsnJournal::new(&volume);
             let journal_data = usn_journal.query(true)?;
             assert!(
                 journal_data.journal_id > 0,
@@ -556,7 +556,7 @@ mod tests {
 
         let result = {
             let volume = Volume::from_mount_point(mount_point.as_path())?;
-            let usn_journal = UsnJournal::new(volume);
+            let usn_journal = UsnJournal::new(&volume);
             let _ = usn_journal.query(true)?;
             usn_journal.delete()?;
 
@@ -577,7 +577,7 @@ mod tests {
 
         let result = {
             let volume = Volume::from_mount_point(mount_point.as_path())?;
-            let usn_journal = UsnJournal::new(volume);
+            let usn_journal = UsnJournal::new(&volume);
             usn_journal
                 .create_or_update(DEFAULT_JOURNAL_MAX_SIZE, DEFAULT_JOURNAL_ALLOCATION_DELTA)?;
 
@@ -598,7 +598,7 @@ mod tests {
 
         let result = {
             let volume = Volume::from_mount_point(mount_point.as_path())?;
-            let usn_journal = UsnJournal::new(volume);
+            let usn_journal = UsnJournal::new(&volume);
             let mut previous_usn = -1i64;
             for entry in usn_journal.iter()? {
                 println!("USN entry: {:?}", entry);

@@ -79,13 +79,13 @@ impl Default for EnumOptions {
 
 /// Represents the Master File Table (MFT) enumerator.
 #[derive(Debug)]
-pub struct Mft {
-    pub(crate) volume: Volume,
+pub struct Mft<'a> {
+    pub(crate) volume: &'a Volume,
 }
 
-impl Mft {
+impl<'a> Mft<'a> {
     /// Creates a new `Mft` instance.
-    pub fn new(volume: Volume) -> Self {
+    pub fn new(volume: &'a Volume) -> Self {
         Mft { volume }
     }
 
@@ -216,7 +216,7 @@ mod tests {
 
         let result = {
             let volume = Volume::from_mount_point(mount_point.as_path())?;
-            let mft = Mft::new(volume);
+            let mft = Mft::new(&volume);
             for entry in mft.iter() {
                 println!("MFT entry: {:?}", entry);
                 // Check if the Mft entry is valid
