@@ -11,7 +11,7 @@ use std::{
     path::PathBuf,
 };
 use windows::Win32::{
-    Foundation::{self},
+    Foundation,
     Storage::FileSystem::{self, FILE_FLAGS_AND_ATTRIBUTES, FILE_ID_DESCRIPTOR},
 };
 
@@ -55,15 +55,15 @@ impl PathResolvableEntry for UsnEntry {
     }
 }
 
-/// Resolves file paths from file IDs on an NTFS/ReFS volume, using an LRU cache for efficiency.
+/// Resolves file paths from file IDs on an NTFS/ReFS volume, optionally using an LRU cache for efficiency.
 #[derive(Debug)]
 pub struct PathResolver<'a> {
-    volume: &'a Volume, // The NTFS/ReFS volume
-    dir_fid_path_cache: Option<LruCache<u64, (PathBuf, OsString)>>, // LRU cache for dir file ID to (path, filename) mapping
+    volume: &'a Volume,
+    dir_fid_path_cache: Option<LruCache<u64, (PathBuf, OsString)>>,
 }
 
 impl<'a> PathResolver<'a> {
-    /// Create a new `PathResolver` for a given NTFS/ReFs volume and drive letter.
+    /// Create a new `PathResolver` for a given NTFS/ReFs volume.
     ///
     /// # Arguments
     /// * `volume` - Reference to the `Volume` struct representing the NTFS/ReFS volume.
@@ -74,7 +74,7 @@ impl<'a> PathResolver<'a> {
         }
     }
 
-    /// Create a new `PathResolver` for a given NTFS/ReFs volume and drive letter.
+    /// Create a new `PathResolver` for a given NTFS/ReFs volume.
     ///
     /// # Arguments
     /// * `volume` - Reference to the `Volume` struct representing the NTFS/ReFS volume.
