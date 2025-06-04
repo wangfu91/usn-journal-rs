@@ -15,6 +15,9 @@ use windows::Win32::{
     Storage::FileSystem::{self, FILE_FLAGS_AND_ATTRIBUTES, FILE_ID_DESCRIPTOR},
 };
 
+const LRU_CACHE_CAPACITY: usize = 4 * 1024; // 4K
+
+/// Trait for entries that can be resolved to a file path.
 pub trait PathResolvableEntry {
     fn fid(&self) -> u64;
     fn parent_fid(&self) -> u64;
@@ -51,8 +54,6 @@ impl PathResolvableEntry for UsnEntry {
         self.is_dir()
     }
 }
-
-const LRU_CACHE_CAPACITY: usize = 4 * 1024; // 4K
 
 /// Resolves file paths from file IDs on an NTFS/ReFS volume, using an LRU cache for efficiency.
 #[derive(Debug)]
