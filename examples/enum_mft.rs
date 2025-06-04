@@ -9,9 +9,7 @@ fn main() {
 fn run() -> Result<(), UsnError> {
     let drive_letter = 'C';
     let volume = Volume::from_drive_letter(drive_letter)?;
-
     let mft = Mft::new(&volume);
-
     let mut path_resolver = PathResolver::new_with_cache(&volume);
 
     for entry in mft.iter() {
