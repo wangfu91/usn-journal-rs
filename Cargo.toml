@@ -2,7 +2,7 @@
 name = "usn-journal-rs"
 version = "0.2.2"
 edition = "2024"
-description = "A library to manipulate the Windows USN change journal and enumerating the NTFS Master File Table (MFT)."
+description = "A Rust library for working with the NTFS USN change journal and enumerating the MFT."
 license = "MIT"
 repository = "https://github.com/wangfu91/usn-journal-rs"
 keywords = ["usn-journal", "filesystem", "ntfs", "mft", "refs"]
@@ -12,10 +12,10 @@ categories = ["filesystem", "os::windows-apis"]
 targets = ["x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc", "i686-pc-windows-msvc"]
 
 [dependencies]
-chrono = "0.4.41"
+chrono = "0.4"
 log = "0.4"
 lru = "0.14"
-thiserror = "2.0.12"
+thiserror = "2.0"
 
 [dependencies.windows]
 version = "0.61"
