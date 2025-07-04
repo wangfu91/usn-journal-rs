@@ -1,3 +1,5 @@
+#![allow(clippy::uninlined_format_args)]
+
 //! # usn-journal-rs
 //!
 //! A Rust library for manipulating the NTFS/ReFS USN change journal and enumerating the NTFS Master File Table (MFT).
