@@ -232,7 +232,7 @@ impl Iterator for MftIter {
             Ok(Some(record)) => Some(Ok(MftEntry::new(record))),
             Ok(None) => None,
             Err(err) => {
-                debug!("Error finding next MFT entry: {}", err);
+                debug!("Error finding next MFT entry: {err}");
                 Some(Err(err))
             }
         }
@@ -255,7 +255,7 @@ mod tests {
             let mft = Mft::new(&volume);
             for result in mft.iter() {
                 let entry = result?; // Handle the Result<MftEntry>
-                println!("MFT entry: {:?}", entry);
+                println!("MFT entry: {entry:?}");
                 // Check if the Mft entry is valid
                 assert!(entry.usn >= 0, "USN is not valid");
                 assert!(entry.fid > 0, "File ID is not valid");

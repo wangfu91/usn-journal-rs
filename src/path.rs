@@ -271,7 +271,7 @@ fn file_id_to_path(volume: &Volume, file_id: u64) -> windows::core::Result<PathB
             drive_letter
         };
 
-        full_path.push(format!("{}:\\", drive_letter));
+        full_path.push(format!("{drive_letter}:\\"));
     } else if let Some(mount_point) = &volume.mount_point {
         full_path.push(mount_point);
     }
