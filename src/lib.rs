@@ -19,8 +19,11 @@
 //! let drive_letter = 'C';
 //! let volume = Volume::from_drive_letter(drive_letter).unwrap();
 //! let journal = UsnJournal::new(&volume);
-//! for entry in journal.iter().unwrap().take(10) {
-//!     println!("USN entry: {:?}", entry);
+//! for result in journal.iter().unwrap().take(10) {
+//!     match result {
+//!         Ok(entry) => println!("USN entry: {:?}", entry),
+//!         Err(e) => eprintln!("Error reading entry: {}", e),
+//!     }
 //! }
 //! ```
 //!
@@ -48,6 +51,13 @@ pub mod journal;
 pub mod mft;
 pub mod path;
 mod privilege;
+
+// Re-export commonly used types
+pub use errors::UsnError;
+
+/// A convenient type alias for Results with UsnError.
+pub type UsnResult<T> = std::result::Result<T, UsnError>;
+
 mod time;
 pub mod volume;
 
