@@ -12,9 +12,17 @@ fn run() -> Result<(), UsnError> {
     let mft = Mft::new(&volume);
     let mut path_resolver = PathResolver::new_with_cache(&volume);
 
-    for entry in mft.iter() {
-        let full_path = path_resolver.resolve_path(&entry);
-        println!("{}", entry.pretty_format(full_path));
+    for result in mft.iter() {
+        match result {
+            Ok(entry) => {
+                let full_path = path_resolver.resolve_path(&entry);
+                println!("{}", entry.pretty_format(full_path));
+            }
+            Err(e) => {
+                eprintln!("Error reading MFT entry: {}", e);
+                continue;
+            }
+        }
     }
 
     Ok(())

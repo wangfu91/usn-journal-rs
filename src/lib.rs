@@ -34,8 +34,11 @@
 //! let drive_letter = 'C';
 //! let volume = Volume::from_drive_letter(drive_letter).unwrap();
 //! let mft = Mft::new(&volume);
-//! for entry in mft.iter().take(10) {
-//!     println!("MFT entry: {:?}", entry);
+//! for result in mft.iter().take(10) {
+//!     match result {
+//!         Ok(entry) => println!("MFT entry: {:?}", entry),
+//!         Err(e) => eprintln!("Error reading MFT entry: {}", e),
+//!     }
 //! }
 //! ```
 //!

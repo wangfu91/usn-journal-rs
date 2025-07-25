@@ -4,8 +4,9 @@
 //! from the MFT using the Windows FSCTL_ENUM_USN_DATA control code. It manages the buffer and state
 //! required to sequentially retrieve and parse USN records from the volume.
 
-use crate::{DEFAULT_BUFFER_SIZE, Usn, errors::UsnError, volume::Volume};
-use std::{ffi::OsString, os::windows::ffi::OsStringExt, path::Path};
+use crate::{DEFAULT_BUFFER_SIZE, Usn, UsnResult, errors::UsnError, volume::Volume};
+use log::debug;
+use std::{ffi::OsString, mem::size_of, os::windows::ffi::OsStringExt, path::Path};
 use windows::Win32::{
     Foundation::{ERROR_HANDLE_EOF, HANDLE},
     Storage::FileSystem::{
@@ -148,24 +149,6 @@ impl<'a> Mft<'a> {
     }
 }
 
-impl<'a> IntoIterator for Mft<'a> {
-    type Item = MftEntry;
-    type IntoIter = MftIter;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.iter()
-    }
-}
-
-impl<'a> IntoIterator for &'a Mft<'a> {
-    type Item = MftEntry;
-    type IntoIter = MftIter;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.iter()
-    }
-}
-
 /// Iterator over MFT entries.
 pub struct MftIter {
     volume_handle: HANDLE,
@@ -242,13 +225,16 @@ impl MftIter {
 }
 
 impl Iterator for MftIter {
-    type Item = MftEntry;
+    type Item = UsnResult<MftEntry>;
 
     fn next(&mut self) -> Option<Self::Item> {
         match self.find_next_entry() {
-            Ok(Some(record)) => Some(MftEntry::new(record)),
+            Ok(Some(record)) => Some(Ok(MftEntry::new(record))),
             Ok(None) => None,
-            Err(_) => None,
+            Err(err) => {
+                debug!("Error finding next MFT entry: {}", err);
+                Some(Err(err))
+            }
         }
     }
 }
@@ -267,7 +253,8 @@ mod tests {
         let result = {
             let volume = Volume::from_mount_point(mount_point.as_path())?;
             let mft = Mft::new(&volume);
-            for entry in mft.iter() {
+            for result in mft.iter() {
+                let entry = result?; // Handle the Result<MftEntry>
                 println!("MFT entry: {:?}", entry);
                 // Check if the Mft entry is valid
                 assert!(entry.usn >= 0, "USN is not valid");
