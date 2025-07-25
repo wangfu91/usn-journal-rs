@@ -123,6 +123,9 @@ impl<'a> Mft<'a> {
     }
 
     /// Returns an iterator over the MFT entries.
+    ///
+    /// The iterator yields `Result<MftEntry, UsnError>` items, allowing callers
+    /// to handle individual entry errors gracefully without stopping iteration.
     pub fn iter(&self) -> MftIter {
         MftIter {
             volume_handle: self.volume.handle,
@@ -136,6 +139,9 @@ impl<'a> Mft<'a> {
     }
 
     /// Returns an iterator over the MFT entries with custom enumerate options.
+    ///
+    /// The iterator yields `Result<MftEntry, UsnError>` items, allowing callers
+    /// to handle individual entry errors gracefully without stopping iteration.
     pub fn iter_with_options(&self, options: EnumOptions) -> MftIter {
         MftIter {
             volume_handle: self.volume.handle,
@@ -150,6 +156,9 @@ impl<'a> Mft<'a> {
 }
 
 /// Iterator over MFT entries.
+///
+/// This iterator yields `Result<MftEntry, UsnError>` items, allowing applications
+/// to handle individual entry errors without stopping the entire iteration process.
 pub struct MftIter {
     volume_handle: HANDLE,
     low_usn: Usn,

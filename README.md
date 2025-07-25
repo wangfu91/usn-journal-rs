@@ -28,8 +28,11 @@ use usn_journal_rs::{volume::Volume, journal::UsnJournal};
 let drive_letter = 'C';
 let volume = Volume::from_drive_letter(drive_letter)?;
 let journal = UsnJournal::new(&volume);
-for entry in journal.iter()? {
-    println!("USN entry: {:?}", entry);
+for entry_result in journal.iter()? {
+    match entry_result {
+        Ok(entry) => println!("USN entry: {:?}", entry),
+        Err(e) => eprintln!("Error reading USN entry: {e}"),
+    }
 }
 ```
 
@@ -41,8 +44,11 @@ use usn_journal_rs::{volume::Volume, mft::Mft};
 let drive_letter = 'C';
 let volume = Volume::from_drive_letter(drive_letter)?;
 let mft = Mft::new(&volume);
-for entry in mft.iter() {
-    println!("MFT entry: {:?}", entry);
+for entry_result in mft.iter() {
+    match entry_result {
+        Ok(entry) => println!("MFT entry: {:?}", entry),
+        Err(e) => eprintln!("Error reading MFT entry: {e}"),
+    }
 }
 ```
 

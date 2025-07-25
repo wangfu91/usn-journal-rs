@@ -96,6 +96,9 @@ impl From<USN_JOURNAL_DATA_V0> for UsnJournalData {
 
 #[derive(Debug, Clone)]
 /// Iterator for enumerating USN journal records on NTFS/ReFS volume.
+///
+/// This iterator yields `Result<UsnEntry, UsnError>` items, allowing applications
+/// to handle individual entry errors without stopping the entire iteration process.
 pub struct UsnJournal<'a> {
     pub(crate) volume: &'a Volume,
 }
@@ -107,6 +110,9 @@ impl<'a> UsnJournal<'a> {
     }
 
     /// Returns an iterator over the USN journal entries.
+    ///
+    /// The iterator yields `Result<UsnEntry, UsnError>` items, allowing callers
+    /// to handle individual entry errors gracefully without stopping iteration.
     pub fn iter(&self) -> UsnResult<UsnJournalIter> {
         let journal_data = self.query(true)?;
         Ok(UsnJournalIter {
@@ -124,6 +130,9 @@ impl<'a> UsnJournal<'a> {
     }
 
     /// Returns an iterator over the USN journal entries with custom enumerate options.
+    ///
+    /// The iterator yields `Result<UsnEntry, UsnError>` items, allowing callers
+    /// to handle individual entry errors gracefully without stopping iteration.
     pub fn iter_with_options(&self, options: EnumOptions) -> UsnResult<UsnJournalIter> {
         let journal_data = self.query(true)?;
         Ok(UsnJournalIter {
@@ -265,6 +274,8 @@ impl<'a> UsnJournal<'a> {
 }
 
 /// Iterate over USN journal entries.
+///
+/// This iterator yields `Result<UsnEntry, UsnError>` items.
 pub struct UsnJournalIter {
     volume_handle: HANDLE,
     journal_id: u64,
