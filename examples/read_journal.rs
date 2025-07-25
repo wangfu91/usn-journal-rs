@@ -2,7 +2,7 @@ use usn_journal_rs::{errors::UsnError, journal::UsnJournal, path::PathResolver, 
 
 fn main() {
     if let Err(e) = run() {
-        eprintln!("Error: {}", e);
+        eprintln!("Error: {e}");
     }
 }
 
@@ -20,7 +20,7 @@ fn run() -> Result<(), UsnError> {
                 println!("{}", entry.pretty_format(full_path));
             }
             Err(e) => {
-                eprintln!("Error reading USN entry: {}", e);
+                eprintln!("Error reading USN entry: {e}");
                 // Continue processing other entries
                 continue;
             }

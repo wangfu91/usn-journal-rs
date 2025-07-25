@@ -54,7 +54,7 @@ fn get_volume_handle_from_drive_letter(drive_letter: char) -> Result<HANDLE, Usn
     // To obtain a handle to a volume for use with update sequence number (USN) change journal operations,
     // call the CreateFile function with the lpFileName parameter set to a string of the following form: \\.\X:
     // Note that X is the letter that identifies the drive on which the NTFS volume appears.
-    let volume_root = format!(r"\\.\{}:", drive_letter);
+    let volume_root = format!(r"\\.\{drive_letter}:");
 
     match unsafe {
         CreateFileW(
@@ -86,10 +86,7 @@ fn get_volume_handle_from_mount_point(mount_point: &Path) -> Result<HANDLE, UsnE
     if let Err(err) =
         unsafe { GetVolumeNameForVolumeMountPointW(&HSTRING::from(&mount_path), &mut volume_name) }
     {
-        warn!(
-            "GetVolumeNameForVolumeMountPointW failed, mount_point={}, error={:?}",
-            mount_path, err
-        );
+        warn!("GetVolumeNameForVolumeMountPointW failed, mount_point={mount_path}, error={err:?}");
         return Err(err.into());
     }
 
@@ -103,11 +100,11 @@ fn get_volume_handle_from_mount_point(mount_point: &Path) -> Result<HANDLE, UsnE
     ))?;
     let volume_guid = String::from_utf16_lossy(name_data);
 
-    debug!("Volume GUID: {}", volume_guid);
+    debug!("Volume GUID: {volume_guid}");
 
     // IMPORTANT: Remove the trailing backslash for CreateFileW
     let volume_path = volume_guid.trim_end_matches('\\').to_string();
-    debug!("Using volume path: {}", volume_path);
+    debug!("Using volume path: {volume_path}");
 
     let volume_handle = unsafe {
         CreateFileW(
@@ -153,7 +150,7 @@ mod tests {
     fn test_get_volume_handle_from_invalid_drive_letter() {
         let drive_letter = 'W'; // Assuming W is not a valid drive letter
         let result = Volume::from_drive_letter(drive_letter);
-        eprintln!("Result: {:?}", result);
+        eprintln!("Result: {result:?}");
         assert!(
             result.is_err(),
             "Should return an error for invalid drive letter"
@@ -170,7 +167,7 @@ mod tests {
     fn test_get_volume_handle_from_invalid_mount_point() {
         let mount_point = r"C:\invalid\mount\point";
         let result = Volume::from_mount_point(mount_point.as_ref());
-        eprintln!("Result: {:?}", result);
+        eprintln!("Result: {result:?}");
         assert!(
             result.is_err(),
             "Should return an error for invalid mount point"

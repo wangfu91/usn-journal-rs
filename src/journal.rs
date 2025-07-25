@@ -160,12 +160,12 @@ impl<'a> UsnJournal<'a> {
                     let journal_data = self.query_core()?;
                     Ok(journal_data.into())
                 } else {
-                    warn!("Error querying USN journal: {}", err);
+                    warn!("Error querying USN journal: {err}");
                     Err(err.into())
                 }
             }
             Ok(journal_data) => {
-                debug!("USN journal data: {:#?}", journal_data);
+                debug!("USN journal data: {journal_data:#?}");
                 Ok(journal_data.into())
             }
         }
@@ -308,7 +308,7 @@ impl UsnJournalIter {
                 return Ok(false);
             }
 
-            warn!("Error reading USN data: {}", err);
+            warn!("Error reading USN data: {err}");
             return Err(err);
         }
 
@@ -357,7 +357,7 @@ impl Iterator for UsnJournalIter {
             Ok(Some(record)) => Some(Ok(UsnEntry::new(record))),
             Ok(None) => None,
             Err(err) => {
-                debug!("Error finding next USN entry: {}", err);
+                debug!("Error finding next USN entry: {err}");
                 Some(Err(err.into()))
             }
         }
@@ -643,7 +643,7 @@ mod tests {
             let mut previous_usn = -1i64;
             for result in usn_journal.iter()? {
                 let entry = result?; // Handle the Result<UsnEntry>
-                println!("USN entry: {:?}", entry);
+                println!("USN entry: {entry:?}");
                 // Check if the USN entry is valid
                 assert!(entry.usn >= 0, "USN is not valid");
                 assert!(entry.usn > previous_usn, "USN entries are not in order");

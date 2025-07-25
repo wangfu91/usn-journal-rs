@@ -7,7 +7,7 @@ use usn_journal_rs::{
 
 fn main() {
     if let Err(e) = run() {
-        eprintln!("Error: {}", e);
+        eprintln!("Error: {e}");
     }
 }
 
@@ -34,7 +34,7 @@ fn run() -> Result<(), UsnError> {
                 println!("{}", entry.pretty_format(full_path));
             }
             Err(e) => {
-                eprintln!("Error reading USN entry: {}", e);
+                eprintln!("Error reading USN entry: {e}");
                 continue;
             }
         }

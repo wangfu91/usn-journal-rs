@@ -11,9 +11,9 @@ pub const VHD_EXT: &str = "vhdx";
 pub fn get_workspace_root() -> Result<PathBuf, UsnError> {
     let workspace_root = std::env::var("CARGO_WORKSPACE_DIR")
         .or_else(|_| std::env::var("CARGO_MANIFEST_DIR"))
-        .map_err(|e| UsnError::OtherError(format!("Failed to get workspace root: {}", e)))?;
+        .map_err(|e| UsnError::OtherError(format!("Failed to get workspace root: {e}")))?;
 
-    println!("Current workspace root: {}", workspace_root);
+    println!("Current workspace root: {workspace_root}");
 
     Ok(PathBuf::from(workspace_root))
 }
@@ -30,8 +30,8 @@ pub fn setup() -> Result<(PathBuf, Uuid), UsnError> {
     let uuid = Uuid::new_v4();
     let mount_point = workspace_root
         .join("target")
-        .join(format!("{}-{}", VHD_MOUNT_POINT_BASE, uuid));
-    let vhd_name = format!("{}-{}.{}", VHD_NAME_BASE_NAME, uuid, VHD_EXT);
+        .join(format!("{VHD_MOUNT_POINT_BASE}-{uuid}"));
+    let vhd_name = format!("{VHD_NAME_BASE_NAME}-{uuid}.{VHD_EXT}");
     let vhd_path = workspace_root.join("target").join(vhd_name);
     println!("mount point: {}", mount_point.display());
     println!("vhd path: {}", vhd_path.display());
@@ -94,8 +94,8 @@ pub fn teardown(uuid: Uuid) -> Result<(), UsnError> {
 
     let mount_point = workspace_root
         .join("target")
-        .join(format!("{}-{}", VHD_MOUNT_POINT_BASE, uuid));
-    let vhd_name = format!("{}-{}.{}", VHD_NAME_BASE_NAME, uuid, VHD_EXT);
+        .join(format!("{VHD_MOUNT_POINT_BASE}-{uuid}"));
+    let vhd_name = format!("{VHD_NAME_BASE_NAME}-{uuid}.{VHD_EXT}");
     let vhd_path = workspace_root.join("target").join(vhd_name);
     println!("mount point: {}", mount_point.display());
     println!("vhd path: {}", vhd_path.display());
