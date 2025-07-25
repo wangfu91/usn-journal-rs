@@ -148,6 +148,24 @@ impl<'a> Mft<'a> {
     }
 }
 
+impl<'a> IntoIterator for Mft<'a> {
+    type Item = MftEntry;
+    type IntoIter = MftIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a Mft<'a> {
+    type Item = MftEntry;
+    type IntoIter = MftIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
 /// Iterator over MFT entries.
 pub struct MftIter {
     volume_handle: HANDLE,
