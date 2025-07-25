@@ -19,8 +19,8 @@
 //! let journal = UsnJournal::new(&volume);
 //! for result in journal.iter().unwrap().take(10) {
 //!     match result {
-//!         Ok(entry) => println!("USN entry: {:?}", entry),
-//!         Err(e) => eprintln!("Error reading entry: {}", e),
+//!         Ok(entry) => println!("USN entry: {entry:?}"),
+//!         Err(e) => eprintln!("Error reading entry: {e}"),
 //!     }
 //! }
 //! ```
@@ -34,8 +34,8 @@
 //! let mft = Mft::new(&volume);
 //! for result in mft.iter().take(10) {
 //!     match result {
-//!         Ok(entry) => println!("MFT entry: {:?}", entry),
-//!         Err(e) => eprintln!("Error reading MFT entry: {}", e),
+//!         Ok(entry) => println!("MFT entry: {entry:?}"),
+//!         Err(e) => eprintln!("Error reading MFT entry: {e}"),
 //!     }
 //! }
 //! ```
