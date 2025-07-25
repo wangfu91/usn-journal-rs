@@ -4,11 +4,10 @@
 //! It provides safe Rust abstractions over the Windows API for monitoring file system changes efficiently.
 //!
 
-use crate::errors::UsnError;
 use crate::volume::Volume;
 use crate::{
     DEFAULT_BUFFER_SIZE, DEFAULT_JOURNAL_ALLOCATION_DELTA, DEFAULT_JOURNAL_MAX_SIZE,
-    USN_REASON_MASK_ALL, Usn, time,
+    USN_REASON_MASK_ALL, Usn, UsnResult, time,
 };
 use chrono::{DateTime, Local};
 use log::{debug, warn};
@@ -108,7 +107,7 @@ impl<'a> UsnJournal<'a> {
     }
 
     /// Returns an iterator over the USN journal entries.
-    pub fn iter(&self) -> Result<UsnJournalIter, UsnError> {
+    pub fn iter(&self) -> UsnResult<UsnJournalIter> {
         let journal_data = self.query(true)?;
         Ok(UsnJournalIter {
             volume_handle: self.volume.handle,
@@ -125,7 +124,7 @@ impl<'a> UsnJournal<'a> {
     }
 
     /// Returns an iterator over the USN journal entries with custom enumerate options.
-    pub fn iter_with_options(&self, options: EnumOptions) -> Result<UsnJournalIter, UsnError> {
+    pub fn iter_with_options(&self, options: EnumOptions) -> UsnResult<UsnJournalIter> {
         let journal_data = self.query(true)?;
         Ok(UsnJournalIter {
             volume_handle: self.volume.handle,
@@ -149,7 +148,7 @@ impl<'a> UsnJournal<'a> {
     /// # Returns
     /// * `Ok(UsnJournalData)` - The current journal state.
     /// * `Err(UsnError)` - If the query or creation fails.
-    pub fn query(&self, create_if_not_active: bool) -> Result<UsnJournalData, UsnError> {
+    pub fn query(&self, create_if_not_active: bool) -> UsnResult<UsnJournalData> {
         match self.query_core() {
             Err(err) => {
                 if err.code() == ERROR_JOURNAL_NOT_ACTIVE.into() && create_if_not_active {
@@ -173,7 +172,7 @@ impl<'a> UsnJournal<'a> {
     }
 
     /// Core function to query the USN journal state.
-    fn query_core(&self) -> Result<USN_JOURNAL_DATA_V0, windows::core::Error> {
+    fn query_core(&self) -> std::result::Result<USN_JOURNAL_DATA_V0, windows::core::Error> {
         let journal_data = USN_JOURNAL_DATA_V0::default();
         let bytes_return = 0u32;
 
@@ -208,7 +207,7 @@ impl<'a> UsnJournal<'a> {
     ///
     /// # Returns
     /// * `Ok(())` on success, or `Err(UsnError)` on failure.
-    pub fn create_or_update(&self, max_size: u64, allocation_delta: u64) -> Result<(), UsnError> {
+    pub fn create_or_update(&self, max_size: u64, allocation_delta: u64) -> UsnResult<()> {
         let create_data = CREATE_USN_JOURNAL_DATA {
             MaximumSize: max_size,
             AllocationDelta: allocation_delta,
@@ -238,7 +237,7 @@ impl<'a> UsnJournal<'a> {
     /// Delete the USN journal from a volume.
     /// # Returns
     /// * `Ok(())` on success, or `Err(UsnError)` on failure.
-    pub fn delete(&self) -> Result<(), UsnError> {
+    pub fn delete(&self) -> UsnResult<()> {
         let journal_data = self.query(false)?;
         let delete_flags: USN_DELETE_FLAGS = USN_DELETE_FLAG_DELETE | USN_DELETE_FLAG_NOTIFY;
         let delete_data = DELETE_USN_JOURNAL_DATA {
@@ -351,15 +350,15 @@ impl UsnJournalIter {
 }
 
 impl Iterator for UsnJournalIter {
-    type Item = UsnEntry;
+    type Item = UsnResult<UsnEntry>;
 
     fn next(&mut self) -> Option<Self::Item> {
         match self.find_next_entry() {
-            Ok(Some(record)) => Some(UsnEntry::new(record)),
+            Ok(Some(record)) => Some(Ok(UsnEntry::new(record))),
             Ok(None) => None,
             Err(err) => {
-                warn!("Error finding next USN entry: {}", err);
-                None
+                debug!("Error finding next USN entry: {}", err);
+                Some(Err(err.into()))
             }
         }
     }
@@ -553,7 +552,6 @@ impl UsnEntry {
 mod tests {
     use crate::{
         DEFAULT_JOURNAL_ALLOCATION_DELTA, DEFAULT_JOURNAL_MAX_SIZE,
-        errors::UsnError,
         tests::{setup, teardown},
         volume::Volume,
     };
@@ -561,7 +559,7 @@ mod tests {
     use super::UsnJournal;
 
     #[test]
-    fn query_usn_journal_test() -> Result<(), UsnError> {
+    fn query_usn_journal_test() -> crate::UsnResult<()> {
         // Setup the test environment
         let (mount_point, uuid) = setup()?;
 
@@ -593,7 +591,7 @@ mod tests {
     }
 
     #[test]
-    fn delete_usn_journal_test() -> Result<(), UsnError> {
+    fn delete_usn_journal_test() -> crate::UsnResult<()> {
         // Setup the test environment
         let (mount_point, uuid) = setup()?;
 
@@ -614,7 +612,7 @@ mod tests {
     }
 
     #[test]
-    fn create_usn_journal_test() -> Result<(), UsnError> {
+    fn create_usn_journal_test() -> crate::UsnResult<()> {
         // Setup the test environment
         let (mount_point, uuid) = setup()?;
 
@@ -635,7 +633,7 @@ mod tests {
     }
 
     #[test]
-    fn usn_journal_iter_test() -> Result<(), UsnError> {
+    fn usn_journal_iter_test() -> crate::UsnResult<()> {
         // Setup the test environment
         let (mount_point, uuid) = setup()?;
 
@@ -643,7 +641,8 @@ mod tests {
             let volume = Volume::from_mount_point(mount_point.as_path())?;
             let usn_journal = UsnJournal::new(&volume);
             let mut previous_usn = -1i64;
-            for entry in usn_journal.iter()? {
+            for result in usn_journal.iter()? {
+                let entry = result?; // Handle the Result<UsnEntry>
                 println!("USN entry: {:?}", entry);
                 // Check if the USN entry is valid
                 assert!(entry.usn >= 0, "USN is not valid");

@@ -13,9 +13,18 @@ fn run() -> Result<(), UsnError> {
 
     let mut path_resolver = PathResolver::new_with_cache(&volume);
 
-    for entry in usn_journal.iter()? {
-        let full_path = path_resolver.resolve_path(&entry);
-        println!("{}", entry.pretty_format(full_path));
+    for result in usn_journal.iter()? {
+        match result {
+            Ok(entry) => {
+                let full_path = path_resolver.resolve_path(&entry);
+                println!("{}", entry.pretty_format(full_path));
+            }
+            Err(e) => {
+                eprintln!("Error reading USN entry: {}", e);
+                // Continue processing other entries
+                continue;
+            }
+        }
     }
 
     Ok(())
