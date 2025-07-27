@@ -279,3 +279,306 @@ fn file_id_to_path(volume: &Volume, file_id: u64) -> windows::core::Result<PathB
     full_path.push(sub_path);
     Ok(full_path)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{mft::MftEntry, volume::Volume};
+    use std::{
+        ffi::{OsString, c_void},
+        mem, ptr,
+    };
+    use windows::Win32::{Foundation::HANDLE, System::Ioctl::USN_RECORD_V2};
+
+    // Mock implementations of PathResolvableEntry
+    #[derive(Debug)]
+    struct MockEntry {
+        fid: u64,
+        parent_fid: u64,
+        file_name: OsString,
+        is_dir: bool,
+    }
+
+    impl PathResolvableEntry for MockEntry {
+        fn fid(&self) -> u64 {
+            self.fid
+        }
+        fn parent_fid(&self) -> u64 {
+            self.parent_fid
+        }
+        fn file_name(&self) -> &OsString {
+            &self.file_name
+        }
+        fn is_dir(&self) -> bool {
+            self.is_dir
+        }
+    }
+
+    fn create_mock_volume() -> Volume {
+        Volume {
+            handle: HANDLE(0x1234 as *mut c_void),
+            drive_letter: Some('C'),
+            mount_point: None,
+        }
+    }
+
+    #[test]
+    fn test_mft_entry_path_resolvable_trait() {
+        let entry = MftEntry {
+            usn: 0x1000,
+            fid: 0x123456,
+            parent_fid: 0x654321,
+            file_name: OsString::from("test.txt"),
+            file_attributes: 0,
+        };
+
+        assert_eq!(entry.fid(), 0x123456);
+        assert_eq!(entry.parent_fid(), 0x654321);
+        assert_eq!(entry.file_name(), &OsString::from("test.txt"));
+        assert!(!entry.is_dir());
+    }
+
+    #[test]
+    fn test_usn_entry_path_resolvable_trait() {
+        // Create a mock USN_RECORD_V2 to generate a UsnEntry
+        let file_name = "document.txt";
+        let file_name_utf16: Vec<u16> = file_name.encode_utf16().collect();
+        let file_name_len = file_name_utf16.len() * mem::size_of::<u16>();
+        let base_size = mem::size_of::<USN_RECORD_V2>();
+        let total_size = base_size + file_name_len;
+        let aligned_size = (total_size + 7) & !7; // 8-byte align
+
+        let mut buffer = vec![0u8; aligned_size];
+
+        // Create USN_RECORD_V2 header
+        let record = USN_RECORD_V2 {
+            RecordLength: aligned_size as u32,
+            MajorVersion: 2,
+            MinorVersion: 0,
+            FileReferenceNumber: 0x789ABC,
+            ParentFileReferenceNumber: 0xDEF123,
+            Usn: 0x2000,
+            TimeStamp: 0x12345678ABCDEF01i64,
+            Reason: 0x80000000, // USN_REASON_FILE_CREATE
+            SourceInfo: 0,
+            SecurityId: 0,
+            FileAttributes: 0,
+            FileNameLength: file_name_len as u16,
+            FileNameOffset: mem::offset_of!(USN_RECORD_V2, FileName) as u16,
+            FileName: [0; 1],
+        };
+
+        // Copy the record header (without the FileName part which we'll handle separately)
+        unsafe {
+            ptr::copy_nonoverlapping(
+                &record as *const USN_RECORD_V2 as *const u8,
+                buffer.as_mut_ptr(),
+                base_size - mem::size_of::<u16>(), // Exclude the [u16; 1] FileName field
+            );
+        }
+
+        // Copy the actual filename starting at the FileName offset
+        unsafe {
+            let filename_ptr = buffer
+                .as_mut_ptr()
+                .add(mem::offset_of!(USN_RECORD_V2, FileName));
+            ptr::copy_nonoverlapping(
+                file_name_utf16.as_ptr() as *const u8,
+                filename_ptr,
+                file_name_len,
+            );
+        }
+
+        let record_ref = unsafe { &*(buffer.as_ptr() as *const USN_RECORD_V2) };
+
+        let entry = crate::journal::UsnEntry::new(record_ref);
+
+        assert_eq!(entry.fid(), 0x789ABC);
+        assert_eq!(entry.parent_fid(), 0xDEF123);
+        assert_eq!(entry.file_name(), &OsString::from("document.txt"));
+        assert!(!entry.is_dir());
+    }
+
+    #[test]
+    fn test_path_resolver_new() {
+        let volume = create_mock_volume();
+        let resolver = PathResolver::new(&volume);
+
+        assert!(resolver.dir_fid_path_cache.is_none());
+    }
+
+    #[test]
+    fn test_path_resolver_new_with_cache() {
+        let volume = create_mock_volume();
+        let resolver = PathResolver::new_with_cache(&volume);
+
+        assert!(resolver.dir_fid_path_cache.is_some());
+    }
+
+    #[test]
+    fn test_resolve_path_with_cache_hit() {
+        let volume = create_mock_volume();
+        let mut resolver = PathResolver::new_with_cache(&volume);
+
+        // Pre-populate cache
+        let cached_path = std::path::PathBuf::from("C:\\Documents\\Folder");
+        let cached_name = OsString::from("test.txt");
+        if let Some(ref mut cache) = resolver.dir_fid_path_cache {
+            cache.put(0x123456, (cached_path.clone(), cached_name.clone()));
+        }
+
+        let entry = MockEntry {
+            fid: 0x123456,
+            parent_fid: 0x654321,
+            file_name: cached_name,
+            is_dir: false,
+        };
+
+        let result = resolver.resolve_path(&entry);
+        assert!(result.is_some());
+        let path = result.unwrap();
+        assert_eq!(path, cached_path);
+    }
+
+    #[test]
+    fn test_resolve_path_with_cache_miss_parent_hit() {
+        let volume = create_mock_volume();
+        let mut resolver = PathResolver::new_with_cache(&volume);
+
+        // Pre-populate cache with parent directory
+        let cached_parent_path = std::path::PathBuf::from("C:\\Documents");
+        let cached_parent_name = OsString::from("Documents");
+        if let Some(ref mut cache) = resolver.dir_fid_path_cache {
+            cache.put(0x654321, (cached_parent_path.clone(), cached_parent_name));
+        }
+
+        let entry = MockEntry {
+            fid: 0x123456,
+            parent_fid: 0x654321,
+            file_name: OsString::from("newfile.txt"),
+            is_dir: false,
+        };
+
+        let result = resolver.resolve_path(&entry);
+        assert!(result.is_some());
+        let path = result.unwrap();
+        assert_eq!(path.to_string_lossy(), "C:\\Documents\\newfile.txt");
+    }
+
+    #[test]
+    fn test_resolve_path_with_cache_directory_caching() {
+        let volume = create_mock_volume();
+        let mut resolver = PathResolver::new_with_cache(&volume);
+
+        // Pre-populate cache with parent directory
+        let cached_parent_path = std::path::PathBuf::from("C:\\Documents");
+        let cached_parent_name = OsString::from("Documents");
+        if let Some(ref mut cache) = resolver.dir_fid_path_cache {
+            cache.put(0x654321, (cached_parent_path.clone(), cached_parent_name));
+        }
+
+        let entry = MockEntry {
+            fid: 0x123456,
+            parent_fid: 0x654321,
+            file_name: OsString::from("NewFolder"),
+            is_dir: true, // This is a directory, should be cached
+        };
+
+        let result = resolver.resolve_path(&entry);
+        assert!(result.is_some());
+        let path = result.unwrap();
+        assert_eq!(path.to_string_lossy(), "C:\\Documents\\NewFolder");
+
+        // Verify the directory was cached
+        if let Some(ref cache) = resolver.dir_fid_path_cache {
+            assert!(cache.peek(&0x123456).is_some());
+            let (cached_path, cached_name) = cache.peek(&0x123456).unwrap();
+            assert_eq!(cached_path, &path);
+            assert_eq!(cached_name, &OsString::from("NewFolder"));
+        }
+    }
+
+    #[test]
+    fn test_resolve_path_with_cache_name_mismatch() {
+        let volume = create_mock_volume();
+        let mut resolver = PathResolver::new_with_cache(&volume);
+
+        // Pre-populate cache with old name
+        let cached_path = std::path::PathBuf::from("C:\\Documents\\OldName");
+        let cached_old_name = OsString::from("OldName");
+        if let Some(ref mut cache) = resolver.dir_fid_path_cache {
+            cache.put(0x123456, (cached_path.clone(), cached_old_name));
+        }
+
+        // Pre-populate parent cache
+        let cached_parent_path = std::path::PathBuf::from("C:\\Documents");
+        let cached_parent_name = OsString::from("Documents");
+        if let Some(ref mut cache) = resolver.dir_fid_path_cache {
+            cache.put(0x654321, (cached_parent_path.clone(), cached_parent_name));
+        }
+
+        let entry = MockEntry {
+            fid: 0x123456,
+            parent_fid: 0x654321,
+            file_name: OsString::from("NewName"), // Different name than cached
+            is_dir: true,
+        };
+
+        let result = resolver.resolve_path(&entry);
+        assert!(result.is_some());
+        let path = result.unwrap();
+        assert_eq!(path.to_string_lossy(), "C:\\Documents\\NewName");
+
+        // Verify the cache was updated with the new name
+        if let Some(ref cache) = resolver.dir_fid_path_cache {
+            let (updated_path, updated_name) = cache.peek(&0x123456).unwrap();
+            assert_eq!(updated_path.to_string_lossy(), "C:\\Documents\\NewName");
+            assert_eq!(updated_name, &OsString::from("NewName"));
+        }
+    }
+
+    #[test]
+    fn test_lru_cache_capacity() {
+        let volume = create_mock_volume();
+        let resolver = PathResolver::new_with_cache(&volume);
+
+        if let Some(ref cache) = resolver.dir_fid_path_cache {
+            // LRU cache should have the expected capacity
+            assert_eq!(cache.cap().get(), LRU_CACHE_CAPACITY);
+        }
+    }
+
+    #[test]
+    fn test_mock_entry_trait_implementation() {
+        let entry = MockEntry {
+            fid: 0xABC123,
+            parent_fid: 0xDEF456,
+            file_name: OsString::from("test_file.dat"),
+            is_dir: true,
+        };
+
+        assert_eq!(entry.fid(), 0xABC123);
+        assert_eq!(entry.parent_fid(), 0xDEF456);
+        assert_eq!(entry.file_name(), &OsString::from("test_file.dat"));
+        assert!(entry.is_dir());
+    }
+
+    #[test]
+    fn test_resolve_path_failure() {
+        let volume = create_mock_volume();
+        let mut resolver = PathResolver::new(&volume);
+
+        let entry = MockEntry {
+            fid: 0x123456,
+            parent_fid: 0x654321,
+            file_name: OsString::from("test.txt"),
+            is_dir: false,
+        };
+
+        // Since we can't mock the Windows API calls without Injectorpp,
+        // this test will naturally fail when trying to resolve paths
+        // against non-existent file IDs
+        let result = resolver.resolve_path(&entry);
+        assert!(result.is_none());
+    }
+}

@@ -11,7 +11,7 @@
 //! - Safe wrappers over Windows API calls
 //!
 //! ## Example: Enumerate USN Journal
-//! ```rust
+//! ```no_run
 //! use usn_journal_rs::{volume::Volume, journal::UsnJournal};
 //!
 //! let drive_letter = 'C';
@@ -26,7 +26,7 @@
 //! ```
 //!
 //! # Example: Enumerating MFT Entries
-//! ```rust
+//! ```no_run
 //! use usn_journal_rs::{volume::Volume, mft::Mft};
 //!
 //! let drive_letter = 'C';
@@ -61,10 +61,6 @@ pub type UsnResult<T> = std::result::Result<T, UsnError>;
 
 mod time;
 pub mod volume;
-
-// Utility functions for cargo tests
-#[cfg(test)]
-mod tests;
 
 pub type Usn = i64;
 
