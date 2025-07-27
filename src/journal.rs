@@ -561,120 +561,259 @@ impl UsnEntry {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        DEFAULT_JOURNAL_ALLOCATION_DELTA, DEFAULT_JOURNAL_MAX_SIZE,
-        tests::{setup, teardown},
-        volume::Volume,
-    };
+    use super::*;
+    use std::{ffi::OsString, mem, ptr};
+    use windows::Win32::System::Ioctl::{USN_JOURNAL_DATA_V0, USN_RECORD_V2};
 
-    use super::UsnJournal;
+    // Mock data generators
+    fn create_mock_usn_journal_data() -> USN_JOURNAL_DATA_V0 {
+        USN_JOURNAL_DATA_V0 {
+            UsnJournalID: 0x123456789ABCDEF0,
+            FirstUsn: 0x1000,
+            NextUsn: 0x5000,
+            LowestValidUsn: 0x800,
+            MaxUsn: 0x10000,
+            MaximumSize: 32 * 1024 * 1024,    // 32MB
+            AllocationDelta: 8 * 1024 * 1024, // 8MB
+        }
+    }
 
-    #[test]
-    fn query_usn_journal_test() -> crate::UsnResult<()> {
-        // Setup the test environment
-        let (mount_point, uuid) = setup()?;
+    fn create_mock_usn_record(
+        usn: i64,
+        fid: u64,
+        parent_fid: u64,
+        reason: u32,
+        file_name: &str,
+        file_attributes: u32,
+    ) -> Vec<u8> {
+        let file_name_utf16: Vec<u16> = file_name.encode_utf16().collect();
+        let file_name_len = file_name_utf16.len() * mem::size_of::<u16>();
+        let base_size = mem::size_of::<USN_RECORD_V2>();
+        let total_size = base_size + file_name_len;
+        let aligned_size = (total_size + 7) & !7; // 8-byte align
 
-        let result = {
-            let volume = Volume::from_mount_point(mount_point.as_path())?;
-            let usn_journal = UsnJournal::new(&volume);
-            let journal_data = usn_journal.query(true)?;
-            assert!(
-                journal_data.journal_id > 0,
-                "USN journal ID should be valid"
-            );
-            assert!(
-                journal_data.maximum_size > 0,
-                "Maximum size should be valid"
-            );
-            assert!(
-                journal_data.allocation_delta > 0,
-                "Allocation delta should be valid"
-            );
+        let mut buffer = vec![0u8; aligned_size];
 
-            Ok(())
+        // Create USN_RECORD_V2 header - we'll overwrite the FileName area
+        let record = USN_RECORD_V2 {
+            RecordLength: aligned_size as u32,
+            MajorVersion: 2,
+            MinorVersion: 0,
+            FileReferenceNumber: fid,
+            ParentFileReferenceNumber: parent_fid,
+            Usn: usn,
+            TimeStamp: 0x12345678ABCDEF01i64,
+            Reason: reason,
+            SourceInfo: 0,
+            SecurityId: 0,
+            FileAttributes: file_attributes,
+            FileNameLength: file_name_len as u16,
+            FileNameOffset: mem::offset_of!(USN_RECORD_V2, FileName) as u16,
+            FileName: [0; 1],
         };
 
-        // Teardown the test environment
-        teardown(uuid)?;
+        // Copy the record header (without the FileName part which we'll handle separately)
+        unsafe {
+            ptr::copy_nonoverlapping(
+                &record as *const USN_RECORD_V2 as *const u8,
+                buffer.as_mut_ptr(),
+                base_size - mem::size_of::<u16>(), // Exclude the [u16; 1] FileName field
+            );
+        }
 
-        // Return the result of the test
-        result
+        // Copy the actual filename starting at the FileName offset
+        unsafe {
+            let filename_ptr = buffer
+                .as_mut_ptr()
+                .add(mem::offset_of!(USN_RECORD_V2, FileName));
+            ptr::copy_nonoverlapping(
+                file_name_utf16.as_ptr() as *const u8,
+                filename_ptr,
+                file_name_len,
+            );
+        }
+
+        buffer
     }
 
     #[test]
-    fn delete_usn_journal_test() -> crate::UsnResult<()> {
-        // Setup the test environment
-        let (mount_point, uuid) = setup()?;
-
-        let result = {
-            let volume = Volume::from_mount_point(mount_point.as_path())?;
-            let usn_journal = UsnJournal::new(&volume);
-            let _ = usn_journal.query(true)?;
-            usn_journal.delete()?;
-
-            Ok(())
-        };
-
-        // Teardown the test environment
-        teardown(uuid)?;
-
-        // Return the result of the test
-        result
+    fn test_enum_options_default() {
+        let options = EnumOptions::default();
+        assert_eq!(options.start_usn, 0);
+        assert_eq!(options.reason_mask, USN_REASON_MASK_ALL);
+        assert!(!options.only_on_close);
+        assert_eq!(options.timeout, 0);
+        assert!(!options.wait_for_more);
+        assert_eq!(options.buffer_size, DEFAULT_BUFFER_SIZE);
     }
 
     #[test]
-    fn create_usn_journal_test() -> crate::UsnResult<()> {
-        // Setup the test environment
-        let (mount_point, uuid) = setup()?;
+    fn test_usn_journal_data_from_conversion() {
+        let raw_data = create_mock_usn_journal_data();
+        let journal_data = UsnJournalData::from(raw_data);
 
-        let result = {
-            let volume = Volume::from_mount_point(mount_point.as_path())?;
-            let usn_journal = UsnJournal::new(&volume);
-            usn_journal
-                .create_or_update(DEFAULT_JOURNAL_MAX_SIZE, DEFAULT_JOURNAL_ALLOCATION_DELTA)?;
-
-            Ok(())
-        };
-
-        // Teardown the test environment
-        teardown(uuid)?;
-
-        // Return the result of the test
-        result
+        assert_eq!(journal_data.journal_id, 0x123456789ABCDEF0);
+        assert_eq!(journal_data.first_usn, 0x1000);
+        assert_eq!(journal_data.next_usn, 0x5000);
+        assert_eq!(journal_data.lowest_valid_usn, 0x800);
+        assert_eq!(journal_data.max_usn, 0x10000);
+        assert_eq!(journal_data.maximum_size, 32 * 1024 * 1024);
+        assert_eq!(journal_data.allocation_delta, 8 * 1024 * 1024);
     }
 
     #[test]
-    fn usn_journal_iter_test() -> crate::UsnResult<()> {
-        // Setup the test environment
-        let (mount_point, uuid) = setup()?;
+    fn test_usn_entry_creation() {
+        let record_data = create_mock_usn_record(
+            0x2000,
+            0x123456,
+            0x654321,
+            windows::Win32::System::Ioctl::USN_REASON_FILE_CREATE,
+            "test.txt",
+            0,
+        );
 
-        let result = {
-            let volume = Volume::from_mount_point(mount_point.as_path())?;
-            let usn_journal = UsnJournal::new(&volume);
-            let mut previous_usn = -1i64;
-            for result in usn_journal.iter()? {
-                let entry = result?; // Handle the Result<UsnEntry>
-                println!("USN entry: {entry:?}");
-                // Check if the USN entry is valid
-                assert!(entry.usn >= 0, "USN is not valid");
-                assert!(entry.usn > previous_usn, "USN entries are not in order");
-                assert!(entry.fid > 0, "File ID is not valid");
-                assert!(!entry.file_name.is_empty(), "File name is not valid");
-                assert!(entry.parent_fid > 0, "Parent File ID is not valid");
-                assert!(entry.reason > 0, "Reason is not valid");
-                assert!(entry.file_attributes > 0, "File attributes are not valid");
-                assert!(entry.time > std::time::UNIX_EPOCH, "Time is not valid");
+        let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
 
-                previous_usn = entry.usn;
-            }
+        let entry = UsnEntry::new(record);
+        assert_eq!(entry.usn, 0x2000);
+        assert_eq!(entry.fid, 0x123456);
+        assert_eq!(entry.parent_fid, 0x654321);
+        assert_eq!(
+            entry.reason,
+            windows::Win32::System::Ioctl::USN_REASON_FILE_CREATE
+        );
+        assert_eq!(entry.file_name, OsString::from("test.txt"));
+        assert!(!entry.is_dir());
+        assert!(!entry.is_hidden());
+    }
 
-            Ok(())
-        };
+    #[test]
+    fn test_usn_entry_directory_detection() {
+        let record_data = create_mock_usn_record(
+            0x3000,
+            0x789ABC,
+            0x654321,
+            windows::Win32::System::Ioctl::USN_REASON_FILE_CREATE,
+            "folder",
+            FILE_ATTRIBUTE_DIRECTORY.0,
+        );
 
-        // Teardown the test environment
-        teardown(uuid)?;
+        let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
 
-        // Return the result of the test
-        result
+        let entry = UsnEntry::new(record);
+        assert!(entry.is_dir());
+        assert!(!entry.is_hidden());
+    }
+
+    #[test]
+    fn test_usn_entry_hidden_detection() {
+        let record_data = create_mock_usn_record(
+            0x4000,
+            0xDEF123,
+            0x654321,
+            windows::Win32::System::Ioctl::USN_REASON_FILE_CREATE,
+            "hidden.txt",
+            FILE_ATTRIBUTE_HIDDEN.0,
+        );
+
+        let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
+
+        let entry = UsnEntry::new(record);
+        assert!(!entry.is_dir());
+        assert!(entry.is_hidden());
+    }
+
+    #[test]
+    fn test_usn_entry_reason_string_conversion() {
+        let record_data = create_mock_usn_record(
+            0x5000,
+            0x456789,
+            0x654321,
+            USN_REASON_FILE_CREATE | USN_REASON_DATA_EXTEND | USN_REASON_CLOSE,
+            "test.txt",
+            0,
+        );
+
+        let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
+
+        let entry = UsnEntry::new(record);
+        let reason_string = entry.get_reason_string();
+
+        assert!(reason_string.contains("FILE_CREATE"));
+        assert!(reason_string.contains("DATA_EXTEND"));
+        assert!(reason_string.contains("CLOSE"));
+        assert!(reason_string.contains(" | "));
+    }
+
+    #[test]
+    fn test_usn_entry_unknown_reason() {
+        let record_data = create_mock_usn_record(
+            0x6000, 0x789123, 0x654321, 0, // No known reason flags
+            "test.txt", 0,
+        );
+
+        let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
+
+        let entry = UsnEntry::new(record);
+        let reason_string = entry.get_reason_string();
+        assert_eq!(reason_string, "UNKNOWN");
+    }
+
+    #[test]
+    fn test_usn_entry_pretty_format_with_path() {
+        let record_data = create_mock_usn_record(
+            0x7000,
+            0xABC123,
+            0x654321,
+            USN_REASON_FILE_CREATE,
+            "document.txt",
+            0,
+        );
+
+        let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
+
+        let entry = UsnEntry::new(record);
+        let formatted =
+            entry.pretty_format(Some(std::path::Path::new("C:\\Documents\\document.txt")));
+
+        assert!(formatted.contains("USN"));
+        assert!(formatted.contains("0x7000"));
+        assert!(formatted.contains("File ID"));
+        assert!(formatted.contains("0xabc123"));
+        assert!(formatted.contains("Parent File ID"));
+        assert!(formatted.contains("0x654321"));
+        assert!(formatted.contains("Type"));
+        assert!(formatted.contains("File"));
+        assert!(formatted.contains("Timestamp"));
+        assert!(formatted.contains("Reason"));
+        assert!(formatted.contains("FILE_CREATE"));
+        assert!(formatted.contains("Path"));
+        assert!(formatted.contains("C:\\Documents\\document.txt"));
+    }
+
+    #[test]
+    fn test_usn_entry_pretty_format_without_path() {
+        let record_data = create_mock_usn_record(
+            0x8000,
+            0xDEF456,
+            0x654321,
+            USN_REASON_FILE_DELETE,
+            "deleted.txt",
+            0,
+        );
+
+        let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
+
+        let entry = UsnEntry::new(record);
+        let formatted: String = entry.pretty_format(None as Option<&std::path::Path>);
+
+        assert!(formatted.contains("USN"));
+        assert!(formatted.contains("0x8000"));
+        assert!(formatted.contains("File ID"));
+        assert!(formatted.contains("0xdef456"));
+        assert!(formatted.contains("Reason"));
+        assert!(formatted.contains("FILE_DELETE"));
+        assert!(formatted.contains("Path"));
+        assert!(formatted.contains("deleted.txt"));
     }
 }

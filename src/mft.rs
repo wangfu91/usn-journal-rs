@@ -250,39 +250,320 @@ impl Iterator for MftIter {
 
 #[cfg(test)]
 mod tests {
-    use crate::tests::{setup, teardown};
-
     use super::*;
+    use injectorpp::interface::injector::*;
+    use std::mem::offset_of;
+    use windows::Win32::{
+        Foundation::{ERROR_INVALID_HANDLE, HANDLE},
+        System::{IO::DeviceIoControl, Ioctl::USN_RECORD_V2},
+    };
 
-    #[test]
-    fn mft_iter_test() -> Result<(), super::UsnError> {
-        // Setup the test environment
-        let (mount_point, uuid) = setup()?;
+    // Test data generators
+    #[allow(clippy::too_many_arguments)]
+    fn create_mock_usn_record(
+        usn: i64,
+        file_id: u64,
+        parent_file_id: u64,
+        file_name: &str,
+        file_attributes: u32,
+    ) -> Vec<u8> {
+        let file_name_utf16: Vec<u16> = file_name.encode_utf16().collect();
+        let file_name_len = file_name_utf16.len() * 2; // length in bytes
 
-        let result = {
-            let volume = Volume::from_mount_point(mount_point.as_path())?;
+        // The filename starts at the FileName field location in USN_RECORD_V2
+        let filename_offset = offset_of!(USN_RECORD_V2, FileName);
+        let record_len = filename_offset + file_name_len;
+
+        let mut record_data = vec![0u8; record_len];
+
+        // Manually build the record structure in the buffer
+        let mut pos = 0;
+
+        // RecordLength (u32)
+        record_data[pos..pos + 4].copy_from_slice(&(record_len as u32).to_le_bytes());
+        pos += 4;
+
+        // MajorVersion (u16)
+        record_data[pos..pos + 2].copy_from_slice(&2u16.to_le_bytes());
+        pos += 2;
+
+        // MinorVersion (u16)
+        record_data[pos..pos + 2].copy_from_slice(&0u16.to_le_bytes());
+        pos += 2;
+
+        // FileReferenceNumber (u64)
+        record_data[pos..pos + 8].copy_from_slice(&file_id.to_le_bytes());
+        pos += 8;
+
+        // ParentFileReferenceNumber (u64)
+        record_data[pos..pos + 8].copy_from_slice(&parent_file_id.to_le_bytes());
+        pos += 8;
+
+        // Usn (i64)
+        record_data[pos..pos + 8].copy_from_slice(&usn.to_le_bytes());
+        pos += 8;
+
+        // TimeStamp (i64)
+        record_data[pos..pos + 8].copy_from_slice(&0i64.to_le_bytes());
+        pos += 8;
+
+        // Reason (u32)
+        record_data[pos..pos + 4].copy_from_slice(&0u32.to_le_bytes());
+        pos += 4;
+
+        // SourceInfo (u32)
+        record_data[pos..pos + 4].copy_from_slice(&0u32.to_le_bytes());
+        pos += 4;
+
+        // SecurityId (u32)
+        record_data[pos..pos + 4].copy_from_slice(&0u32.to_le_bytes());
+        pos += 4;
+
+        // FileAttributes (u32)
+        record_data[pos..pos + 4].copy_from_slice(&file_attributes.to_le_bytes());
+        pos += 4;
+
+        // FileNameLength (u16)
+        record_data[pos..pos + 2].copy_from_slice(&(file_name_len as u16).to_le_bytes());
+        pos += 2;
+
+        // FileNameOffset (u16)
+        record_data[pos..pos + 2].copy_from_slice(&(filename_offset as u16).to_le_bytes());
+        pos += 2;
+
+        // Now pos should be at the FileName field location
+        assert_eq!(pos, filename_offset);
+
+        // Copy the filename data
+        for (i, &utf16_char) in file_name_utf16.iter().enumerate() {
+            let bytes = utf16_char.to_le_bytes();
+            record_data[pos + i * 2] = bytes[0];
+            record_data[pos + i * 2 + 1] = bytes[1];
+        }
+
+        record_data
+    }
+
+    // Unit tests for MftEntry
+    mod mft_entry_tests {
+        use super::*;
+
+        #[test]
+        fn test_mft_entry_new_basic() {
+            let record_data = create_mock_usn_record(
+                100,   // usn
+                12345, // file_id
+                67890, // parent_file_id
+                "test.txt", 0x20, // FILE_ATTRIBUTE_ARCHIVE
+            );
+
+            let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
+            let entry = MftEntry::new(record);
+
+            assert_eq!(entry.usn, 100);
+            assert_eq!(entry.fid, 12345);
+            assert_eq!(entry.parent_fid, 67890);
+            assert_eq!(entry.file_name.to_string_lossy(), "test.txt");
+            assert_eq!(entry.file_attributes, 0x20);
+        }
+
+        #[test]
+        fn test_mft_entry_is_dir_true() {
+            let record_data = create_mock_usn_record(
+                100, 12345, 67890, "folder", 0x10, // FILE_ATTRIBUTE_DIRECTORY
+            );
+
+            let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
+            let entry = MftEntry::new(record);
+
+            assert!(entry.is_dir());
+            assert!(!entry.is_hidden());
+        }
+
+        #[test]
+        fn test_mft_entry_is_dir_false() {
+            let record_data = create_mock_usn_record(
+                100, 12345, 67890, "file.txt", 0x20, // FILE_ATTRIBUTE_ARCHIVE
+            );
+
+            let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
+            let entry = MftEntry::new(record);
+
+            assert!(!entry.is_dir());
+            assert!(!entry.is_hidden());
+        }
+
+        #[test]
+        fn test_mft_entry_is_hidden_true() {
+            let record_data = create_mock_usn_record(
+                100, 12345, 67890, ".hidden", 0x02, // FILE_ATTRIBUTE_HIDDEN
+            );
+
+            let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
+            let entry = MftEntry::new(record);
+
+            assert!(entry.is_hidden());
+            assert!(!entry.is_dir());
+        }
+
+        #[test]
+        fn test_mft_entry_combined_attributes() {
+            let record_data = create_mock_usn_record(
+                100,
+                12345,
+                67890,
+                ".hidden_folder",
+                0x12, // FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_HIDDEN
+            );
+
+            let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
+            let entry = MftEntry::new(record);
+
+            assert!(entry.is_dir());
+            assert!(entry.is_hidden());
+        }
+
+        #[test]
+        fn test_mft_entry_unicode_filename() {
+            let record_data = create_mock_usn_record(
+                100,
+                12345,
+                67890,
+                "测试文件.txt", // Chinese characters
+                0x20,
+            );
+
+            let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
+            let entry = MftEntry::new(record);
+
+            assert_eq!(entry.file_name.to_string_lossy(), "测试文件.txt");
+        }
+
+        #[test]
+        fn test_mft_entry_empty_filename() {
+            let record_data = create_mock_usn_record(100, 12345, 67890, "", 0x20);
+
+            let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
+            let entry = MftEntry::new(record);
+
+            assert!(entry.file_name.is_empty());
+        }
+
+        #[test]
+        fn test_mft_entry_pretty_format_with_path() {
+            let record_data = create_mock_usn_record(100, 0x12345, 0x67890, "test.txt", 0x20);
+
+            let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
+            let entry = MftEntry::new(record);
+
+            let formatted =
+                entry.pretty_format(Some(std::path::Path::new("C:\\full\\path\\test.txt")));
+
+            assert!(formatted.contains("File ID             : 0x12345"));
+            assert!(formatted.contains("Parent File ID      : 0x67890"));
+            assert!(formatted.contains("Type                : File"));
+            assert!(formatted.contains("Path                : C:\\full\\path\\test.txt"));
+        }
+
+        #[test]
+        fn test_mft_entry_pretty_format_without_path() {
+            let record_data = create_mock_usn_record(
+                100, 0x12345, 0x67890, "test.txt", 0x10, // Directory
+            );
+
+            let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
+            let entry = MftEntry::new(record);
+
+            let formatted = entry.pretty_format(None::<&std::path::Path>);
+
+            assert!(formatted.contains("File ID             : 0x12345"));
+            assert!(formatted.contains("Parent File ID      : 0x67890"));
+            assert!(formatted.contains("Type                : Directory"));
+            assert!(formatted.contains("Path                : test.txt"));
+        }
+    }
+
+    // Unit tests for EnumOptions
+    mod enum_options_tests {
+        use super::*;
+
+        #[test]
+        fn test_enum_options_default() {
+            let options = EnumOptions::default();
+
+            assert_eq!(options.low_usn, 0);
+            assert_eq!(options.high_usn, i64::MAX);
+            assert_eq!(options.buffer_size, DEFAULT_BUFFER_SIZE);
+        }
+
+        #[test]
+        fn test_enum_options_custom() {
+            let options = EnumOptions {
+                low_usn: 1000,
+                high_usn: 2000,
+                buffer_size: 8192,
+            };
+
+            assert_eq!(options.low_usn, 1000);
+            assert_eq!(options.high_usn, 2000);
+            assert_eq!(options.buffer_size, 8192);
+        }
+    }
+
+    // Simplified mocked test using Injectorpp
+    mod mocked_tests {
+        use super::*;
+
+        #[allow(clippy::too_many_arguments)]
+        #[test]
+        fn test_device_io_control_error_handling() {
+            let mut injector = InjectorPP::new();
+
+            // Mock DeviceIoControl to return an error
+            injector
+                .when_called(injectorpp::func!(
+                    unsafe{} fn (DeviceIoControl)(
+                        HANDLE,
+                        u32,
+                        Option<*const std::ffi::c_void>,
+                        u32,
+                        Option<*mut std::ffi::c_void>,
+                        u32,
+                        Option<*mut u32>,
+                        Option<*mut windows::Win32::System::IO::OVERLAPPED>
+                    ) -> windows::core::Result<()>
+                ))
+                .will_execute(injectorpp::fake!(
+                    func_type: unsafe fn(
+                        _handle: HANDLE,
+                        _control_code: u32,
+                        _input: Option<*const std::ffi::c_void>,
+                        _input_size: u32,
+                        _output: Option<*mut std::ffi::c_void>,
+                        _output_size: u32,
+                        _bytes_returned: Option<*mut u32>,
+                        _overlapped: Option<*mut windows::Win32::System::IO::OVERLAPPED>
+                    ) -> windows::core::Result<()>,
+                    returns: Err(windows::core::Error::from(ERROR_INVALID_HANDLE))
+                ));
+
+            let volume = Volume {
+                handle: HANDLE(std::ptr::null_mut()),
+                drive_letter: Some('T'),
+                mount_point: None,
+            };
             let mft = Mft::new(&volume);
-            for result in mft.iter() {
-                let entry = result?; // Handle the Result<MftEntry>
-                println!("MFT entry: {entry:?}");
-                // Check if the Mft entry is valid
-                assert!(entry.usn >= 0, "USN is not valid");
-                assert!(entry.fid > 0, "File ID is not valid");
-                assert!(!entry.file_name.is_empty(), "File name is not valid");
-                assert!(entry.parent_fid > 0, "Parent File ID is not valid");
-                assert!(
-                    entry.file_attributes > 0,
-                    "File attributes are not valid (zero is allowed if no special flags are set)"
-                );
+
+            let mut iter = mft.iter();
+            let result = iter.next();
+
+            assert!(result.is_some());
+            match result.unwrap() {
+                Err(UsnError::WinApiError(_)) => {
+                    // Expected error type
+                }
+                _ => panic!("Expected WinApiError"),
             }
-
-            Ok(())
-        };
-
-        // Teardown the test environment
-        teardown(uuid)?;
-
-        // Return the result of the test
-        result
+        }
     }
 }

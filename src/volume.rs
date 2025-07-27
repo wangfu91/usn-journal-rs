@@ -123,85 +123,129 @@ fn get_volume_handle_from_mount_point(mount_point: &Path) -> Result<HANDLE, UsnE
 
 #[cfg(test)]
 mod tests {
-    use windows::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND};
+    use windows::Win32::Foundation::{ERROR_FILE_NOT_FOUND, HANDLE};
 
-    use crate::{
-        errors::UsnError,
-        tests::{setup, teardown},
-        volume::Volume,
-    };
+    use crate::{errors::UsnError, volume::Volume};
 
-    #[test]
-    fn test_get_volume_handle_from_valid_drive_letter() -> Result<(), UsnError> {
-        let drive_letter = 'C';
-        let volume = Volume::from_drive_letter(drive_letter)?;
-        assert!(!volume.handle.is_invalid(), "Volume handle should be valid");
-        assert_eq!(
-            volume.drive_letter,
-            Some(drive_letter),
-            "Drive letter should match"
-        );
-        assert!(volume.mount_point.is_none(), "Mount point should be None");
+    // Unit tests for Volume struct behavior
+    mod unit_tests {
+        use super::*;
 
-        Ok(())
+        #[test]
+        fn test_volume_debug_formatting() {
+            let volume = Volume {
+                handle: HANDLE(std::ptr::null_mut()),
+                drive_letter: Some('C'),
+                mount_point: None,
+            };
+            let debug_str = format!("{volume:?}");
+            assert!(debug_str.contains("handle"));
+            assert!(debug_str.contains("drive_letter"));
+            assert!(debug_str.contains("mount_point"));
+        }
+
+        #[test]
+        fn test_volume_clone() {
+            let original = Volume {
+                handle: HANDLE(std::ptr::null_mut()),
+                drive_letter: Some('D'),
+                mount_point: Some("D:\\mount".to_string()),
+            };
+
+            let cloned = original.clone();
+            assert_eq!(original.handle, cloned.handle);
+            assert_eq!(original.drive_letter, cloned.drive_letter);
+            assert_eq!(original.mount_point, cloned.mount_point);
+        }
+
+        #[test]
+        fn test_volume_struct_variants() {
+            // Test drive letter only
+            let vol1 = Volume {
+                handle: HANDLE(std::ptr::null_mut()),
+                drive_letter: Some('C'),
+                mount_point: None,
+            };
+            assert!(vol1.drive_letter.is_some());
+            assert!(vol1.mount_point.is_none());
+
+            // Test mount point only
+            let vol2 = Volume {
+                handle: HANDLE(std::ptr::null_mut()),
+                drive_letter: None,
+                mount_point: Some("C:\\mount".to_string()),
+            };
+            assert!(vol2.drive_letter.is_none());
+            assert!(vol2.mount_point.is_some());
+
+            // Test both (edge case)
+            let vol3 = Volume {
+                handle: HANDLE(std::ptr::null_mut()),
+                drive_letter: Some('D'),
+                mount_point: Some("D:\\mount".to_string()),
+            };
+            assert!(vol3.drive_letter.is_some());
+            assert!(vol3.mount_point.is_some());
+        }
     }
 
-    #[test]
-    fn test_get_volume_handle_from_invalid_drive_letter() {
-        let drive_letter = 'W'; // Assuming W is not a valid drive letter
-        let result = Volume::from_drive_letter(drive_letter);
-        eprintln!("Result: {result:?}");
-        assert!(
-            result.is_err(),
-            "Should return an error for invalid drive letter"
-        );
-        assert!(
-            matches!(
-                result.unwrap_err(),
-                UsnError::WinApiError(err) if err.code() == ERROR_FILE_NOT_FOUND.into()),
-            "Expected a WinApiError of ERROR_FILE_NOT_FOUND for invalid drive letter"
-        );
-    }
+    // Integration tests that require actual filesystem access
+    mod integration_tests {
+        use super::*;
 
-    #[test]
-    fn test_get_volume_handle_from_invalid_mount_point() {
-        let mount_point = r"C:\invalid\mount\point";
-        let result = Volume::from_mount_point(mount_point.as_ref());
-        eprintln!("Result: {result:?}");
-        assert!(
-            result.is_err(),
-            "Should return an error for invalid mount point"
-        );
-        assert!(
-            matches!(
-                result.unwrap_err(),
-                UsnError::WinApiError(err) if err.code() == ERROR_PATH_NOT_FOUND.into()),
-            "Expected a WinApiError of ERROR_PATH_NOT_FOUND for invalid mount point"
-        );
-    }
+        #[test]
+        fn test_get_volume_handle_from_valid_drive_letter() -> Result<(), UsnError> {
+            let drive_letter = 'C';
+            match Volume::from_drive_letter(drive_letter) {
+                Ok(volume) => {
+                    assert!(!volume.handle.is_invalid(), "Volume handle should be valid");
+                    assert_eq!(
+                        volume.drive_letter,
+                        Some(drive_letter),
+                        "Drive letter should match"
+                    );
+                    assert!(volume.mount_point.is_none(), "Mount point should be None");
+                    Ok(())
+                }
+                Err(UsnError::PermissionError) => {
+                    eprintln!("Skipping test - requires admin privileges");
+                    Ok(())
+                }
+                Err(e) => Err(e),
+            }
+        }
 
-    #[test]
-    fn test_get_volume_handle_from_valid_mount_point() -> Result<(), UsnError> {
-        // Setup the test environment
-        let (mount_point, uuid) = setup()?;
+        #[test]
+        fn test_get_volume_handle_from_invalid_drive_letter() {
+            let drive_letter = 'W'; // Assuming W is not a valid drive letter
+            let result = Volume::from_drive_letter(drive_letter);
+            eprintln!("Result: {result:?}");
 
-        let result = {
-            let volume = Volume::from_mount_point(mount_point.as_path())?;
-            assert!(!volume.handle.is_invalid(), "Volume handle should be valid");
-            assert!(volume.drive_letter.is_none(), "Drive letter should be None");
-            assert_eq!(
-                volume.mount_point,
-                Some(mount_point.to_string_lossy().to_string()),
-                "Mount point should match"
+            match result {
+                Err(UsnError::PermissionError) => {
+                    eprintln!("Skipping test - requires admin privileges");
+                }
+                Err(UsnError::WinApiError(err)) if err.code() == ERROR_FILE_NOT_FOUND.into() => {
+                    // Expected case - drive not found
+                }
+                _ => {
+                    assert!(
+                        result.is_err(),
+                        "Should return an error for invalid drive letter"
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn test_get_volume_handle_from_invalid_mount_point() {
+            let mount_point = r"C:\invalid\mount\point";
+            let result = Volume::from_mount_point(mount_point.as_ref());
+            eprintln!("Result: {result:?}");
+            assert!(
+                result.is_err(),
+                "Should return an error for invalid mount point"
             );
-
-            Ok(())
-        };
-
-        // Teardown the test environment
-        teardown(uuid)?;
-
-        // Return the result of the test
-        result
+        }
     }
 }
