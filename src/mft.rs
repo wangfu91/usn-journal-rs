@@ -269,79 +269,49 @@ mod tests {
     ) -> Vec<u8> {
         let file_name_utf16: Vec<u16> = file_name.encode_utf16().collect();
         let file_name_len = file_name_utf16.len() * 2; // length in bytes
-
-        // The filename starts at the FileName field location in USN_RECORD_V2
         let filename_offset = offset_of!(USN_RECORD_V2, FileName);
         let record_len = filename_offset + file_name_len;
 
-        let mut record_data = vec![0u8; record_len];
+        // Create a properly aligned buffer
+        let mut buffer = vec![0u8; record_len];
 
-        // Manually build the record structure in the buffer
-        let mut pos = 0;
+        // Create the USN_RECORD_V2 structure (without the variable-length filename)
+        let base_record = USN_RECORD_V2 {
+            RecordLength: record_len as u32,
+            MajorVersion: 2,
+            MinorVersion: 0,
+            FileReferenceNumber: file_id,
+            ParentFileReferenceNumber: parent_file_id,
+            Usn: usn,
+            TimeStamp: 0,
+            Reason: 0,
+            SourceInfo: 0,
+            SecurityId: 0,
+            FileAttributes: file_attributes,
+            FileNameLength: file_name_len as u16,
+            FileNameOffset: filename_offset as u16,
+            FileName: [0; 1], // This will be overwritten
+        };
 
-        // RecordLength (u32)
-        record_data[pos..pos + 4].copy_from_slice(&(record_len as u32).to_le_bytes());
-        pos += 4;
-
-        // MajorVersion (u16)
-        record_data[pos..pos + 2].copy_from_slice(&2u16.to_le_bytes());
-        pos += 2;
-
-        // MinorVersion (u16)
-        record_data[pos..pos + 2].copy_from_slice(&0u16.to_le_bytes());
-        pos += 2;
-
-        // FileReferenceNumber (u64)
-        record_data[pos..pos + 8].copy_from_slice(&file_id.to_le_bytes());
-        pos += 8;
-
-        // ParentFileReferenceNumber (u64)
-        record_data[pos..pos + 8].copy_from_slice(&parent_file_id.to_le_bytes());
-        pos += 8;
-
-        // Usn (i64)
-        record_data[pos..pos + 8].copy_from_slice(&usn.to_le_bytes());
-        pos += 8;
-
-        // TimeStamp (i64)
-        record_data[pos..pos + 8].copy_from_slice(&0i64.to_le_bytes());
-        pos += 8;
-
-        // Reason (u32)
-        record_data[pos..pos + 4].copy_from_slice(&0u32.to_le_bytes());
-        pos += 4;
-
-        // SourceInfo (u32)
-        record_data[pos..pos + 4].copy_from_slice(&0u32.to_le_bytes());
-        pos += 4;
-
-        // SecurityId (u32)
-        record_data[pos..pos + 4].copy_from_slice(&0u32.to_le_bytes());
-        pos += 4;
-
-        // FileAttributes (u32)
-        record_data[pos..pos + 4].copy_from_slice(&file_attributes.to_le_bytes());
-        pos += 4;
-
-        // FileNameLength (u16)
-        record_data[pos..pos + 2].copy_from_slice(&(file_name_len as u16).to_le_bytes());
-        pos += 2;
-
-        // FileNameOffset (u16)
-        record_data[pos..pos + 2].copy_from_slice(&(filename_offset as u16).to_le_bytes());
-        pos += 2;
-
-        // Now pos should be at the FileName field location
-        assert_eq!(pos, filename_offset);
-
-        // Copy the filename data
-        for (i, &utf16_char) in file_name_utf16.iter().enumerate() {
-            let bytes = utf16_char.to_le_bytes();
-            record_data[pos + i * 2] = bytes[0];
-            record_data[pos + i * 2 + 1] = bytes[1];
+        // Copy the base structure to the buffer
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                &base_record as *const USN_RECORD_V2 as *const u8,
+                buffer.as_mut_ptr(),
+                filename_offset,
+            );
         }
 
-        record_data
+        // Copy the filename data
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                file_name_utf16.as_ptr() as *const u8,
+                buffer.as_mut_ptr().add(filename_offset),
+                file_name_len,
+            );
+        }
+
+        buffer
     }
 
     // Unit tests for MftEntry
