@@ -219,20 +219,26 @@ mod tests {
         fn test_get_volume_handle_from_invalid_drive_letter() {
             let drive_letter = 'W'; // Assuming W is not a valid drive letter
             let result = Volume::from_drive_letter(drive_letter);
-            eprintln!("Result: {result:?}");
 
+            // The test should always return an error - either permission denied or file not found
+            assert!(
+                result.is_err(),
+                "Should return an error for invalid drive letter"
+            );
+
+            // Log the specific error for debugging purposes
             match result {
                 Err(UsnError::PermissionError) => {
-                    eprintln!("Skipping test - requires admin privileges");
+                    eprintln!("Got permission error - test requires admin privileges");
                 }
                 Err(UsnError::WinApiError(err)) if err.code() == ERROR_FILE_NOT_FOUND.into() => {
-                    // Expected case - drive not found
+                    eprintln!("Got expected file not found error");
                 }
-                _ => {
-                    assert!(
-                        result.is_err(),
-                        "Should return an error for invalid drive letter"
-                    );
+                Err(other_err) => {
+                    eprintln!("Got other error (acceptable): {other_err:?}");
+                }
+                Ok(_) => {
+                    panic!("Unexpected success - drive W should not exist");
                 }
             }
         }
