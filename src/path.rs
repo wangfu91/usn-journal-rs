@@ -284,10 +284,7 @@ fn file_id_to_path(volume: &Volume, file_id: u64) -> windows::core::Result<PathB
 mod tests {
     use super::*;
     use crate::{mft::MftEntry, volume::Volume};
-    use std::{
-        ffi::{OsString, c_void},
-        mem, ptr,
-    };
+    use std::{ffi::OsString, mem, ptr};
     use windows::Win32::{Foundation::HANDLE, System::Ioctl::USN_RECORD_V2};
 
     // Mock implementations of PathResolvableEntry
@@ -316,7 +313,7 @@ mod tests {
 
     fn create_mock_volume() -> Volume {
         Volume {
-            handle: HANDLE(0x1234 as *mut c_void),
+            handle: HANDLE(std::ptr::null_mut()),
             drive_letter: Some('C'),
             mount_point: None,
         }
