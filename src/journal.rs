@@ -409,7 +409,8 @@ impl UsnEntry {
             unsafe { std::slice::from_raw_parts(record.FileName.as_ptr(), file_name_len) };
         let file_name = OsString::from_wide(file_name_data);
 
-        let sys_time = time::filetime_to_systemtime(record.TimeStamp);
+        let sys_time =
+            time::filetime_to_systemtime(record.TimeStamp).unwrap_or(SystemTime::UNIX_EPOCH); // Fallback for invalid timestamps
 
         UsnEntry {
             usn: record.Usn,
