@@ -36,7 +36,10 @@ mod tests {
         fn test_permission_error_display() {
             let error = UsnError::PermissionError;
             let error_string = error.to_string();
-            assert_eq!(error_string, "Access denied: Administrator privileges required.");
+            assert_eq!(
+                error_string,
+                "Access denied: Administrator privileges required."
+            );
         }
 
         #[test]
@@ -59,7 +62,7 @@ mod tests {
         fn test_io_error_conversion() {
             let io_error = IoError::new(ErrorKind::NotFound, "File not found");
             let usn_error = UsnError::from(io_error);
-            
+
             match usn_error {
                 UsnError::IoError(ref e) => {
                     assert_eq!(e.kind(), ErrorKind::NotFound);
@@ -73,7 +76,7 @@ mod tests {
         fn test_windows_error_conversion() {
             let win_error = windows::core::Error::from(ERROR_ACCESS_DENIED);
             let usn_error = UsnError::from(win_error);
-            
+
             match usn_error {
                 UsnError::WinApiError(ref e) => {
                     assert_eq!(e.code(), ERROR_ACCESS_DENIED.into());
@@ -160,10 +163,10 @@ mod tests {
         #[test]
         fn test_error_source_chain() {
             use std::error::Error;
-            
+
             let io_error = IoError::new(ErrorKind::NotFound, "Original error");
             let usn_error = UsnError::from(io_error);
-            
+
             // Test that the source chain is preserved
             assert!(usn_error.source().is_some());
             if let UsnError::IoError(ref e) = usn_error {
@@ -180,7 +183,11 @@ mod tests {
         fn test_common_permission_scenarios() {
             // Test that permission errors have the expected message
             let error = UsnError::PermissionError;
-            assert!(error.to_string().contains("Administrator privileges required"));
+            assert!(
+                error
+                    .to_string()
+                    .contains("Administrator privileges required")
+            );
         }
 
         #[test]
@@ -202,7 +209,7 @@ mod tests {
         #[test]
         fn test_windows_api_error_codes() {
             use windows::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_INVALID_HANDLE};
-            
+
             let error_codes = vec![
                 ERROR_ACCESS_DENIED,
                 ERROR_FILE_NOT_FOUND,
@@ -212,7 +219,7 @@ mod tests {
             for code in error_codes {
                 let win_error = windows::core::Error::from(code);
                 let usn_error = UsnError::from(win_error);
-                
+
                 if let UsnError::WinApiError(ref e) = usn_error {
                     assert_eq!(e.code(), code.into());
                 } else {
