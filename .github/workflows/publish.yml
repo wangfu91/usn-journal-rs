@@ -4,6 +4,8 @@ on:
   push:
     tags:
       - 'v*'  # Trigger on tags matching v*, like v1.0.0
+    branches:
+      - main  # Only publish when tags are on the main branch
 
 env:
   CARGO_TERM_COLOR: always
@@ -20,6 +22,9 @@ jobs:
         with:
           toolchain: stable
           targets: x86_64-pc-windows-msvc
+      
+      - name: Run tests
+        run: cargo test --verbose
       
       - name: Verify package
         run: cargo package
