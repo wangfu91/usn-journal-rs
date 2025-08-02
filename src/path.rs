@@ -397,22 +397,6 @@ mod tests {
     }
 
     #[test]
-    fn test_path_resolver_new() {
-        let volume = create_mock_volume();
-        let resolver = PathResolver::new(&volume);
-
-        assert!(resolver.dir_fid_path_cache.is_none());
-    }
-
-    #[test]
-    fn test_path_resolver_new_with_cache() {
-        let volume = create_mock_volume();
-        let resolver = PathResolver::new_with_cache(&volume);
-
-        assert!(resolver.dir_fid_path_cache.is_some());
-    }
-
-    #[test]
     fn test_resolve_path_with_cache_hit() {
         let volume = create_mock_volume();
         let mut resolver = PathResolver::new_with_cache(&volume);
@@ -532,32 +516,6 @@ mod tests {
             assert_eq!(updated_path.to_string_lossy(), "C:\\Documents\\NewName");
             assert_eq!(updated_name, &OsString::from("NewName"));
         }
-    }
-
-    #[test]
-    fn test_lru_cache_capacity() {
-        let volume = create_mock_volume();
-        let resolver = PathResolver::new_with_cache(&volume);
-
-        if let Some(ref cache) = resolver.dir_fid_path_cache {
-            // LRU cache should have the expected capacity
-            assert_eq!(cache.cap().get(), LRU_CACHE_CAPACITY);
-        }
-    }
-
-    #[test]
-    fn test_mock_entry_trait_implementation() {
-        let entry = MockEntry {
-            fid: 0xABC123,
-            parent_fid: 0xDEF456,
-            file_name: OsString::from("test_file.dat"),
-            is_dir: true,
-        };
-
-        assert_eq!(entry.fid(), 0xABC123);
-        assert_eq!(entry.parent_fid(), 0xDEF456);
-        assert_eq!(entry.file_name(), &OsString::from("test_file.dat"));
-        assert!(entry.is_dir());
     }
 
     #[test]

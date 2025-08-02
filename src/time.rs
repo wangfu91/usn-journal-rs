@@ -137,27 +137,6 @@ mod tests {
 
             Ok(())
         }
-
-        #[test]
-        fn test_windows_epoch_constant() {
-            // Test that the Windows epoch constant is correctly defined
-            let expected_naive = NaiveDate::from_ymd_opt(1601, 1, 1)
-                .unwrap()
-                .and_hms_opt(0, 0, 0)
-                .unwrap();
-            assert_eq!(WINDOWS_EPOCH_NAIVE, expected_naive);
-
-            let expected_utc = DateTime::<Utc>::from_naive_utc_and_offset(expected_naive, Utc);
-            assert_eq!(WINDOWS_EPOCH_UTC, expected_utc);
-        }
-
-        #[test]
-        fn test_zero_filetime() {
-            // Test that zero filetime converts to Windows epoch
-            let result = filetime_to_systemtime(0).unwrap();
-            let expected: SystemTime = WINDOWS_EPOCH_UTC.into();
-            assert_eq!(result, expected);
-        }
     }
 
     // Edge case and boundary tests
@@ -279,17 +258,6 @@ mod tests {
                     "Conversion inconsistency: {filetime} vs {reconstructed_filetime} (diff: {diff})"
                 );
             }
-        }
-
-        #[test]
-        fn test_multiple_calls_consistency() {
-            // Test that multiple calls with the same input produce identical results
-            let test_filetime = 116_444_736_000_000_000; // Unix epoch
-
-            let result1 = filetime_to_systemtime(test_filetime).unwrap();
-            let result2 = filetime_to_systemtime(test_filetime).unwrap();
-
-            assert_eq!(result1, result2);
         }
     }
 

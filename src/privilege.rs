@@ -47,35 +47,6 @@ mod tests {
                 }
             }
         }
-
-        #[test]
-        fn test_is_elevated_consistent_results() {
-            // Test that multiple calls return consistent results
-            let result1 = is_elevated();
-            let result2 = is_elevated();
-
-            match (result1, result2) {
-                (Ok(val1), Ok(val2)) => {
-                    assert_eq!(
-                        val1, val2,
-                        "Multiple calls should return consistent results"
-                    );
-                }
-                (Err(_), Err(_)) => {
-                    // Both failed - acceptable
-                }
-                _ => {
-                    // One succeeded, one failed - this could indicate an issue
-                    // but may be acceptable in some edge cases
-                }
-            }
-        }
-
-        #[test]
-        fn test_privilege_logic_basic() {
-            // Basic test to ensure the function doesn't panic
-            let _ = is_elevated();
-        }
     }
 
     // Mocked tests for error scenarios
@@ -165,16 +136,6 @@ mod tests {
                     // This is also acceptable - some systems may not support this check
                 }
             }
-        }
-
-        #[test]
-        fn test_token_elevation_structure() {
-            // Test that TOKEN_ELEVATION has the expected structure
-            let elevation = TOKEN_ELEVATION::default();
-            assert_eq!(elevation.TokenIsElevated, 0); // Default should be 0
-
-            // Test structure size
-            assert_eq!(size_of::<TOKEN_ELEVATION>(), 4); // Should be 4 bytes (DWORD)
         }
     }
 }

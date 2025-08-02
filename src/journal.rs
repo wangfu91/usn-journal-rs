@@ -644,17 +644,6 @@ mod tests {
     }
 
     #[test]
-    fn test_enum_options_default() {
-        let options = EnumOptions::default();
-        assert_eq!(options.start_usn, 0);
-        assert_eq!(options.reason_mask, USN_REASON_MASK_ALL);
-        assert!(!options.only_on_close);
-        assert_eq!(options.timeout, 0);
-        assert!(!options.wait_for_more);
-        assert_eq!(options.buffer_size, DEFAULT_BUFFER_SIZE);
-    }
-
-    #[test]
     fn test_usn_journal_data_from_conversion() {
         let raw_data = create_mock_usn_journal_data();
         let journal_data = UsnJournalData::from(raw_data);

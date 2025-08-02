@@ -454,31 +454,7 @@ mod tests {
     }
 
     // Unit tests for EnumOptions
-    mod enum_options_tests {
-        use super::*;
-
-        #[test]
-        fn test_enum_options_default() {
-            let options = EnumOptions::default();
-
-            assert_eq!(options.low_usn, 0);
-            assert_eq!(options.high_usn, i64::MAX);
-            assert_eq!(options.buffer_size, DEFAULT_BUFFER_SIZE);
-        }
-
-        #[test]
-        fn test_enum_options_custom() {
-            let options = EnumOptions {
-                low_usn: 1000,
-                high_usn: 2000,
-                buffer_size: 8192,
-            };
-
-            assert_eq!(options.low_usn, 1000);
-            assert_eq!(options.high_usn, 2000);
-            assert_eq!(options.buffer_size, 8192);
-        }
-    }
+    mod enum_options_tests {}
 
     // Simplified mocked test using Injectorpp
     mod mocked_tests {

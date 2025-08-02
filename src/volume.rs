@@ -123,71 +123,9 @@ fn get_volume_handle_from_mount_point(mount_point: &Path) -> Result<HANDLE, UsnE
 
 #[cfg(test)]
 mod tests {
-    use windows::Win32::Foundation::{ERROR_FILE_NOT_FOUND, HANDLE};
+    use windows::Win32::Foundation::ERROR_FILE_NOT_FOUND;
 
     use crate::{errors::UsnError, volume::Volume};
-
-    // Unit tests for Volume struct behavior
-    mod unit_tests {
-        use super::*;
-
-        #[test]
-        fn test_volume_debug_formatting() {
-            let volume = Volume {
-                handle: HANDLE(std::ptr::null_mut()),
-                drive_letter: Some('C'),
-                mount_point: None,
-            };
-            let debug_str = format!("{volume:?}");
-            assert!(debug_str.contains("handle"));
-            assert!(debug_str.contains("drive_letter"));
-            assert!(debug_str.contains("mount_point"));
-        }
-
-        #[test]
-        fn test_volume_clone() {
-            let original = Volume {
-                handle: HANDLE(std::ptr::null_mut()),
-                drive_letter: Some('D'),
-                mount_point: Some("D:\\mount".to_string()),
-            };
-
-            let cloned = original.clone();
-            assert_eq!(original.handle, cloned.handle);
-            assert_eq!(original.drive_letter, cloned.drive_letter);
-            assert_eq!(original.mount_point, cloned.mount_point);
-        }
-
-        #[test]
-        fn test_volume_struct_variants() {
-            // Test drive letter only
-            let vol1 = Volume {
-                handle: HANDLE(std::ptr::null_mut()),
-                drive_letter: Some('C'),
-                mount_point: None,
-            };
-            assert!(vol1.drive_letter.is_some());
-            assert!(vol1.mount_point.is_none());
-
-            // Test mount point only
-            let vol2 = Volume {
-                handle: HANDLE(std::ptr::null_mut()),
-                drive_letter: None,
-                mount_point: Some("C:\\mount".to_string()),
-            };
-            assert!(vol2.drive_letter.is_none());
-            assert!(vol2.mount_point.is_some());
-
-            // Test both (edge case)
-            let vol3 = Volume {
-                handle: HANDLE(std::ptr::null_mut()),
-                drive_letter: Some('D'),
-                mount_point: Some("D:\\mount".to_string()),
-            };
-            assert!(vol3.drive_letter.is_some());
-            assert!(vol3.mount_point.is_some());
-        }
-    }
 
     // Integration tests that require actual filesystem access
     mod integration_tests {

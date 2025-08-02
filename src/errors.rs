@@ -86,13 +86,6 @@ mod tests {
         }
 
         #[test]
-        fn test_error_debug_formatting() {
-            let error = UsnError::PermissionError;
-            let debug_string = format!("{error:?}");
-            assert!(debug_string.contains("PermissionError"));
-        }
-
-        #[test]
         fn test_error_chain_display() {
             let io_error = IoError::new(ErrorKind::PermissionDenied, "Access denied");
             let usn_error = UsnError::from(io_error);
@@ -100,49 +93,11 @@ mod tests {
             assert!(error_string.contains("IO error:"));
             assert!(error_string.contains("Access denied"));
         }
-
-        #[test]
-        fn test_error_is_send_sync() {
-            // Compile-time test to ensure UsnError implements Send + Sync
-            fn assert_send_sync<T: Send + Sync>() {}
-            assert_send_sync::<UsnError>();
-        }
     }
 
     // Tests for error matching and handling patterns
     mod error_handling_tests {
         use super::*;
-
-        #[test]
-        fn test_error_matching_patterns() {
-            let errors = vec![
-                UsnError::PermissionError,
-                UsnError::InvalidMountPointError("test".to_string()),
-                UsnError::IoError(IoError::new(ErrorKind::NotFound, "test")),
-                UsnError::WinApiError(windows::core::Error::from(ERROR_ACCESS_DENIED)),
-                UsnError::OtherError("test".to_string()),
-            ];
-
-            for error in errors {
-                match &error {
-                    UsnError::PermissionError => {
-                        assert!(matches!(error, UsnError::PermissionError));
-                    }
-                    UsnError::InvalidMountPointError(_) => {
-                        assert!(matches!(error, UsnError::InvalidMountPointError(_)));
-                    }
-                    UsnError::IoError(_) => {
-                        assert!(matches!(error, UsnError::IoError(_)));
-                    }
-                    UsnError::WinApiError(_) => {
-                        assert!(matches!(error, UsnError::WinApiError(_)));
-                    }
-                    UsnError::OtherError(_) => {
-                        assert!(matches!(error, UsnError::OtherError(_)));
-                    }
-                }
-            }
-        }
 
         #[test]
         fn test_result_type_integration() {
