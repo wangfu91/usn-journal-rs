@@ -412,7 +412,9 @@ impl UsnEntry {
         let sys_time = match time::filetime_to_systemtime(record.TimeStamp) {
             Ok(system_time) => system_time,
             Err(e) => {
-                warn!("Failed to convert FILETIME to SystemTime: {}. Using current system time as fallback.", e);
+                warn!(
+                    "Failed to convert FILETIME to SystemTime: {e}. Using current system time as fallback."
+                );
                 SystemTime::now()
             }
         };
