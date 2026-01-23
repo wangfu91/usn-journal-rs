@@ -9,7 +9,11 @@ keywords = ["usn-journal", "filesystem", "ntfs", "mft", "refs"]
 categories = ["filesystem", "os::windows-apis"]
 
 [package.metadata.docs.rs]
-targets = ["x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc", "i686-pc-windows-msvc"]
+targets = [
+    "x86_64-pc-windows-msvc",
+    "aarch64-pc-windows-msvc",
+    "i686-pc-windows-msvc",
+]
 
 [dependencies]
 chrono = "0.4"
@@ -18,9 +22,9 @@ lru = "0.16"
 thiserror = "2.0"
 
 [dependencies.windows]
-version = "0.61"
+version = "0.62.2"
 features = [
-    "Win32_Foundation", 
+    "Win32_Foundation",
     "Win32_System_IO",
     "Win32_Storage_FileSystem",
     "Win32_Security",
