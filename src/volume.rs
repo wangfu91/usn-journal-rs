@@ -5,7 +5,7 @@ use log::{debug, warn};
 use std::path::Path;
 use windows::{
     Win32::{
-        Foundation::{ERROR_ACCESS_DENIED, HANDLE},
+        Foundation::{CloseHandle, ERROR_ACCESS_DENIED, HANDLE},
         Storage::FileSystem::{
             CreateFileW, FILE_FLAGS_AND_ATTRIBUTES, FILE_GENERIC_READ, FILE_SHARE_READ,
             FILE_SHARE_WRITE, GetVolumeNameForVolumeMountPointW, OPEN_EXISTING,
@@ -14,7 +14,7 @@ use windows::{
     core::HSTRING,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 /// Represents an NTFS/ReFS volume handle and its associated drive letter or mount point.
 pub struct Volume {
     pub(crate) handle: HANDLE,
@@ -41,6 +41,18 @@ impl Volume {
             drive_letter: None,
             mount_point: Some(mount_point.to_string_lossy().to_string()),
         })
+    }
+}
+
+impl Drop for Volume {
+    fn drop(&mut self) {
+        if self.handle.is_invalid() {
+            return;
+        }
+
+        if let Err(err) = unsafe { CloseHandle(self.handle) } {
+            warn!("Failed to close volume handle: {err}");
+        }
     }
 }
 

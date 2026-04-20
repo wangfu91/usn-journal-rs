@@ -5,17 +5,19 @@ use windows::Win32::{
     Security::{GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation},
     System::Threading::{GetCurrentProcess, OpenProcessToken},
 };
+use windows::core::Owned;
 
 pub(crate) fn is_elevated() -> windows::core::Result<bool> {
     let mut handle: HANDLE = HANDLE::default();
     unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut handle)? };
+    let handle = unsafe { Owned::new(handle) };
 
     let mut elevation = TOKEN_ELEVATION::default();
     let mut returned_length = 0;
 
     unsafe {
         GetTokenInformation(
-            handle,
+            *handle,
             TokenElevation,
             Some(&mut elevation as *mut _ as *mut _),
             size_of::<TOKEN_ELEVATION>() as u32,

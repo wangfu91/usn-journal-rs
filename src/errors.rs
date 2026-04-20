@@ -9,6 +9,12 @@ pub enum UsnError {
     #[error("Access denied: Administrator privileges required.")]
     PermissionError,
 
+    #[error("Invalid options: {0}")]
+    InvalidOptions(&'static str),
+
+    #[error("Invalid record data: {0}")]
+    InvalidRecordData(&'static str),
+
     #[error("Invalid mount point: {0}")]
     InvalidMountPointError(String),
 
@@ -31,6 +37,26 @@ mod tests {
     // Unit tests for UsnError variants and behavior
     mod error_variant_tests {
         use super::*;
+
+        #[test]
+        fn test_invalid_options_error_display() {
+            let error = UsnError::InvalidOptions("buffer_size must be greater than 0");
+            let error_string = error.to_string();
+            assert_eq!(
+                error_string,
+                "Invalid options: buffer_size must be greater than 0"
+            );
+        }
+
+        #[test]
+        fn test_invalid_record_data_error_display() {
+            let error = UsnError::InvalidRecordData("record length exceeds bytes read");
+            let error_string = error.to_string();
+            assert_eq!(
+                error_string,
+                "Invalid record data: record length exceeds bytes read"
+            );
+        }
 
         #[test]
         fn test_permission_error_display() {

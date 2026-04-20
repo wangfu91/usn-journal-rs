@@ -79,7 +79,8 @@ impl<'a> PathResolver<'a> {
     /// # Arguments
     /// * `volume` - Reference to the `Volume` struct representing the NTFS/ReFS volume.
     pub fn new_with_cache(volume: &'a Volume) -> Self {
-        let capacity = NonZeroUsize::new(LRU_CACHE_CAPACITY).unwrap();
+        let capacity = NonZeroUsize::new(LRU_CACHE_CAPACITY)
+            .expect("LRU_CACHE_CAPACITY must be greater than zero");
         let cache = LruCache::new(capacity);
         PathResolver {
             volume,

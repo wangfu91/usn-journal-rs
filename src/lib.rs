@@ -32,7 +32,7 @@
 //! let drive_letter = 'C';
 //! let volume = Volume::from_drive_letter(drive_letter).unwrap();
 //! let mft = Mft::new(&volume);
-//! for result in mft.iter().take(10) {
+//! for result in mft.iter().unwrap().take(10) {
 //!     match result {
 //!         Ok(entry) => println!("MFT entry: {entry:?}"),
 //!         Err(e) => eprintln!("Error reading MFT entry: {e}"),
@@ -52,6 +52,7 @@ pub mod journal;
 pub mod mft;
 pub mod path;
 mod privilege;
+mod record;
 
 // Re-export commonly used types
 pub use errors::UsnError;

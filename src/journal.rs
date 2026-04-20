@@ -7,7 +7,7 @@
 use crate::volume::Volume;
 use crate::{
     DEFAULT_BUFFER_SIZE, DEFAULT_JOURNAL_ALLOCATION_DELTA, DEFAULT_JOURNAL_MAX_SIZE,
-    USN_REASON_MASK_ALL, Usn, UsnResult, time,
+    USN_REASON_MASK_ALL, Usn, UsnResult, record, time,
 };
 use chrono::{DateTime, Local};
 use log::{debug, warn};
@@ -329,13 +329,9 @@ impl UsnJournalIter {
     /// Find the next USN record in the buffer, reading more data if needed.
     ///
     /// Returns `Ok(Some(&USN_RECORD_V2))` if a record is found, `Ok(None)` if EOF, or an error.
-    fn find_next_entry(&mut self) -> windows::core::Result<Option<&USN_RECORD_V2>> {
+    fn find_next_entry(&mut self) -> UsnResult<Option<&USN_RECORD_V2>> {
         if self.offset < self.bytes_read {
-            let record = unsafe {
-                &*(self.buffer.as_ptr().offset(self.offset as isize) as *const USN_RECORD_V2)
-            };
-            self.offset += record.RecordLength;
-            return Ok(Some(record));
+            return record::find_next_record(&self.buffer, self.bytes_read, &mut self.offset);
         }
 
         // We need to read more data
@@ -343,16 +339,10 @@ impl UsnJournalIter {
             // https://learn.microsoft.com/en-us/windows/win32/fileio/walking-a-buffer-of-change-journal-records
             // The USN returned as the first item in the output buffer is the USN of the next record number to be retrieved.
             // Use this value to continue reading records from the end boundary forward.
-            self.next_start_usn = unsafe { std::ptr::read(self.buffer.as_ptr() as *const Usn) };
+            self.next_start_usn = record::read_next_start_usn(&self.buffer, self.bytes_read)?;
             self.offset = std::mem::size_of::<Usn>() as u32;
 
-            if self.offset < self.bytes_read {
-                let record = unsafe {
-                    &*(self.buffer.as_ptr().offset(self.offset as isize) as *const USN_RECORD_V2)
-                };
-                self.offset += record.RecordLength;
-                return Ok(Some(record));
-            }
+            return record::find_next_record(&self.buffer, self.bytes_read, &mut self.offset);
         }
 
         // EOF, no more data to read
@@ -369,7 +359,7 @@ impl Iterator for UsnJournalIter {
             Ok(None) => None,
             Err(err) => {
                 debug!("Error finding next USN entry: {err}");
-                Some(Err(err.into()))
+                Some(Err(err))
             }
         }
     }

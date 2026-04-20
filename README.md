@@ -44,7 +44,7 @@ use usn_journal_rs::{volume::Volume, mft::Mft};
 let drive_letter = 'C';
 let volume = Volume::from_drive_letter(drive_letter)?;
 let mft = Mft::new(&volume);
-for entry_result in mft.iter() {
+for entry_result in mft.iter()? {
     match entry_result {
         Ok(entry) => println!("MFT entry: {:?}", entry),
         Err(e) => eprintln!("Error reading MFT entry: {e}"),

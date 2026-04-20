@@ -12,7 +12,7 @@ fn run() -> Result<(), UsnError> {
     let mft = Mft::new(&volume);
     let mut path_resolver = PathResolver::new_with_cache(&volume);
 
-    for result in mft.iter() {
+    for result in mft.iter()? {
         match result {
             Ok(entry) => {
                 let full_path = path_resolver.resolve_path(&entry);

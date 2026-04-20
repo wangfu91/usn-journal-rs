@@ -4,7 +4,7 @@
 //! from the MFT using the Windows FSCTL_ENUM_USN_DATA control code. It manages the buffer and state
 //! required to sequentially retrieve and parse USN records from the volume.
 
-use crate::{DEFAULT_BUFFER_SIZE, Usn, UsnResult, errors::UsnError, volume::Volume};
+use crate::{DEFAULT_BUFFER_SIZE, Usn, UsnResult, errors::UsnError, record, volume::Volume};
 use log::debug;
 use std::{ffi::OsString, mem::size_of, os::windows::ffi::OsStringExt, path::Path};
 use windows::Win32::{
@@ -126,24 +126,22 @@ impl<'a> Mft<'a> {
     ///
     /// The iterator yields `Result<MftEntry, UsnError>` items, allowing callers
     /// to handle individual entry errors gracefully without stopping iteration.
-    pub fn iter(&self) -> MftIter {
-        MftIter {
-            volume_handle: self.volume.handle,
-            low_usn: 0,
-            high_usn: i64::MAX,
-            buffer: vec![0u8; DEFAULT_BUFFER_SIZE],
-            bytes_read: 0,
-            offset: 0,
-            next_start_fid: 0,
-        }
+    pub fn iter(&self) -> UsnResult<MftIter> {
+        self.iter_with_options(EnumOptions::default())
     }
 
     /// Returns an iterator over the MFT entries with custom enumerate options.
     ///
     /// The iterator yields `Result<MftEntry, UsnError>` items, allowing callers
     /// to handle individual entry errors gracefully without stopping iteration.
-    pub fn iter_with_options(&self, options: EnumOptions) -> MftIter {
-        MftIter {
+    pub fn iter_with_options(&self, options: EnumOptions) -> UsnResult<MftIter> {
+        if options.buffer_size == 0 {
+            return Err(UsnError::InvalidOptions(
+                "buffer_size must be greater than 0",
+            ));
+        }
+
+        Ok(MftIter {
             volume_handle: self.volume.handle,
             low_usn: options.low_usn,
             high_usn: options.high_usn,
@@ -151,7 +149,7 @@ impl<'a> Mft<'a> {
             bytes_read: 0,
             offset: 0,
             next_start_fid: options.low_usn as u64,
-        }
+        })
     }
 }
 
@@ -207,25 +205,16 @@ impl MftIter {
     /// Returns `Ok(Some(&USN_RECORD_V2))` if a record is found, `Ok(None)` if EOF, or an error.
     fn find_next_entry(&mut self) -> Result<Option<&USN_RECORD_V2>, UsnError> {
         if self.offset < self.bytes_read {
-            let record = unsafe {
-                &*(self.buffer.as_ptr().offset(self.offset as isize) as *const USN_RECORD_V2)
-            };
-            self.offset += record.RecordLength;
-            return Ok(Some(record));
+            return record::find_next_record(&self.buffer, self.bytes_read, &mut self.offset);
         }
 
         // We need to read more data
         if self.get_data()? {
             // Each call to FSCTL_ENUM_USN_DATA retrieves the starting point for the subsequent call as the first entry in the output buffer.
-            self.next_start_fid = unsafe { std::ptr::read(self.buffer.as_ptr() as *const u64) };
+            self.next_start_fid = record::read_next_start_fid(&self.buffer, self.bytes_read)?;
             self.offset = size_of::<u64>() as u32;
-            if self.offset < self.bytes_read {
-                let record = unsafe {
-                    &*(self.buffer.as_ptr().offset(self.offset as isize) as *const USN_RECORD_V2)
-                };
-                self.offset += record.RecordLength;
-                return Ok(Some(record));
-            }
+
+            return record::find_next_record(&self.buffer, self.bytes_read, &mut self.offset);
         }
 
         // EOF, no more data to read
@@ -500,7 +489,7 @@ mod tests {
             };
             let mft = Mft::new(&volume);
 
-            let mut iter = mft.iter();
+            let mut iter = mft.iter().expect("default MFT iterator should be created");
             let result = iter.next();
 
             assert!(result.is_some());
@@ -510,6 +499,29 @@ mod tests {
                 }
                 _ => panic!("Expected WinApiError"),
             }
+        }
+
+        #[test]
+        fn test_iter_with_invalid_buffer_size() {
+            let volume = Volume {
+                handle: HANDLE(std::ptr::null_mut()),
+                drive_letter: Some('T'),
+                mount_point: None,
+            };
+            let mft = Mft::new(&volume);
+
+            let result = mft.iter_with_options(EnumOptions {
+                low_usn: 0,
+                high_usn: i64::MAX,
+                buffer_size: 0,
+            });
+
+            assert!(matches!(
+                result,
+                Err(UsnError::InvalidOptions(
+                    "buffer_size must be greater than 0"
+                ))
+            ));
         }
     }
 }
