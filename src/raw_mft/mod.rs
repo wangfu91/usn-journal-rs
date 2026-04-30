@@ -226,7 +226,6 @@ impl<'a> RawMft<'a> {
             next_record: options.start_record,
             end,
             options,
-            scratch: Vec::new(),
         })
     }
 
@@ -261,7 +260,6 @@ pub struct RawMftIter<'a> {
     next_record: u64,
     end: u64,
     options: RawMftOptions,
-    scratch: Vec<u8>,
 }
 
 impl<'a> Iterator for RawMftIter<'a> {
@@ -277,9 +275,6 @@ impl<'a> Iterator for RawMftIter<'a> {
             }
 
             let record_size = self.mft.boot.file_record_size as usize;
-            if self.scratch.len() != record_size {
-                self.scratch.resize(record_size, 0);
-            }
 
             let offset = match self.mft.extent_map.record_offset(n) {
                 Ok(Some(o)) => o,
@@ -287,17 +282,17 @@ impl<'a> Iterator for RawMftIter<'a> {
                 Err(e) => return Some(Err(e)),
             };
 
-            if let Err(e) = self.reader.seek(SeekFrom::Start(offset)) {
-                return Some(Err(io_err(e)));
-            }
-            if let Err(e) = self.reader.read_exact(&mut self.scratch) {
-                return Some(Err(io_err(e)));
-            }
+            // Borrow the record bytes directly from the reader's
+            // internal buffer to avoid the per-record memcpy.
+            let buf = match self.reader.borrow_at(offset, record_size) {
+                Ok(b) => b,
+                Err(e) => return Some(Err(io_err(e))),
+            };
 
-            if !FileRecord::is_valid(&self.scratch) {
+            if !FileRecord::is_valid(buf) {
                 continue;
             }
-            match FileRecord::parse(n, &mut self.scratch) {
+            match FileRecord::parse(n, buf) {
                 Ok(rec) => {
                     let entry = RawMftEntry::from_record(&rec);
                     return Some(Ok(entry));

@@ -99,6 +99,69 @@ pub(crate) fn decode_runs(runs: &[u8]) -> Result<(Vec<DataRun>, DataRunSummary),
     Ok((out, summary))
 }
 
+/// Decode runs but only produce the summary, without allocating a `Vec`
+/// for each individual run. Used in the hot path of `RawMftEntry`
+/// construction where the per-run details aren't needed.
+pub(crate) fn summarize_runs(runs: &[u8]) -> Result<DataRunSummary, UsnError> {
+    let mut summary = DataRunSummary::default();
+    let mut prev_lcn: i128 = 0;
+    let mut cursor = 0usize;
+
+    loop {
+        if cursor >= runs.len() {
+            return Err(UsnError::InvalidDataRun("unterminated data run sequence"));
+        }
+        let descriptor = runs[cursor];
+        if descriptor == 0 {
+            break;
+        }
+        let length_bytes = (descriptor & 0x0F) as usize;
+        let offset_bytes = ((descriptor >> 4) & 0x0F) as usize;
+        if length_bytes == 0 || length_bytes > MAX_FIELD_BYTES {
+            return Err(UsnError::InvalidDataRun("invalid run length field"));
+        }
+        if offset_bytes > MAX_FIELD_BYTES {
+            return Err(UsnError::InvalidDataRun("invalid run offset field"));
+        }
+        cursor += 1;
+
+        if cursor + length_bytes > runs.len() {
+            return Err(UsnError::InvalidDataRun("truncated run length field"));
+        }
+        let mut len_buf = [0u8; MAX_FIELD_BYTES];
+        len_buf[..length_bytes].copy_from_slice(&runs[cursor..cursor + length_bytes]);
+        let clusters = u64::from_le_bytes(len_buf);
+        if clusters == 0 {
+            return Err(UsnError::InvalidDataRun("zero-length run"));
+        }
+        cursor += length_bytes;
+
+        if offset_bytes != 0 {
+            if cursor + offset_bytes > runs.len() {
+                return Err(UsnError::InvalidDataRun("truncated run offset field"));
+            }
+            let mut off_buf = [0u8; MAX_FIELD_BYTES];
+            off_buf[..offset_bytes].copy_from_slice(&runs[cursor..cursor + offset_bytes]);
+            let raw = i64::from_le_bytes(off_buf);
+            let empty_bits = (MAX_FIELD_BYTES - offset_bytes) * 8;
+            let delta = (raw << empty_bits) >> empty_bits;
+            cursor += offset_bytes;
+            let new_lcn = prev_lcn
+                .checked_add(delta as i128)
+                .ok_or(UsnError::InvalidDataRun("relative offset overflow"))?;
+            if new_lcn < 0 {
+                return Err(UsnError::InvalidDataRun("relative offset underflow"));
+            }
+            prev_lcn = new_lcn;
+        }
+
+        summary.run_count = summary.run_count.saturating_add(1);
+        summary.total_clusters = summary.total_clusters.saturating_add(clusters);
+    }
+
+    Ok(summary)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

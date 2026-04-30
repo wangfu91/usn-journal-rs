@@ -249,7 +249,11 @@ impl<'a> NtfsAttribute<'a> {
     }
 
     /// Returns `(header, name_utf16_units)` for a `$FILE_NAME` attribute.
-    pub fn as_file_name(&self) -> Option<(NtfsFileNameHeader, Vec<u16>)> {
+    /// The name slice borrows directly from the attribute buffer when
+    /// 2-byte aligned; otherwise the attribute is rejected (which is
+    /// extremely rare in practice since attribute records start on
+    /// 8-byte boundaries).
+    pub fn as_file_name(&self) -> Option<(NtfsFileNameHeader, &'a [u16])> {
         if self.type_id() != NtfsAttributeType::FileName as u32 {
             return None;
         }
@@ -265,11 +269,13 @@ impl<'a> NtfsAttribute<'a> {
         if needed > v.len() || n > 255 {
             return None;
         }
-        let mut units = Vec::with_capacity(n);
         let bytes = &v[size_of::<NtfsFileNameHeader>()..needed];
-        for i in 0..n {
-            units.push(u16::from_le_bytes([bytes[i * 2], bytes[i * 2 + 1]]));
+        if (bytes.as_ptr() as usize) % 2 != 0 {
+            // Pathological alignment — extremely unlikely on disk.
+            return None;
         }
+        // SAFETY: aligned and length is `n * 2` bytes.
+        let units = unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const u16, n) };
         Some((header, units))
     }
 }
@@ -402,7 +408,7 @@ mod tests {
         let (parsed, units) = attr.as_file_name().expect("file name");
         let name_len = parsed.name_length;
         assert_eq!(name_len as usize, name.len());
-        assert_eq!(units, name);
+        assert_eq!(units, name.as_slice());
     }
 
     #[test]

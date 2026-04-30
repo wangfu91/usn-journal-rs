@@ -110,6 +110,35 @@ impl VolumeReader {
         let buf_end = self.buf_pos + self.buf_len as u64;
         position >= self.buf_pos && position.saturating_add(n as u64) <= buf_end
     }
+
+    /// Borrow a mutable view of `len` bytes at the given volume offset
+    /// directly out of the internal buffer, refilling if necessary.
+    ///
+    /// This skips the per-record memcpy that `Read::read_exact` would
+    /// otherwise perform — the caller can fix up and parse the record
+    /// in place. Safe because each MFT record's USA fixup only touches
+    /// bytes inside that record.
+    pub fn borrow_at(&mut self, offset: u64, len: usize) -> io::Result<&mut [u8]> {
+        if !self.buf_contains(offset, len) {
+            // If the requested range can't fit in the buffer at all,
+            // grow the buffer to a sector-aligned size that holds it.
+            let needed = (len as u64).div_ceil(self.sector_size) * self.sector_size;
+            if (needed as usize) > self.buf.len() {
+                self.buf.resize(needed as usize, 0);
+            }
+            let sector_pos = self.round_down(offset);
+            self.refill(sector_pos)?;
+            if !self.buf_contains(offset, len) {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "short read while borrowing volume buffer",
+                ));
+            }
+        }
+        let inner_off = (offset - self.buf_pos) as usize;
+        self.position = offset + len as u64;
+        Ok(&mut self.buf[inner_off..inner_off + len])
+    }
 }
 
 impl Read for VolumeReader {

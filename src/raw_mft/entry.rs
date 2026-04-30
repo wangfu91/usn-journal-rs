@@ -3,7 +3,7 @@
 use std::ffi::OsString;
 use std::os::windows::ffi::OsStringExt;
 
-use chrono::{DateTime, Local};
+use chrono::{DateTime, Utc};
 use log::warn;
 
 use crate::{
@@ -12,10 +12,9 @@ use crate::{
         attribute::{
             file_attr_flags, for_each_attribute, FileNameNamespace, NtfsAttributeType,
         },
-        data_run::{decode_runs, DataRunSummary},
+        data_run::{summarize_runs, DataRunSummary},
         record::FileRecord,
     },
-    time,
 };
 
 /// Information about a single named alternate data stream (`$DATA`
@@ -46,16 +45,16 @@ pub struct RawMftEntry {
 
     pub file_name: OsString,
 
-    pub si_created: Option<DateTime<Local>>,
-    pub si_modified: Option<DateTime<Local>>,
-    pub si_mft_modified: Option<DateTime<Local>>,
-    pub si_accessed: Option<DateTime<Local>>,
+    pub si_created: Option<DateTime<Utc>>,
+    pub si_modified: Option<DateTime<Utc>>,
+    pub si_mft_modified: Option<DateTime<Utc>>,
+    pub si_accessed: Option<DateTime<Utc>>,
     pub si_file_attributes: u32,
 
-    pub fn_created: Option<DateTime<Local>>,
-    pub fn_modified: Option<DateTime<Local>>,
-    pub fn_mft_modified: Option<DateTime<Local>>,
-    pub fn_accessed: Option<DateTime<Local>>,
+    pub fn_created: Option<DateTime<Utc>>,
+    pub fn_modified: Option<DateTime<Utc>>,
+    pub fn_mft_modified: Option<DateTime<Utc>>,
+    pub fn_accessed: Option<DateTime<Utc>>,
 
     pub real_size: u64,
     pub allocated_size: u64,
@@ -68,22 +67,25 @@ pub struct RawMftEntry {
     pub alternate_data_streams: Vec<AdsInfo>,
 }
 
-fn ntfs_to_local(ntfs_time: u64) -> Option<DateTime<Local>> {
+/// Number of seconds between the Windows FILETIME epoch (1601-01-01) and
+/// the Unix epoch (1970-01-01).
+const WINDOWS_TO_UNIX_OFFSET_SECS: i64 = 11_644_473_600;
+
+/// Fast conversion from a Windows FILETIME (100-ns intervals since
+/// 1601-01-01 UTC) to `DateTime<Utc>`. Avoids the `chrono::Duration` +
+/// `SystemTime` round-trip used by [`crate::time::filetime_to_systemtime`]
+/// and, crucially, avoids any `with_timezone(&Local)` call (which on
+/// Windows is dominated by per-call timezone lookup syscalls).
+fn ntfs_to_utc(ntfs_time: u64) -> Option<DateTime<Utc>> {
     if ntfs_time == 0 {
         return None;
     }
-    // FILETIME and NTFS times share the same 1601-based 100ns epoch.
-    let ft = ntfs_time as i64;
-    if ft < 0 {
+    if ntfs_time > i64::MAX as u64 {
         return None;
     }
-    match time::filetime_to_systemtime(ft) {
-        Ok(st) => {
-            let utc: DateTime<chrono::Utc> = st.into();
-            Some(utc.with_timezone(&Local))
-        }
-        Err(_) => None,
-    }
+    let secs = (ntfs_time / 10_000_000) as i64 - WINDOWS_TO_UNIX_OFFSET_SECS;
+    let nanos = ((ntfs_time % 10_000_000) * 100) as u32;
+    DateTime::<Utc>::from_timestamp(secs, nanos)
 }
 
 impl RawMftEntry {
@@ -135,14 +137,14 @@ impl RawMftEntry {
                     let mft_mod = si.mft_record_modification_time;
                     let access = si.access_time;
                     let attrs = si.file_attributes;
-                    entry.si_created = ntfs_to_local(creation);
-                    entry.si_modified = ntfs_to_local(modification);
-                    entry.si_mft_modified = ntfs_to_local(mft_mod);
-                    entry.si_accessed = ntfs_to_local(access);
+                    entry.si_created = ntfs_to_utc(creation);
+                    entry.si_modified = ntfs_to_utc(modification);
+                    entry.si_mft_modified = ntfs_to_utc(mft_mod);
+                    entry.si_accessed = ntfs_to_utc(access);
                     entry.si_file_attributes = attrs;
                 }
             } else if type_id == NtfsAttributeType::FileName as u32 {
-                if let Some((header, units)) = attr.as_file_name() {
+                if let Some((header, name_units)) = attr.as_file_name() {
                     let ns = FileNameNamespace::from_u8(header.namespace);
                     let score = match ns {
                         FileNameNamespace::Win32AndDos => 4,
@@ -153,13 +155,13 @@ impl RawMftEntry {
                     if score > best_namespace_score {
                         best_namespace_score = score;
                         entry.namespace = ns;
-                        entry.file_name = OsString::from_wide(&units);
+                        entry.file_name = OsString::from_wide(name_units);
                         entry.parent_reference = header.parent_directory_reference;
-                        entry.fn_created = ntfs_to_local(header.creation_time);
-                        entry.fn_modified = ntfs_to_local(header.modification_time);
+                        entry.fn_created = ntfs_to_utc(header.creation_time);
+                        entry.fn_modified = ntfs_to_utc(header.modification_time);
                         entry.fn_mft_modified =
-                            ntfs_to_local(header.mft_record_modification_time);
-                        entry.fn_accessed = ntfs_to_local(header.access_time);
+                            ntfs_to_utc(header.mft_record_modification_time);
+                        entry.fn_accessed = ntfs_to_utc(header.access_time);
                         let fa = header.file_attributes;
                         if fa & file_attr_flags::REPARSE_POINT != 0 {
                             entry.is_reparse_point = true;
@@ -181,11 +183,11 @@ impl RawMftEntry {
                         } else {
                             &[][..]
                         };
-                        let summary = match decode_runs(runs_slice) {
-                            Ok((_, s)) => Some(s),
+                        let summary = match summarize_runs(runs_slice) {
+                            Ok(s) => Some(s),
                             Err(e) => {
                                 warn!(
-                                    "decode_runs failed for record {}: {e}",
+                                    "summarize_runs failed for record {}: {e}",
                                     record.number
                                 );
                                 None
