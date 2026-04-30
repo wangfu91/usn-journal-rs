@@ -14,6 +14,7 @@ A Rust library for working with the NTFS USN change journal and enumerating the 
 
 - 🔍 Read and monitor USN journal records
 - 📂 Enumerate NTFS MFT entries
+- 🧬 Read raw `$MFT` for rich metadata (timestamps, sizes, ADS, sparse/compressed flags)
 - 🏷️ Resolve file IDs to full paths
 - 🦀 High-level, idiomatic Rust API
 - 🛡️ Safe abstractions over Windows FFI
@@ -59,6 +60,45 @@ sudo cargo run --example change_monitor
 ```
 
 Replace `change_monitor` with any example file name in the directory.
+
+### Enumerate Raw `$MFT` Records (Rich Metadata)
+
+For applications that need timestamps, real / allocated sizes, alternate
+data streams, sparse / compressed flags, and the namespace of each file
+name, `RawMft` reads the `$MFT` file directly from the volume:
+
+```rust
+use usn_journal_rs::{volume::Volume, raw_mft::RawMft};
+
+let volume = Volume::from_drive_letter('C')?;
+let mft = RawMft::new(&volume)?;
+for entry in mft.iter()? {
+    let entry = entry?;
+    if entry.is_used && !entry.file_name.is_empty() {
+        println!(
+            "{:>8} {} size={} ads={} created={:?}",
+            entry.record_number,
+            entry.file_name.to_string_lossy(),
+            entry.real_size,
+            entry.alternate_data_streams.len(),
+            entry.si_created,
+        );
+    }
+}
+```
+
+This path is **NTFS only**; ReFS volumes have no `$MFT` and return
+`UsnError::UnsupportedFilesystem`.
+
+### Benchmarks
+
+Benchmarks use [Divan](https://github.com/nvzqz/divan). Run with:
+
+```sh
+sudo cargo bench --bench raw_mft
+```
+
+Set `USN_TEST_DRIVE` to choose the drive letter (default `C`).
 
 ## Platform Support 🖥️
 

@@ -52,6 +52,7 @@ pub mod journal;
 pub mod mft;
 pub mod path;
 mod privilege;
+pub mod raw_mft;
 mod record;
 
 // Re-export commonly used types

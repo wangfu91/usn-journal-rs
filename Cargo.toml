@@ -36,6 +36,11 @@ features = [
 
 [dev-dependencies]
 injectorpp = "0.4"
+divan = "0.1"
+
+[[bench]]
+name = "raw_mft"
+harness = false
 
 [profile.test]
 opt-level = 0

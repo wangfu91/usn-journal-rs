@@ -26,6 +26,27 @@ pub enum UsnError {
 
     #[error("Other error: {0}")]
     OtherError(String),
+
+    #[error("Invalid NTFS boot sector: {0}")]
+    InvalidBootSector(&'static str),
+
+    #[error("Invalid MFT record {number}: {reason}")]
+    InvalidMftRecord {
+        number: u64,
+        reason: &'static str,
+    },
+
+    #[error("Update sequence array mismatch in MFT record {number}")]
+    FixupMismatch { number: u64 },
+
+    #[error("Invalid NTFS data run: {0}")]
+    InvalidDataRun(&'static str),
+
+    #[error("MFT attribute missing: {0}")]
+    MftAttributeMissing(&'static str),
+
+    #[error("Unsupported filesystem: {0}")]
+    UnsupportedFilesystem(&'static str),
 }
 
 #[cfg(test)]

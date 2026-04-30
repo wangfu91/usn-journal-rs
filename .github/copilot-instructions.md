@@ -7,16 +7,18 @@
 - Run the full test suite with `cargo test`.
 - Run a single test with `cargo test <full-or-partial-test-name>`, for example `cargo test path::tests::test_resolve_path_with_cache_hit`.
 - List exact test names with `cargo test -- --list`.
-- Run examples with `cargo run --example read_journal`, `cargo run --example enum_mft`, or `cargo run --example change_monitor`.
+- Run examples with `cargo run --example read_journal`, `cargo run --example enum_mft`, `cargo run --example raw_mft`, or `cargo run --example change_monitor`.
+- Run benchmarks with `sudo cargo bench --bench raw_mft` (Divan harness). Filter a single bench with `cargo bench --bench raw_mft -- raw_mft_iter`. Set `USN_TEST_DRIVE` (default `C`) to pick the volume.
 - Release validation also uses `cargo package` before publishing to crates.io.
 
 ## High-level architecture
 
-- `src\lib.rs` defines the public crate surface: `volume`, `journal`, `mft`, `path`, `errors`, shared constants, and the `UsnResult<T>` alias.
+- `src\lib.rs` defines the public crate surface: `volume`, `journal`, `mft`, `raw_mft`, `path`, `errors`, shared constants, and the `UsnResult<T>` alias.
 - `src\volume.rs` is the handle boundary. It opens raw volume handles from either a drive letter or mount point, stores the handle in `Volume`, and closes it in `Drop`.
 - `src\journal.rs` and `src\mft.rs` are the two main APIs. Both wrap a `Volume`, issue `DeviceIoControl` calls for the relevant FSCTL operations, keep iteration state in an iterator struct, and yield parsed entries as Rust iterators.
 - `src\record.rs` is the shared low-level parser for buffers returned by the Windows APIs. It extracts the next cursor (`USN` or file ID), validates record boundaries, and returns typed `USN_RECORD_V2` references for both journal and MFT iteration.
-- `src\path.rs` is the shared path-resolution layer. It abstracts over `UsnEntry` and `MftEntry` through `PathResolvableEntry`, and `PathResolver::new_with_cache` adds an LRU cache of directory file IDs for large scans.
+- `src\path.rs` is the shared path-resolution layer. It abstracts over `UsnEntry`, `MftEntry`, and `RawMftEntry` through `PathResolvableEntry`, and `PathResolver::new_with_cache` adds an LRU cache of directory file IDs for large scans.
+- `src\raw_mft\` reads the `$MFT` file directly from the volume and parses each FILE record into a rich `RawMftEntry` (full timestamps, real / allocated size, hard link count, alternate data streams, sparse / compressed / encrypted flags, data-run summary, file-name namespace). Submodules: `boot` (boot sector geometry), `fixup` (USA verification), `io` (sector-aligned `VolumeReader`), `attribute` / `data_run` / `record` (on-disk structures), `extent` (record number → volume offset), `entry` (`RawMftEntry` builder). NTFS only — ReFS volumes return `UsnError::UnsupportedFilesystem`.
 - Supporting modules are narrow and focused: `src\privilege.rs` checks elevation, `src\time.rs` converts FILETIME values, and `src\errors.rs` defines the crate-wide error type.
 
 ## Key conventions
