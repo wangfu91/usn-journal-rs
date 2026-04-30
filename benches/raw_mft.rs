@@ -21,6 +21,10 @@ fn main() {
     divan::main();
 }
 
+/// Bound iteration so each bench sample finishes in a reasonable time
+/// even on multi-million-record system drives.
+const BENCH_RECORD_LIMIT: usize = 200_000;
+
 fn pick_drive() -> char {
     env::var("USN_TEST_DRIVE")
         .ok()
@@ -56,7 +60,7 @@ fn raw_mft_iter(bencher: Bencher) {
     bencher.bench_local(|| {
         let mut count = 0u64;
         if let Ok(it) = mft.iter() {
-            for r in it {
+            for r in it.take(BENCH_RECORD_LIMIT) {
                 if r.is_ok() {
                     count += 1;
                 }
@@ -73,7 +77,7 @@ fn usn_mft_iter(bencher: Bencher) {
     bencher.bench_local(|| {
         let mut count = 0u64;
         if let Ok(it) = mft.iter() {
-            for r in it {
+            for r in it.take(BENCH_RECORD_LIMIT) {
                 if r.is_ok() {
                     count += 1;
                 }
@@ -97,7 +101,7 @@ fn raw_mft_iter_with_path_resolver(bencher: Bencher) {
         let mut resolver = PathResolver::new(&volume);
         let mut count = 0u64;
         if let Ok(it) = mft.iter() {
-            for r in it.flatten() {
+            for r in it.flatten().take(BENCH_RECORD_LIMIT) {
                 let _ = resolver.resolve_path(&r);
                 count += 1;
             }
@@ -120,7 +124,7 @@ fn raw_mft_iter_with_cached_resolver(bencher: Bencher) {
         let mut resolver = PathResolver::new_with_cache(&volume);
         let mut count = 0u64;
         if let Ok(it) = mft.iter() {
-            for r in it.flatten() {
+            for r in it.flatten().take(BENCH_RECORD_LIMIT) {
                 let _ = resolver.resolve_path(&r);
                 count += 1;
             }
@@ -140,11 +144,13 @@ fn raw_mft_batch_size(bencher: Bencher, batch: usize) {
         }
     };
     bencher.bench_local(|| {
-        let mut opts = usn_journal_rs::raw_mft::RawMftOptions::default();
-        opts.batch_records = batch;
+        let opts = usn_journal_rs::raw_mft::RawMftOptions {
+            batch_records: batch,
+            ..Default::default()
+        };
         let mut count = 0u64;
         if let Ok(it) = mft.iter_with_options(opts) {
-            for r in it {
+            for r in it.take(BENCH_RECORD_LIMIT) {
                 if r.is_ok() {
                     count += 1;
                 }

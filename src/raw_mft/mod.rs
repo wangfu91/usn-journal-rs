@@ -209,7 +209,15 @@ impl<'a> RawMft<'a> {
         &self,
         options: RawMftOptions,
     ) -> Result<RawMftIter<'_>, UsnError> {
-        let reader = VolumeReader::new(self.volume.handle, self.boot.bytes_per_sector as u64)?;
+        let buffer_bytes = options
+            .batch_records
+            .saturating_mul(self.boot.file_record_size as usize)
+            .max(crate::raw_mft::io::DEFAULT_BUFFER_BYTES);
+        let reader = VolumeReader::with_buffer_bytes(
+            self.volume.handle,
+            self.boot.bytes_per_sector as u64,
+            buffer_bytes,
+        )?;
         let total = self.record_count();
         let end = options.end_record.unwrap_or(total).min(total);
         Ok(RawMftIter {
@@ -424,7 +432,7 @@ mod tests {
             let mut used = 0u64;
             let mut named = 0u64;
             let mut had_timestamps = false;
-            for r in mft.iter().expect("iter") {
+            for r in mft.iter().expect("iter").take(50_000) {
                 let entry = match r {
                     Ok(e) => e,
                     Err(_) => continue,
@@ -438,9 +446,6 @@ mod tests {
                 }
                 if entry.si_created.is_some() && !entry.file_name.is_empty() {
                     had_timestamps = true;
-                }
-                if total > 5_000 && had_timestamps {
-                    break;
                 }
             }
             assert!(total > 0, "expected at least one record");
@@ -459,7 +464,8 @@ mod tests {
             };
             let mut resolver = PathResolver::new_with_cache(&volume);
             let mut resolved_any = false;
-            for r in mft.iter().expect("iter").flatten() {
+            // Cap the search so the test stays bounded on huge volumes.
+            for r in mft.iter().expect("iter").flatten().take(20_000) {
                 if r.is_directory || r.file_name.is_empty() {
                     continue;
                 }

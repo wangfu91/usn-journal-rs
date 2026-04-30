@@ -4,8 +4,8 @@
 //! and length on Windows. NTFS FILE records are typically 1 KiB while
 //! sectors are 512 bytes (or 4 KiB on Advanced Format drives), so we wrap
 //! the raw volume handle in a `Read + Seek` adapter that internally
-//! buffers whole sectors. Higher-level code (the MFT iterator) then sees
-//! a familiar byte-oriented stream.
+//! buffers a configurable number of sectors. Higher-level code (the MFT
+//! iterator) then sees a familiar byte-oriented stream.
 
 use crate::errors::UsnError;
 use std::io::{self, Read, Seek, SeekFrom};
@@ -13,6 +13,11 @@ use windows::Win32::{
     Foundation::HANDLE,
     Storage::FileSystem::{ReadFile, SetFilePointerEx, FILE_BEGIN},
 };
+
+/// Default buffer size used by `VolumeReader` (256 KiB). Large enough to
+/// amortize the cost of `ReadFile`/`SetFilePointerEx` across a few
+/// hundred FILE records.
+pub const DEFAULT_BUFFER_BYTES: usize = 256 * 1024;
 
 /// Reads from a raw volume `HANDLE` without taking ownership of it.
 ///
@@ -23,25 +28,37 @@ pub(crate) struct VolumeReader {
     handle: HANDLE,
     sector_size: u64,
     position: u64,
-    sector_buf: Vec<u8>,
-    sector_buf_pos: u64,
-    sector_buf_valid: bool,
+    buf: Vec<u8>,
+    /// Volume offset of the start of `buf`.
+    buf_pos: u64,
+    /// Number of valid bytes in `buf`.
+    buf_len: usize,
 }
 
 impl VolumeReader {
     pub fn new(handle: HANDLE, sector_size: u64) -> Result<Self, UsnError> {
+        Self::with_buffer_bytes(handle, sector_size, DEFAULT_BUFFER_BYTES)
+    }
+
+    pub fn with_buffer_bytes(
+        handle: HANDLE,
+        sector_size: u64,
+        buffer_bytes: usize,
+    ) -> Result<Self, UsnError> {
         if !sector_size.is_power_of_two() || sector_size == 0 {
             return Err(UsnError::InvalidBootSector(
                 "sector_size must be a non-zero power of two",
             ));
         }
+        let sectors = (buffer_bytes as u64 / sector_size).max(1);
+        let cap = (sectors * sector_size) as usize;
         Ok(Self {
             handle,
             sector_size,
             position: 0,
-            sector_buf: vec![0u8; sector_size as usize],
-            sector_buf_pos: u64::MAX,
-            sector_buf_valid: false,
+            buf: vec![0u8; cap],
+            buf_pos: u64::MAX,
+            buf_len: 0,
         })
     }
 
@@ -51,7 +68,6 @@ impl VolumeReader {
 
     fn raw_seek(&self, offset: u64) -> io::Result<()> {
         let mut new_pos: i64 = 0;
-        // SAFETY: passing valid HANDLE; offset fits.
         let res = unsafe {
             SetFilePointerEx(
                 self.handle,
@@ -64,44 +80,52 @@ impl VolumeReader {
         Ok(())
     }
 
-    fn raw_read_sector(&mut self, sector_pos: u64) -> io::Result<()> {
+    fn refill(&mut self, sector_pos: u64) -> io::Result<()> {
         self.raw_seek(sector_pos)?;
         let mut bytes_read: u32 = 0;
-        // SAFETY: handle is valid; buffer is owned and large enough.
         let res = unsafe {
             ReadFile(
                 self.handle,
-                Some(self.sector_buf.as_mut_slice()),
+                Some(self.buf.as_mut_slice()),
                 Some(&mut bytes_read),
                 None,
             )
         };
         res.map_err(io::Error::other)?;
-        if bytes_read as usize != self.sector_buf.len() {
+        if bytes_read == 0 {
             return Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
-                "short read from volume",
+                "zero-length read from volume",
             ));
         }
-        self.sector_buf_pos = sector_pos;
-        self.sector_buf_valid = true;
+        self.buf_pos = sector_pos;
+        self.buf_len = bytes_read as usize;
         Ok(())
+    }
+
+    fn buf_contains(&self, position: u64, n: usize) -> bool {
+        if self.buf_len == 0 {
+            return false;
+        }
+        let buf_end = self.buf_pos + self.buf_len as u64;
+        position >= self.buf_pos && position.saturating_add(n as u64) <= buf_end
     }
 }
 
 impl Read for VolumeReader {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        if buf.is_empty() {
+    fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+        if out.is_empty() {
             return Ok(0);
         }
-        let sector_pos = self.round_down(self.position);
-        if !self.sector_buf_valid || sector_pos != self.sector_buf_pos {
-            self.raw_read_sector(sector_pos)?;
+        // Fast path: requested bytes already in the buffered window.
+        if !self.buf_contains(self.position, 1) {
+            let sector_pos = self.round_down(self.position);
+            self.refill(sector_pos)?;
         }
-        let inner_off = (self.position - sector_pos) as usize;
-        let avail = self.sector_buf.len() - inner_off;
-        let n = buf.len().min(avail);
-        buf[..n].copy_from_slice(&self.sector_buf[inner_off..inner_off + n]);
+        let inner_off = (self.position - self.buf_pos) as usize;
+        let avail = self.buf_len - inner_off;
+        let n = out.len().min(avail);
+        out[..n].copy_from_slice(&self.buf[inner_off..inner_off + n]);
         self.position += n as u64;
         Ok(n)
     }
@@ -135,48 +159,15 @@ impl Seek for VolumeReader {
 mod tests {
     use super::*;
 
-    /// In-memory reader satisfying the same contract for testing.
-    struct MemReader {
-        data: Vec<u8>,
-        pos: u64,
-    }
-
-    impl Read for MemReader {
-        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-            let pos = self.pos as usize;
-            if pos >= self.data.len() {
-                return Ok(0);
-            }
-            let n = buf.len().min(self.data.len() - pos);
-            buf[..n].copy_from_slice(&self.data[pos..pos + n]);
-            self.pos += n as u64;
-            Ok(n)
-        }
-    }
-
-    impl Seek for MemReader {
-        fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
-            self.pos = match pos {
-                SeekFrom::Start(n) => n,
-                SeekFrom::Current(n) => (self.pos as i64 + n) as u64,
-                SeekFrom::End(n) => (self.data.len() as i64 + n) as u64,
-            };
-            Ok(self.pos)
-        }
-    }
-
-    /// The MemReader stub mirrors the alignment property check in
-    /// VolumeReader; we just smoke-test that round_down is a power-of-two
-    /// alignment.
     #[test]
     fn round_down_aligns_to_sector() {
         let r = VolumeReader {
             handle: HANDLE(std::ptr::null_mut()),
             sector_size: 512,
             position: 0,
-            sector_buf: vec![0u8; 512],
-            sector_buf_pos: u64::MAX,
-            sector_buf_valid: false,
+            buf: vec![0u8; 4096],
+            buf_pos: u64::MAX,
+            buf_len: 0,
         };
         assert_eq!(r.round_down(0), 0);
         assert_eq!(r.round_down(511), 0);
@@ -194,4 +185,25 @@ mod tests {
         assert!(VolumeReader::new(h, 6).is_err());
         assert!(VolumeReader::new(h, 512).is_ok());
     }
+
+    #[test]
+    fn buf_contains_handles_window() {
+        let mut r = VolumeReader {
+            handle: HANDLE(std::ptr::null_mut()),
+            sector_size: 512,
+            position: 0,
+            buf: vec![0u8; 4096],
+            buf_pos: 1024,
+            buf_len: 2048,
+        };
+        assert!(r.buf_contains(1024, 1));
+        assert!(r.buf_contains(1024, 2048));
+        assert!(!r.buf_contains(1024, 2049));
+        assert!(!r.buf_contains(1023, 1));
+        assert!(r.buf_contains(3071, 1));
+        assert!(!r.buf_contains(3072, 1));
+        r.buf_len = 0;
+        assert!(!r.buf_contains(1024, 1));
+    }
 }
+

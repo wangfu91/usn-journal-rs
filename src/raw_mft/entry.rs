@@ -154,8 +154,7 @@ impl RawMftEntry {
                         best_namespace_score = score;
                         entry.namespace = ns;
                         entry.file_name = OsString::from_wide(&units);
-                        entry.parent_reference =
-                            header.parent_directory_reference & 0x0000_FFFF_FFFF_FFFF;
+                        entry.parent_reference = header.parent_directory_reference;
                         entry.fn_created = ntfs_to_local(header.creation_time);
                         entry.fn_modified = ntfs_to_local(header.modification_time);
                         entry.fn_mft_modified =
@@ -269,7 +268,7 @@ impl RawMftEntry {
 
 impl PathResolvableEntry for RawMftEntry {
     fn fid(&self) -> u64 {
-        self.file_reference & 0x0000_FFFF_FFFF_FFFF
+        self.file_reference
     }
     fn parent_fid(&self) -> u64 {
         self.parent_reference
@@ -470,19 +469,18 @@ mod tests {
         );
         assert_eq!(entry.alternate_data_streams[0].real_size, 3);
         assert!(entry.si_created.is_some());
-        assert_eq!(
-            entry.parent_reference,
-            5
-        );
+        assert_eq!(entry.parent_reference, (5u64 << 48) | 5);
     }
 
     #[test]
-    fn path_resolvable_returns_masked_fids() {
+    fn path_resolvable_returns_unmasked_fids() {
         let mut buf = build_test_record(42);
         let rec = FileRecord::parse(42, &mut buf).expect("parse");
         let entry = RawMftEntry::from_record(&rec);
-        assert_eq!(entry.fid(), 42);
-        assert_eq!(entry.parent_fid(), 5);
+        // file_reference = (seq << 48) | record_number; with seq=1, record=42
+        assert_eq!(entry.fid(), (1u64 << 48) | 42);
+        // parent_directory_reference was built as (5 << 48) | 5
+        assert_eq!(entry.parent_fid(), (5u64 << 48) | 5);
         assert_eq!(entry.file_name(), &OsString::from("hello.txt"));
         assert!(!entry.is_dir());
     }
