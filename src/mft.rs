@@ -4,7 +4,10 @@
 //! from the MFT using the Windows FSCTL_ENUM_USN_DATA control code. It manages the buffer and state
 //! required to sequentially retrieve and parse USN records from the volume.
 
-use crate::{Fid, Usn, UsnResult, errors::UsnError, journal::DEFAULT_BUFFER_BYTES, usn_record, volume::Volume};
+use crate::{
+    Fid, Usn, UsnResult, errors::UsnError, journal::DEFAULT_BUFFER_BYTES, usn_record,
+    volume::Volume,
+};
 use log::debug;
 use std::{ffi::OsString, fmt, mem::size_of, os::windows::ffi::OsStringExt};
 use windows::Win32::{
@@ -547,8 +550,7 @@ mod tests {
         fn test_mft_entry_new_v3_extended_ids() {
             let file_id = 0x0011_2233_4455_6677_8899_aabb_ccdd_eeffu128;
             let parent_id = 0xffee_ddcc_bbaa_9988_7766_5544_3322_1100u128;
-            let record_data =
-                create_mock_usn_record_v3(100, file_id, parent_id, "refs.txt", 0x20);
+            let record_data = create_mock_usn_record_v3(100, file_id, parent_id, "refs.txt", 0x20);
 
             let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V3) };
             let entry = MftEntry::new(usn_record::UsnRecordRef::V3(record));
@@ -582,7 +584,9 @@ mod tests {
             let volume = crate::test_support::mock_volume();
             let mft = Mft::new(&volume);
 
-            let mut iter = mft.try_iter().expect("default MFT iterator should be created");
+            let mut iter = mft
+                .try_iter()
+                .expect("default MFT iterator should be created");
             let result = iter.next();
 
             assert!(result.is_some());
@@ -596,7 +600,10 @@ mod tests {
 
         #[test]
         fn test_iter_with_invalid_buffer_size() {
-            let volume = Volume::mock(HANDLE(std::ptr::null_mut()), crate::volume::VolumeSource::DriveLetter('T'));
+            let volume = Volume::mock(
+                HANDLE(std::ptr::null_mut()),
+                crate::volume::VolumeSource::DriveLetter('T'),
+            );
             let mft = Mft::new(&volume);
 
             let result = mft.try_iter_with_options(MftIterOptions {

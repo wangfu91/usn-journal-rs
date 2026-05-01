@@ -172,7 +172,13 @@ mod tests {
         // length = 0x05, offset = 0x0234 -> LCN 564
         let runs = [0x21u8, 0x05, 0x34, 0x02, 0x00];
         let (rs, sum) = decode_runs(&runs).unwrap();
-        assert_eq!(rs, vec![DataRun::Data { lcn: 564, clusters: 5 }]);
+        assert_eq!(
+            rs,
+            vec![DataRun::Data {
+                lcn: 564,
+                clusters: 5
+            }]
+        );
         assert_eq!(sum.run_count, 1);
         assert_eq!(sum.total_clusters, 5);
     }
@@ -186,8 +192,14 @@ mod tests {
         assert_eq!(
             rs,
             vec![
-                DataRun::Data { lcn: 10, clusters: 5 },
-                DataRun::Data { lcn: 7, clusters: 3 },
+                DataRun::Data {
+                    lcn: 10,
+                    clusters: 5
+                },
+                DataRun::Data {
+                    lcn: 7,
+                    clusters: 3
+                },
             ]
         );
     }

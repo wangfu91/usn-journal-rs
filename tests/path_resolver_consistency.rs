@@ -13,13 +13,13 @@
 //!
 //! Skips gracefully on non-elevated runs.
 
+use std::num::NonZeroUsize;
 use usn_journal_rs::{
     errors::UsnError,
     path::PathResolver,
     raw_mft::{RawMft, RawMftEntry},
     volume::Volume,
 };
-use std::num::NonZeroUsize;
 
 #[test]
 fn all_three_resolvers_agree() {

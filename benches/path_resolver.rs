@@ -64,20 +64,18 @@ fn collect_test_entries(volume: &Volume) -> Vec<MftEntry> {
 
     let mut entries = Vec::new();
     if let Ok(it) = mft.try_iter() {
-        for r in it {
-            if let Ok(entry) = r {
-                // Convert RawMftEntry to MftEntry for use with PathResolver
-                let mft_entry = MftEntry {
-                    usn: usn_journal_rs::Usn::new(0),
-                    fid: entry.file_reference,
-                    parent_fid: entry.parent_reference,
-                    file_name: entry.file_name.clone(),
-                    file_attributes: 0,
-                };
-                entries.push(mft_entry);
-                if entries.len() >= NUM_TEST_ENTRIES {
-                    break;
-                }
+        for entry in it.flatten() {
+            // Convert RawMftEntry to MftEntry for use with PathResolver
+            let mft_entry = MftEntry {
+                usn: usn_journal_rs::Usn::new(0),
+                fid: entry.file_reference,
+                parent_fid: entry.parent_reference,
+                file_name: entry.file_name.clone(),
+                file_attributes: 0,
+            };
+            entries.push(mft_entry);
+            if entries.len() >= NUM_TEST_ENTRIES {
+                break;
             }
         }
     }
@@ -120,8 +118,8 @@ fn resolver_syscall_lru_cache(bencher: Bencher) {
     }
 
     bencher.bench_local(|| {
-        let mut resolver = PathResolver::new(&volume)
-            .with_lru_cache(NonZeroUsize::new(8192).unwrap());
+        let mut resolver =
+            PathResolver::new(&volume).with_lru_cache(NonZeroUsize::new(8192).unwrap());
 
         // Warm-up pass to populate cache
         for entry in &entries {
@@ -160,8 +158,7 @@ fn resolver_in_memory_tree(bencher: Bencher) {
     }
 
     bencher.bench_local(|| {
-        let mut resolver = match PathResolver::new(&volume)
-            .with_in_memory_tree(&mft) {
+        let mut resolver = match PathResolver::new(&volume).with_in_memory_tree(&mft) {
             Ok(r) => r,
             Err(e) => {
                 eprintln!("skipping: {e}");

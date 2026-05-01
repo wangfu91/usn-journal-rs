@@ -30,9 +30,6 @@
 //!   currently logged and skipped; the entry is still returned but may
 //!   miss attributes spread across multiple base records.
 //! * Reading the volume requires Administrator privileges.
-//!
-//! Portions of this module are derived from
-//! [`ntfs-reader`](https://github.com/Velocidex/ntfs-reader) (MIT/Apache-2.0).
 
 mod attribute;
 mod boot;
@@ -51,12 +48,12 @@ use log::{debug, warn};
 use crate::{
     errors::UsnError,
     raw_mft::{
-        attribute::{for_each_attribute, NtfsAttributeType},
+        attribute::{NtfsAttributeType, for_each_attribute},
         boot::BootSector,
-        data_run::{decode_runs, DataRun},
+        data_run::{DataRun, decode_runs},
         extent::ExtentMap,
         io::VolumeReader,
-        record::{FileRecord, FIRST_NORMAL_RECORD, MFT_RECORD_NUMBER},
+        record::{FIRST_NORMAL_RECORD, FileRecord, MFT_RECORD_NUMBER},
     },
     volume::Volume,
 };
@@ -180,29 +177,32 @@ impl<'a> RawMft<'a> {
             .seek(SeekFrom::Start(boot.mft_byte_offset))
             .map_err(io_err)?;
         reader.read_exact(&mut record0).map_err(io_err)?;
-        let parsed = FileRecord::parse(MFT_RECORD_NUMBER, &mut record0)?;
+        let (data_runs, bitmap_runs, bitmap_size) = {
+            let parsed = FileRecord::parse(MFT_RECORD_NUMBER, &mut record0)?;
 
-        // Walk attributes for unnamed $DATA (extent map) and $BITMAP.
-        let mut data_runs: Option<Vec<DataRun>> = None;
-        let mut bitmap_runs: Option<Vec<DataRun>> = None;
-        let mut bitmap_size: u64 = 0;
-        let (off, used) = parsed.attrs_range();
-        for_each_attribute(parsed.data, off, used, |attr| {
-            let type_id = attr.type_id();
-            let unnamed = attr.name_slice().is_none();
-            if type_id == NtfsAttributeType::Data as u32 && unnamed && attr.is_non_resident() {
-                if let Some(h) = attr.nonresident_header() {
-                    let runs_off = h.data_runs_offset as usize;
-                    let attr_data = attr.data();
-                    if runs_off <= attr_data.len() {
-                        match decode_runs(&attr_data[runs_off..]) {
-                            Ok((rs, _)) => data_runs = Some(rs),
-                            Err(e) => warn!("$MFT $DATA decode_runs failed: {e}"),
+            // Walk attributes for unnamed $DATA (extent map) and $BITMAP.
+            let mut data_runs: Option<Vec<DataRun>> = None;
+            let mut bitmap_runs: Option<Vec<DataRun>> = None;
+            let mut bitmap_size: u64 = 0;
+            let (off, used) = parsed.attrs_range();
+            for_each_attribute(parsed.data, off, used, |attr| {
+                let type_id = attr.type_id();
+                let unnamed = attr.name_slice().is_none();
+                if type_id == NtfsAttributeType::Data as u32 && unnamed && attr.is_non_resident() {
+                    if let Some(h) = attr.nonresident_header() {
+                        let runs_off = h.data_runs_offset as usize;
+                        let attr_data = attr.data();
+                        if runs_off <= attr_data.len() {
+                            match decode_runs(&attr_data[runs_off..]) {
+                                Ok((rs, _)) => data_runs = Some(rs),
+                                Err(e) => warn!("$MFT $DATA decode_runs failed: {e}"),
+                            }
                         }
                     }
-                }
-            } else if type_id == NtfsAttributeType::Bitmap as u32 && attr.is_non_resident() {
-                if let Some(h) = attr.nonresident_header() {
+                } else if type_id == NtfsAttributeType::Bitmap as u32
+                    && attr.is_non_resident()
+                    && let Some(h) = attr.nonresident_header()
+                {
                     bitmap_size = h.data_size;
                     let runs_off = h.data_runs_offset as usize;
                     let attr_data = attr.data();
@@ -213,14 +213,12 @@ impl<'a> RawMft<'a> {
                         }
                     }
                 }
-            }
-        });
-        drop(parsed);
+            });
+            (data_runs, bitmap_runs, bitmap_size)
+        };
 
-        let data_runs = data_runs
-            .ok_or(UsnError::MftAttributeMissing("$MFT $DATA"))?;
-        let extent_map =
-            ExtentMap::from_runs(&data_runs, boot.cluster_size, boot.file_record_size);
+        let data_runs = data_runs.ok_or(UsnError::MftAttributeMissing("$MFT $DATA"))?;
+        let extent_map = ExtentMap::from_runs(&data_runs, boot.cluster_size, boot.file_record_size);
 
         let bitmap = if let Some(br) = bitmap_runs {
             read_nonresident(&mut reader, &br, boot.cluster_size, bitmap_size)?
@@ -288,8 +286,7 @@ impl<'a> RawMft<'a> {
     /// record falls in a sparse hole or is unused (and `skip_unused` is
     /// implied here).
     pub fn get_record(&self, number: u64) -> Result<Option<RawMftEntry>, UsnError> {
-        let mut reader =
-            VolumeReader::new(self.volume.handle, self.boot.bytes_per_sector as u64)?;
+        let mut reader = VolumeReader::new(self.volume.handle, self.boot.bytes_per_sector as u64)?;
         read_record_at(&mut reader, &self.boot, &self.extent_map, number)
     }
 
@@ -469,7 +466,9 @@ mod tests {
 
         #[test]
         fn raw_mft_full_iteration_smoke() {
-            let Some(volume) = open_volume_or_skip() else { return };
+            let Some(volume) = open_volume_or_skip() else {
+                return;
+            };
             let mft = match RawMft::new(&volume) {
                 Ok(m) => m,
                 Err(UsnError::UnsupportedFilesystem(msg)) => {
@@ -501,18 +500,25 @@ mod tests {
             assert!(total > 0, "expected at least one record");
             assert!(used > 0, "expected used records");
             assert!(named > 0, "expected named records");
-            assert!(had_timestamps, "expected at least one entry with SI timestamps");
+            assert!(
+                had_timestamps,
+                "expected at least one entry with SI timestamps"
+            );
         }
 
         #[test]
         fn raw_mft_path_resolver_roundtrip() {
-            let Some(volume) = open_volume_or_skip() else { return };
+            let Some(volume) = open_volume_or_skip() else {
+                return;
+            };
             let mft = match RawMft::new(&volume) {
                 Ok(m) => m,
                 Err(UsnError::UnsupportedFilesystem(_)) => return,
                 Err(e) => panic!("RawMft::new failed: {e}"),
             };
-            let mut resolver = PathResolver::new_with_cache(&volume);
+            let mut resolver = PathResolver::new(&volume).with_lru_cache(
+                std::num::NonZeroUsize::new(4096).expect("cache capacity must be non-zero"),
+            );
             let mut resolved_any = false;
             // Cap the search so the test stays bounded on huge volumes.
             for r in mft.try_iter().expect("iter").flatten().take(20_000) {
@@ -552,7 +558,9 @@ mod tests {
             match RawMft::new(&volume) {
                 Err(UsnError::UnsupportedFilesystem(_)) => {}
                 Err(other) => eprintln!("non-NTFS produced: {other}"),
-                Ok(_) => eprintln!("note: drive {drive} is NTFS; UnsupportedFilesystem not exercised"),
+                Ok(_) => {
+                    eprintln!("note: drive {drive} is NTFS; UnsupportedFilesystem not exercised")
+                }
             }
         }
     }

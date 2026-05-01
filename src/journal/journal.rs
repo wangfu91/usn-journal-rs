@@ -65,10 +65,7 @@ impl<'a> UsnJournal<'a> {
     ///
     /// The iterator yields `Result<UsnEntry, UsnError>` items, allowing callers
     /// to handle individual entry errors gracefully without stopping iteration.
-    pub fn try_iter_with_options(
-        &self,
-        options: JournalIterOptions,
-    ) -> UsnResult<UsnJournalIter> {
+    pub fn try_iter_with_options(&self, options: JournalIterOptions) -> UsnResult<UsnJournalIter> {
         let journal_data = self.query(true)?;
         Ok(UsnJournalIter {
             volume_handle: self.volume.handle,

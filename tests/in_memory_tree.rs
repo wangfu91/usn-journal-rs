@@ -40,7 +40,10 @@ fn in_memory_tree_paths_exist_on_disk() {
     let tree = InMemoryDirTree::from_raw_mft(&raw_mft)
         .expect("InMemoryDirTree::from_raw_mft should not fail on NTFS");
 
-    assert!(!tree.is_empty(), "directory tree must contain at least one entry");
+    assert!(
+        !tree.is_empty(),
+        "directory tree must contain at least one entry"
+    );
 
     let mut resolved = 0usize;
     let mut matched = 0usize;

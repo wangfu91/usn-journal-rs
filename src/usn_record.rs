@@ -130,8 +130,7 @@ pub(crate) fn read_next_start_usn(buffer: &[u8], bytes_read: u32) -> UsnResult<U
     // start of the buffer is in bounds. We use `read_unaligned` because
     // the buffer may not be 8-byte aligned, and the FSCTL output stores
     // the cursor in native (little-endian on Windows) byte order.
-    let value =
-        unsafe { std::ptr::read_unaligned::<i64>(buffer.as_ptr() as *const i64) };
+    let value = unsafe { std::ptr::read_unaligned::<i64>(buffer.as_ptr() as *const i64) };
     Ok(Usn::new(value))
 }
 
@@ -173,7 +172,7 @@ pub(crate) fn find_next_record<'a>(
     // in bounds even if the record start is only byte-aligned.
     let header = unsafe {
         std::ptr::read_unaligned(
-            buffer.as_ptr().add(offset_usize) as *const USN_RECORD_COMMON_HEADER,
+            buffer.as_ptr().add(offset_usize) as *const USN_RECORD_COMMON_HEADER
         )
     };
 

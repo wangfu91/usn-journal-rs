@@ -10,13 +10,9 @@
 //! ```
 
 use std::env;
+use std::num::NonZeroUsize;
 
-use usn_journal_rs::{
-    errors::UsnError,
-    path::PathResolver,
-    raw_mft::RawMft,
-    volume::Volume,
-};
+use usn_journal_rs::{errors::UsnError, path::PathResolver, raw_mft::RawMft, volume::Volume};
 
 fn main() {
     if let Err(e) = run() {
@@ -34,7 +30,8 @@ fn run() -> Result<(), UsnError> {
 
     let volume = Volume::from_drive_letter(drive_letter)?;
     let mft = RawMft::new(&volume)?;
-    let mut resolver = PathResolver::new_with_cache(&volume);
+    let mut resolver = PathResolver::new(&volume)
+        .with_lru_cache(NonZeroUsize::new(4096).expect("cache capacity must be non-zero"));
 
     println!(
         "$MFT: {} records, cluster_size={}, file_record_size={}",

@@ -107,11 +107,6 @@ pub(crate) struct NtfsFileNameHeader {
 
 /// File-attribute flag bits (FILE_NAME / STANDARD_INFORMATION).
 pub mod file_attr_flags {
-    pub const READ_ONLY: u32 = 0x0001;
-    pub const HIDDEN: u32 = 0x0002;
-    pub const SYSTEM: u32 = 0x0004;
-    pub const DIRECTORY: u32 = 0x0000_0010;
-    pub const ARCHIVE: u32 = 0x0020;
     pub const SPARSE_FILE: u32 = 0x0200;
     pub const REPARSE_POINT: u32 = 0x0400;
     pub const COMPRESSED: u32 = 0x0800;
@@ -166,33 +161,9 @@ impl<'a> NtfsAttribute<'a> {
         self.header.flags
     }
 
-    pub fn name(&self) -> Option<&'a [u16]> {
-        let n = self.header.name_length as usize;
-        if n == 0 {
-            return None;
-        }
-        let off = self.header.name_offset as usize;
-        let end = off.checked_add(n.checked_mul(2)?)?;
-        if end > self.length {
-            return None;
-        }
-        // SAFETY: bounds checked above. The buffer is little-endian u16; we
-        // expose a byte slice and let the caller decode if needed.
-        let bytes = &self.data()[off..end];
-        // Make sure 2-byte aligned for ptr cast. Caller uses this through
-        // `name_string` helper so we just return the raw bytes via u16 ptr
-        // when alignment allows, else copy on the fly.
-        if (bytes.as_ptr() as usize) % 2 == 0 {
-            // SAFETY: aligned and length is even.
-            Some(unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const u16, n) })
-        } else {
-            None
-        }
-    }
-
     /// Borrowed UTF-16 view of the attribute name without allocation.
     /// Returns `None` if the attribute is unnamed or the name bytes are
-    /// not 2-byte aligned (mirrors the behavior of `as_file_name`).
+    /// not 2-byte aligned.
     pub fn name_slice(&self) -> Option<&'a [u16]> {
         let n = self.header.name_length as usize;
         if n == 0 {
@@ -204,31 +175,11 @@ impl<'a> NtfsAttribute<'a> {
             return None;
         }
         let bytes = &self.data()[off..end];
-        if (bytes.as_ptr() as usize) % 2 != 0 {
+        if !(bytes.as_ptr() as usize).is_multiple_of(2) {
             return None;
         }
         // SAFETY: aligned and length is `n * 2` bytes.
         Some(unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const u16, n) })
-    }
-
-    /// Decoded attribute name as a String (lossy). `None` if the
-    /// attribute is unnamed.
-    pub fn name_string(&self) -> Option<String> {
-        let n = self.header.name_length as usize;
-        if n == 0 {
-            return None;
-        }
-        let off = self.header.name_offset as usize;
-        let end = off.checked_add(n * 2)?;
-        if end > self.length {
-            return None;
-        }
-        let bytes = &self.data()[off..end];
-        let mut units = Vec::with_capacity(n);
-        for i in 0..n {
-            units.push(u16::from_le_bytes([bytes[i * 2], bytes[i * 2 + 1]]));
-        }
-        Some(String::from_utf16_lossy(&units))
     }
 
     pub fn resident_header(&self) -> Option<&'a NtfsResidentAttributeHeader> {
@@ -293,16 +244,14 @@ impl<'a> NtfsAttribute<'a> {
         if v.len() < size_of::<NtfsFileNameHeader>() {
             return None;
         }
-        let header = unsafe {
-            std::ptr::read_unaligned(v.as_ptr() as *const NtfsFileNameHeader)
-        };
+        let header = unsafe { std::ptr::read_unaligned(v.as_ptr() as *const NtfsFileNameHeader) };
         let n = header.name_length as usize;
         let needed = size_of::<NtfsFileNameHeader>().checked_add(n.checked_mul(2)?)?;
         if needed > v.len() || n > 255 {
             return None;
         }
         let bytes = &v[size_of::<NtfsFileNameHeader>()..needed];
-        if (bytes.as_ptr() as usize) % 2 != 0 {
+        if !(bytes.as_ptr() as usize).is_multiple_of(2) {
             // Pathological alignment — extremely unlikely on disk.
             return None;
         }
@@ -396,10 +345,7 @@ mod tests {
         };
         let mut value = vec![0u8; size_of::<NtfsStandardInformation>()];
         unsafe {
-            std::ptr::write_unaligned(
-                value.as_mut_ptr() as *mut NtfsStandardInformation,
-                si,
-            );
+            std::ptr::write_unaligned(value.as_mut_ptr() as *mut NtfsStandardInformation, si);
         }
         let buf = build_resident_attr(NtfsAttributeType::StandardInformation as u32, &value);
         let attr = NtfsAttribute::new(&buf).expect("attr");

@@ -9,10 +9,8 @@ use crate::{
     Fid,
     path::PathResolvableEntry,
     raw_mft::{
-        attribute::{
-            file_attr_flags, for_each_attribute, FileNameNamespace, NtfsAttributeType,
-        },
-        data_run::{summarize_runs, DataRunSummary},
+        attribute::{FileNameNamespace, NtfsAttributeType, file_attr_flags, for_each_attribute},
+        data_run::{DataRunSummary, summarize_runs},
         record::FileRecord,
     },
     time::Filetime,
@@ -161,10 +159,7 @@ impl RawMftEntry {
                         let summary = match summarize_runs(runs_slice) {
                             Ok(s) => Some(s),
                             Err(e) => {
-                                warn!(
-                                    "summarize_runs failed for record {}: {e}",
-                                    record.number
-                                );
+                                warn!("summarize_runs failed for record {}: {e}", record.number);
                                 None
                             }
                         };
@@ -275,7 +270,7 @@ mod tests {
             FileNameNamespace, NtfsAttributeHeader, NtfsAttributeType, NtfsFileNameHeader,
             NtfsResidentAttributeHeader, NtfsStandardInformation,
         },
-        record::{flags as record_flags, FileRecord, FileRecordHeader, FILE_RECORD_SIGNATURE},
+        record::{FILE_RECORD_SIGNATURE, FileRecord, FileRecordHeader, flags as record_flags},
     };
     use std::mem::size_of;
 
@@ -296,7 +291,11 @@ mod tests {
                 length: total_aligned as u32,
                 is_non_resident: 0,
                 name_length: attr_name.len() as u8,
-                name_offset: if attr_name.is_empty() { 0 } else { name_off as u16 },
+                name_offset: if attr_name.is_empty() {
+                    0
+                } else {
+                    name_off as u16
+                },
                 flags: 0,
                 id: 0,
             },
@@ -364,10 +363,7 @@ mod tests {
         };
         let mut si_bytes = vec![0u8; size_of::<NtfsStandardInformation>()];
         unsafe {
-            std::ptr::write_unaligned(
-                si_bytes.as_mut_ptr() as *mut NtfsStandardInformation,
-                si,
-            );
+            std::ptr::write_unaligned(si_bytes.as_mut_ptr() as *mut NtfsStandardInformation, si);
         }
         write_resident_attr(
             &mut attrs,
@@ -392,10 +388,7 @@ mod tests {
         };
         let mut fn_bytes = vec![0u8; size_of::<NtfsFileNameHeader>() + name.len() * 2];
         unsafe {
-            std::ptr::write_unaligned(
-                fn_bytes.as_mut_ptr() as *mut NtfsFileNameHeader,
-                fn_header,
-            );
+            std::ptr::write_unaligned(fn_bytes.as_mut_ptr() as *mut NtfsFileNameHeader, fn_header);
         }
         for (i, &u) in name.iter().enumerate() {
             let off = size_of::<NtfsFileNameHeader>() + i * 2;
@@ -408,12 +401,7 @@ mod tests {
             &fn_bytes,
         );
         // resident $DATA
-        write_resident_attr(
-            &mut attrs,
-            NtfsAttributeType::Data as u32,
-            &[],
-            b"abc12345",
-        );
+        write_resident_attr(&mut attrs, NtfsAttributeType::Data as u32, &[], b"abc12345");
         // named $DATA (alternate stream)
         let ads_name: Vec<u16> = "ads".encode_utf16().collect();
         write_resident_attr(

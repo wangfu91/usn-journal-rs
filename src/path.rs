@@ -196,7 +196,8 @@ impl<'a> PathResolver<'a> {
     #[must_use]
     pub fn resolve_path<E: PathResolvableEntry>(&mut self, entry: &E) -> Option<PathBuf> {
         if let Some(tree) = &self.in_memory_tree
-            && let Some(p) = tree.resolve_with_optional_drive(entry.fid(), self.volume.drive_letter())
+            && let Some(p) =
+                tree.resolve_with_optional_drive(entry.fid(), self.volume.drive_letter())
         {
             return Some(p);
         }
@@ -445,8 +446,7 @@ impl InMemoryDirTree {
     /// once. Skips entries marked unused in the `$MFT $BITMAP`.
     pub fn from_raw_mft(raw_mft: &crate::raw_mft::RawMft<'_>) -> crate::UsnResult<Self> {
         use std::os::windows::ffi::OsStrExt;
-        let mut entries =
-            std::collections::HashMap::with_capacity(raw_mft.record_count() as usize);
+        let mut entries = std::collections::HashMap::with_capacity(raw_mft.record_count() as usize);
         for r in raw_mft.try_iter()? {
             let entry = match r {
                 Ok(e) => e,
@@ -585,7 +585,10 @@ mod tests {
     }
 
     fn create_mock_volume() -> Volume {
-        Volume::mock(HANDLE(std::ptr::null_mut()), crate::volume::VolumeSource::DriveLetter('C'))
+        Volume::mock(
+            HANDLE(std::ptr::null_mut()),
+            crate::volume::VolumeSource::DriveLetter('C'),
+        )
     }
 
     #[test]
@@ -672,14 +675,17 @@ mod tests {
     #[test]
     fn test_resolve_path_with_cache_hit() {
         let volume = create_mock_volume();
-        let mut resolver = PathResolver::new(&volume)
-            .with_lru_cache(NonZeroUsize::new(4096).unwrap());
+        let mut resolver =
+            PathResolver::new(&volume).with_lru_cache(NonZeroUsize::new(4096).unwrap());
 
         // Pre-populate cache
         let cached_path = arc_path("C:\\Documents\\Folder");
         let cached_name = OsString::from("test.txt");
         if let Some(ref mut cache) = resolver.dir_fid_path_cache {
-            cache.put(Fid::new(0x123456), (Arc::clone(&cached_path), cached_name.clone()));
+            cache.put(
+                Fid::new(0x123456),
+                (Arc::clone(&cached_path), cached_name.clone()),
+            );
         }
 
         let entry = MockEntry {
@@ -698,8 +704,8 @@ mod tests {
     #[test]
     fn test_resolve_path_with_cache_miss_parent_hit() {
         let volume = create_mock_volume();
-        let mut resolver = PathResolver::new(&volume)
-            .with_lru_cache(NonZeroUsize::new(4096).unwrap());
+        let mut resolver =
+            PathResolver::new(&volume).with_lru_cache(NonZeroUsize::new(4096).unwrap());
 
         // Pre-populate cache with parent directory
         let cached_parent_path = arc_path("C:\\Documents");
@@ -724,8 +730,8 @@ mod tests {
     #[test]
     fn test_resolve_path_with_cache_directory_caching() {
         let volume = create_mock_volume();
-        let mut resolver = PathResolver::new(&volume)
-            .with_lru_cache(NonZeroUsize::new(4096).unwrap());
+        let mut resolver =
+            PathResolver::new(&volume).with_lru_cache(NonZeroUsize::new(4096).unwrap());
 
         // Pre-populate cache with parent directory
         let cached_parent_path = arc_path("C:\\Documents");
@@ -758,8 +764,8 @@ mod tests {
     #[test]
     fn test_resolve_path_with_cache_name_mismatch() {
         let volume = create_mock_volume();
-        let mut resolver = PathResolver::new(&volume)
-            .with_lru_cache(NonZeroUsize::new(4096).unwrap());
+        let mut resolver =
+            PathResolver::new(&volume).with_lru_cache(NonZeroUsize::new(4096).unwrap());
 
         // Pre-populate cache with old name
         let cached_path = arc_path("C:\\Documents\\OldName");

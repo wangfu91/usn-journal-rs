@@ -3,8 +3,8 @@ use std::{ffi::OsString, mem, ptr};
 use windows::Win32::Storage::FileSystem::FILE_ID_128;
 use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_HIDDEN};
 use windows::Win32::System::Ioctl::{
-    USN_JOURNAL_DATA_V0, USN_RECORD_V2, USN_RECORD_V3, USN_REASON_CLOSE,
-    USN_REASON_DATA_EXTEND, USN_REASON_FILE_CREATE,
+    USN_JOURNAL_DATA_V0, USN_REASON_CLOSE, USN_REASON_DATA_EXTEND, USN_REASON_FILE_CREATE,
+    USN_RECORD_V2, USN_RECORD_V3,
 };
 
 use crate::{Fid, Usn};
@@ -296,4 +296,3 @@ fn test_usn_entry_creation_v3_extended_ids() {
     assert!(entry.fid.is_extended());
     assert!(entry.parent_fid.is_extended());
 }
-

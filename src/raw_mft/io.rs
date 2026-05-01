@@ -11,7 +11,7 @@ use crate::errors::UsnError;
 use std::io::{self, Read, Seek, SeekFrom};
 use windows::Win32::{
     Foundation::HANDLE,
-    Storage::FileSystem::{ReadFile, SetFilePointerEx, FILE_BEGIN},
+    Storage::FileSystem::{FILE_BEGIN, ReadFile, SetFilePointerEx},
 };
 
 /// Default buffer size used by `VolumeReader` (256 KiB). Large enough to
@@ -70,14 +70,8 @@ impl VolumeReader {
         let mut new_pos: i64 = 0;
         // SAFETY: `self.handle` is a live volume handle owned by this
         // `VolumeReader`; `&mut new_pos` is a unique stack out-pointer.
-        let res = unsafe {
-            SetFilePointerEx(
-                self.handle,
-                offset as i64,
-                Some(&mut new_pos),
-                FILE_BEGIN,
-            )
-        };
+        let res =
+            unsafe { SetFilePointerEx(self.handle, offset as i64, Some(&mut new_pos), FILE_BEGIN) };
         res.map_err(io::Error::other)?;
         Ok(())
     }
@@ -243,4 +237,3 @@ mod tests {
         assert!(!r.buf_contains(1024, 1));
     }
 }
-

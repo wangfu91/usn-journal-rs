@@ -14,8 +14,6 @@ pub const FILE_RECORD_SIGNATURE: &[u8; 4] = b"FILE";
 
 /// Record number of the `$MFT` itself.
 pub const MFT_RECORD_NUMBER: u64 = 0;
-/// Record number of the volume root directory.
-pub const ROOT_RECORD: u64 = 5;
 /// First record number that can correspond to user-visible files.
 pub const FIRST_NORMAL_RECORD: u64 = 24;
 
@@ -205,13 +203,14 @@ mod tests {
     #[test]
     fn parse_applies_fixup() {
         let mut buf = build_minimal_record();
-        let rec = FileRecord::parse(123, &mut buf).expect("parse ok");
-        assert!(rec.is_used());
-        assert_eq!(rec.link_count(), 1);
-        let seq = rec.sequence_value() as u64;
-        assert_eq!(rec.file_reference(), (seq << 48) | 123);
+        {
+            let rec = FileRecord::parse(123, &mut buf).expect("parse ok");
+            assert!(rec.is_used());
+            assert_eq!(rec.link_count(), 1);
+            let seq = rec.sequence_value() as u64;
+            assert_eq!(rec.file_reference(), (seq << 48) | 123);
+        }
         // After fixup the sector trailers must contain the replacements.
-        drop(rec);
         assert_eq!(buf[510], 0x11);
         assert_eq!(buf[511], 0x22);
         assert_eq!(buf[1022], 0x33);

@@ -15,10 +15,7 @@ pub const NTFS_OEM_ID: &[u8; 8] = b"NTFS    ";
 #[derive(Debug, Clone)]
 pub(crate) struct BootSector {
     pub bytes_per_sector: u32,
-    pub sectors_per_cluster: u32,
-    pub total_sectors: u64,
     pub mft_lcn: u64,
-    pub mft_mirror_lcn: u64,
     pub file_record_size: u64,
     pub cluster_size: u64,
     pub mft_byte_offset: u64,
@@ -46,9 +43,7 @@ impl BootSector {
 
         let bytes_per_sector = u16::from_le_bytes([buf[11], buf[12]]) as u32;
         let sectors_per_cluster_raw = buf[13] as i8;
-        let total_sectors = u64::from_le_bytes(buf[40..48].try_into().unwrap());
         let mft_lcn = u64::from_le_bytes(buf[48..56].try_into().unwrap());
-        let mft_mirror_lcn = u64::from_le_bytes(buf[56..64].try_into().unwrap());
         let file_record_size_info = buf[64] as i8;
 
         if bytes_per_sector == 0 || !bytes_per_sector.is_power_of_two() {
@@ -106,7 +101,7 @@ impl BootSector {
                 "file_record_size outside reasonable bounds",
             ));
         }
-        if (file_record_size as u32) % bytes_per_sector != 0 {
+        if !(file_record_size as u32).is_multiple_of(bytes_per_sector) {
             return Err(UsnError::InvalidBootSector(
                 "file_record_size not a multiple of bytes_per_sector",
             ));
@@ -118,10 +113,7 @@ impl BootSector {
 
         Ok(BootSector {
             bytes_per_sector,
-            sectors_per_cluster,
-            total_sectors,
             mft_lcn,
-            mft_mirror_lcn,
             file_record_size,
             cluster_size,
             mft_byte_offset,
@@ -160,7 +152,6 @@ mod tests {
         let buf = make_boot_sector(512, 8, 0x10_0000, 0xC_0000, 0x2, -10);
         let bs = BootSector::parse(&buf).expect("should parse");
         assert_eq!(bs.bytes_per_sector, 512);
-        assert_eq!(bs.sectors_per_cluster, 8);
         assert_eq!(bs.cluster_size, 4096);
         assert_eq!(bs.file_record_size, 1024);
         assert_eq!(bs.mft_lcn, 0xC_0000);

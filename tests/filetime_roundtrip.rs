@@ -8,12 +8,12 @@
 //! All tests are admin-gated: they print "skipping" and return when the OS
 //! denies access to the volume.
 
+use std::time::{SystemTime, UNIX_EPOCH};
 use usn_journal_rs::{
     errors::UsnError,
     raw_mft::{RawMft, RawMftEntry},
     volume::Volume,
 };
-use std::time::{SystemTime, UNIX_EPOCH};
 
 /// 100-nanosecond intervals from the Windows epoch (1601-01-01) to the Unix
 /// epoch (1970-01-01).  Mirrors the private `WINDOWS_TO_UNIX_OFFSET_100NS`
@@ -52,9 +52,9 @@ fn test_as_u64_roundtrip_many_values() {
         1,
         42,
         999_999,
-        WIN_EPOCH_OFFSET,               // Unix epoch
-        WIN_EPOCH_OFFSET + 10_000_000,  // 1 second after Unix epoch
-        WIN_EPOCH_OFFSET + 1,           // 100 ns after Unix epoch
+        WIN_EPOCH_OFFSET,              // Unix epoch
+        WIN_EPOCH_OFFSET + 10_000_000, // 1 second after Unix epoch
+        WIN_EPOCH_OFFSET + 1,          // 100 ns after Unix epoch
         u64::MAX / 2,
         u64::MAX - 1,
         u64::MAX,
@@ -150,7 +150,11 @@ fn test_to_unix_seconds_known_values() {
 
     // Exactly at Unix epoch: should be 0.
     ft.0 = WIN_EPOCH_OFFSET;
-    assert_eq!(ft.to_unix_seconds(), 0, "Unix epoch should be 0 unix-seconds");
+    assert_eq!(
+        ft.to_unix_seconds(),
+        0,
+        "Unix epoch should be 0 unix-seconds"
+    );
 
     // 1 second after: should be 1.
     ft.0 = WIN_EPOCH_OFFSET + 10_000_000;

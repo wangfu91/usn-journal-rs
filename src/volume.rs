@@ -77,12 +77,6 @@ impl Volume {
         }
     }
 
-    /// Returns the raw volume handle.
-    #[inline]
-    pub(crate) fn handle(&self) -> HANDLE {
-        self.handle
-    }
-
     /// Creates a mock `Volume` for testing (invalid handle, no real device).
     #[cfg(test)]
     pub(crate) fn mock(handle: HANDLE, source: VolumeSource) -> Self {

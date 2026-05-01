@@ -62,9 +62,7 @@ impl ExtentMap {
         if self.file_record_size == 0 {
             return 0;
         }
-        self.total_clusters
-            .saturating_mul(self.cluster_size)
-            / self.file_record_size
+        self.total_clusters.saturating_mul(self.cluster_size) / self.file_record_size
     }
 
     /// Translate a record number to its absolute volume byte offset.
@@ -80,9 +78,9 @@ impl ExtentMap {
             let end = seg.vcn_start + seg.clusters;
             if vcn >= seg.vcn_start && vcn < end {
                 let local_vcn = vcn - seg.vcn_start;
-                return Ok(seg.lcn.map(|lcn| {
-                    (lcn + local_vcn) * self.cluster_size + inner
-                }));
+                return Ok(seg
+                    .lcn
+                    .map(|lcn| (lcn + local_vcn) * self.cluster_size + inner));
             }
         }
         Err(UsnError::InvalidMftRecord {
@@ -98,26 +96,29 @@ mod tests {
 
     #[test]
     fn maps_record_numbers_in_single_run() {
-        let runs = vec![DataRun::Data { lcn: 100, clusters: 4 }];
+        let runs = vec![DataRun::Data {
+            lcn: 100,
+            clusters: 4,
+        }];
         let map = ExtentMap::from_runs(&runs, 4096, 1024);
         // 4 records per cluster
         assert_eq!(map.record_count(), 16);
         assert_eq!(map.record_offset(0).unwrap(), Some(100 * 4096));
-        assert_eq!(
-            map.record_offset(3).unwrap(),
-            Some(100 * 4096 + 3 * 1024)
-        );
-        assert_eq!(
-            map.record_offset(4).unwrap(),
-            Some(101 * 4096)
-        );
+        assert_eq!(map.record_offset(3).unwrap(), Some(100 * 4096 + 3 * 1024));
+        assert_eq!(map.record_offset(4).unwrap(), Some(101 * 4096));
     }
 
     #[test]
     fn maps_record_numbers_across_multiple_runs() {
         let runs = vec![
-            DataRun::Data { lcn: 100, clusters: 2 }, // VCN 0..2
-            DataRun::Data { lcn: 200, clusters: 3 }, // VCN 2..5
+            DataRun::Data {
+                lcn: 100,
+                clusters: 2,
+            }, // VCN 0..2
+            DataRun::Data {
+                lcn: 200,
+                clusters: 3,
+            }, // VCN 2..5
         ];
         let map = ExtentMap::from_runs(&runs, 4096, 1024);
         // record 8 -> VCN 2 (start of run 2) -> LCN 200
@@ -130,7 +131,10 @@ mod tests {
     fn returns_none_for_sparse_holes() {
         let runs = vec![
             DataRun::Sparse { clusters: 2 },
-            DataRun::Data { lcn: 500, clusters: 1 },
+            DataRun::Data {
+                lcn: 500,
+                clusters: 1,
+            },
         ];
         let map = ExtentMap::from_runs(&runs, 4096, 1024);
         assert_eq!(map.record_offset(0).unwrap(), None);
@@ -139,7 +143,10 @@ mod tests {
 
     #[test]
     fn out_of_range_returns_error() {
-        let runs = vec![DataRun::Data { lcn: 100, clusters: 1 }];
+        let runs = vec![DataRun::Data {
+            lcn: 100,
+            clusters: 1,
+        }];
         let map = ExtentMap::from_runs(&runs, 4096, 1024);
         assert!(map.record_offset(100).is_err());
     }

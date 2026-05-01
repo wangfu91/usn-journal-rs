@@ -5,9 +5,7 @@ use std::{ffi::c_void, mem::size_of};
 use log::{debug, warn};
 use windows::Win32::Foundation::{ERROR_HANDLE_EOF, HANDLE};
 use windows::Win32::System::IO::DeviceIoControl;
-use windows::Win32::System::Ioctl::{
-    FSCTL_READ_USN_JOURNAL, READ_USN_JOURNAL_DATA_V1,
-};
+use windows::Win32::System::Ioctl::{FSCTL_READ_USN_JOURNAL, READ_USN_JOURNAL_DATA_V1};
 
 use crate::{
     UsnResult,

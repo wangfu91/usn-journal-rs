@@ -288,9 +288,9 @@ mod tests {
         fn test_conversion_consistency() {
             // Test that converting maintains reasonable accuracy
             let test_values = vec![
-                0u64,                       // Windows epoch
-                116_444_736_000_000_000,    // Unix epoch
-                132_103_584_000_000_000,    // 2020-01-01
+                0u64,                    // Windows epoch
+                116_444_736_000_000_000, // Unix epoch
+                132_103_584_000_000_000, // 2020-01-01
             ];
 
             let windows_epoch_systemtime = filetime_to_systemtime(0).unwrap();
