@@ -3,10 +3,10 @@
 use std::ffi::OsString;
 use std::os::windows::ffi::OsStringExt;
 
-use chrono::{DateTime, Utc};
 use log::warn;
 
 use crate::{
+    Fid,
     path::PathResolvableEntry,
     raw_mft::{
         attribute::{
@@ -15,6 +15,7 @@ use crate::{
         data_run::{summarize_runs, DataRunSummary},
         record::FileRecord,
     },
+    time::Filetime,
 };
 
 /// Information about a single named alternate data stream (`$DATA`
@@ -32,8 +33,8 @@ pub struct AdsInfo {
 pub struct RawMftEntry {
     pub record_number: u64,
     pub sequence_number: u16,
-    pub file_reference: u64,
-    pub parent_reference: u64,
+    pub file_reference: Fid,
+    pub parent_reference: Fid,
     pub base_record_reference: u64,
     pub hard_link_count: u16,
     pub flags: u16,
@@ -45,16 +46,16 @@ pub struct RawMftEntry {
 
     pub file_name: OsString,
 
-    pub si_created: Option<DateTime<Utc>>,
-    pub si_modified: Option<DateTime<Utc>>,
-    pub si_mft_modified: Option<DateTime<Utc>>,
-    pub si_accessed: Option<DateTime<Utc>>,
+    pub si_created: Filetime,
+    pub si_modified: Filetime,
+    pub si_mft_modified: Filetime,
+    pub si_accessed: Filetime,
     pub si_file_attributes: u32,
 
-    pub fn_created: Option<DateTime<Utc>>,
-    pub fn_modified: Option<DateTime<Utc>>,
-    pub fn_mft_modified: Option<DateTime<Utc>>,
-    pub fn_accessed: Option<DateTime<Utc>>,
+    pub fn_created: Filetime,
+    pub fn_modified: Filetime,
+    pub fn_mft_modified: Filetime,
+    pub fn_accessed: Filetime,
 
     pub real_size: u64,
     pub allocated_size: u64,
@@ -67,35 +68,14 @@ pub struct RawMftEntry {
     pub alternate_data_streams: Vec<AdsInfo>,
 }
 
-/// Number of seconds between the Windows FILETIME epoch (1601-01-01) and
-/// the Unix epoch (1970-01-01).
-const WINDOWS_TO_UNIX_OFFSET_SECS: i64 = 11_644_473_600;
-
-/// Fast conversion from a Windows FILETIME (100-ns intervals since
-/// 1601-01-01 UTC) to `DateTime<Utc>`. Avoids the `chrono::Duration` +
-/// `SystemTime` round-trip used by [`crate::time::filetime_to_systemtime`]
-/// and, crucially, avoids any `with_timezone(&Local)` call (which on
-/// Windows is dominated by per-call timezone lookup syscalls).
-fn ntfs_to_utc(ntfs_time: u64) -> Option<DateTime<Utc>> {
-    if ntfs_time == 0 {
-        return None;
-    }
-    if ntfs_time > i64::MAX as u64 {
-        return None;
-    }
-    let secs = (ntfs_time / 10_000_000) as i64 - WINDOWS_TO_UNIX_OFFSET_SECS;
-    let nanos = ((ntfs_time % 10_000_000) * 100) as u32;
-    DateTime::<Utc>::from_timestamp(secs, nanos)
-}
-
 impl RawMftEntry {
     /// Build a `RawMftEntry` from a parsed FILE record.
     pub(crate) fn from_record(record: &FileRecord<'_>) -> Self {
         let mut entry = RawMftEntry {
             record_number: record.number,
             sequence_number: record.sequence_value(),
-            file_reference: record.file_reference(),
-            parent_reference: 0,
+            file_reference: Fid::new(record.file_reference()),
+            parent_reference: Fid::new(0),
             base_record_reference: record.base_reference() & 0x0000_FFFF_FFFF_FFFF,
             hard_link_count: record.link_count(),
             flags: record.header.flags,
@@ -105,15 +85,15 @@ impl RawMftEntry {
             reparse_tag: None,
             namespace: FileNameNamespace::Posix,
             file_name: OsString::new(),
-            si_created: None,
-            si_modified: None,
-            si_mft_modified: None,
-            si_accessed: None,
+            si_created: Filetime::from_u64(0),
+            si_modified: Filetime::from_u64(0),
+            si_mft_modified: Filetime::from_u64(0),
+            si_accessed: Filetime::from_u64(0),
             si_file_attributes: 0,
-            fn_created: None,
-            fn_modified: None,
-            fn_mft_modified: None,
-            fn_accessed: None,
+            fn_created: Filetime::from_u64(0),
+            fn_modified: Filetime::from_u64(0),
+            fn_mft_modified: Filetime::from_u64(0),
+            fn_accessed: Filetime::from_u64(0),
             real_size: 0,
             allocated_size: 0,
             is_resident: true,
@@ -132,16 +112,11 @@ impl RawMftEntry {
             let type_id = attr.type_id();
             if type_id == NtfsAttributeType::StandardInformation as u32 {
                 if let Some(si) = attr.as_standard_info() {
-                    let creation = si.creation_time;
-                    let modification = si.modification_time;
-                    let mft_mod = si.mft_record_modification_time;
-                    let access = si.access_time;
-                    let attrs = si.file_attributes;
-                    entry.si_created = ntfs_to_utc(creation);
-                    entry.si_modified = ntfs_to_utc(modification);
-                    entry.si_mft_modified = ntfs_to_utc(mft_mod);
-                    entry.si_accessed = ntfs_to_utc(access);
-                    entry.si_file_attributes = attrs;
+                    entry.si_created = Filetime::from_u64(si.creation_time);
+                    entry.si_modified = Filetime::from_u64(si.modification_time);
+                    entry.si_mft_modified = Filetime::from_u64(si.mft_record_modification_time);
+                    entry.si_accessed = Filetime::from_u64(si.access_time);
+                    entry.si_file_attributes = si.file_attributes;
                 }
             } else if type_id == NtfsAttributeType::FileName as u32 {
                 if let Some((header, name_units)) = attr.as_file_name() {
@@ -156,12 +131,12 @@ impl RawMftEntry {
                         best_namespace_score = score;
                         entry.namespace = ns;
                         entry.file_name = OsString::from_wide(name_units);
-                        entry.parent_reference = header.parent_directory_reference;
-                        entry.fn_created = ntfs_to_utc(header.creation_time);
-                        entry.fn_modified = ntfs_to_utc(header.modification_time);
+                        entry.parent_reference = Fid::new(header.parent_directory_reference);
+                        entry.fn_created = Filetime::from_u64(header.creation_time);
+                        entry.fn_modified = Filetime::from_u64(header.modification_time);
                         entry.fn_mft_modified =
-                            ntfs_to_utc(header.mft_record_modification_time);
-                        entry.fn_accessed = ntfs_to_utc(header.access_time);
+                            Filetime::from_u64(header.mft_record_modification_time);
+                        entry.fn_accessed = Filetime::from_u64(header.access_time);
                         let fa = header.file_attributes;
                         if fa & file_attr_flags::REPARSE_POINT != 0 {
                             entry.is_reparse_point = true;
@@ -171,7 +146,7 @@ impl RawMftEntry {
                     }
                 }
             } else if type_id == NtfsAttributeType::Data as u32 {
-                let stream_name = attr.name_string();
+                let stream_name_slice = attr.name_slice();
                 if attr.is_non_resident() {
                     if let Some(h) = attr.nonresident_header() {
                         let allocated = h.allocated_size;
@@ -197,7 +172,7 @@ impl RawMftEntry {
                         let is_compressed = attr_flags & 0x0001 != 0;
                         let is_encrypted = attr_flags & 0x4000 != 0;
                         let is_sparse = attr_flags & 0x8000 != 0;
-                        match stream_name {
+                        match stream_name_slice {
                             None => {
                                 if !have_unnamed_data {
                                     have_unnamed_data = true;
@@ -210,9 +185,9 @@ impl RawMftEntry {
                                     entry.data_run_summary = summary;
                                 }
                             }
-                            Some(name) => {
+                            Some(name_units) => {
                                 entry.alternate_data_streams.push(AdsInfo {
-                                    name: OsString::from(name),
+                                    name: OsString::from_wide(name_units),
                                     real_size: data_size,
                                     allocated_size: allocated,
                                     is_resident: false,
@@ -222,7 +197,7 @@ impl RawMftEntry {
                     }
                 } else if let Some(h) = attr.resident_header() {
                     let value_length = h.value_length as u64;
-                    match stream_name {
+                    match stream_name_slice {
                         None => {
                             if !have_unnamed_data {
                                 have_unnamed_data = true;
@@ -231,9 +206,9 @@ impl RawMftEntry {
                                 entry.is_resident = true;
                             }
                         }
-                        Some(name) => {
+                        Some(name_units) => {
                             entry.alternate_data_streams.push(AdsInfo {
-                                name: OsString::from(name),
+                                name: OsString::from_wide(name_units),
                                 real_size: value_length,
                                 allocated_size: value_length,
                                 is_resident: true,
@@ -266,13 +241,22 @@ impl RawMftEntry {
 
         entry
     }
+
+    /// Strongly-typed view of [`RawMftEntry::si_file_attributes`].
+    ///
+    /// Unknown bits are preserved.
+    #[must_use]
+    #[inline]
+    pub fn si_file_attributes_flags(&self) -> crate::FileAttributes {
+        crate::FileAttributes::from_bits_retain(self.si_file_attributes)
+    }
 }
 
 impl PathResolvableEntry for RawMftEntry {
-    fn fid(&self) -> u64 {
+    fn fid(&self) -> Fid {
         self.file_reference
     }
-    fn parent_fid(&self) -> u64 {
+    fn parent_fid(&self) -> Fid {
         self.parent_reference
     }
     fn file_name(&self) -> &OsString {
@@ -470,8 +454,8 @@ mod tests {
             "ads"
         );
         assert_eq!(entry.alternate_data_streams[0].real_size, 3);
-        assert!(entry.si_created.is_some());
-        assert_eq!(entry.parent_reference, (5u64 << 48) | 5);
+        assert!(entry.si_created.as_u64() != 0);
+        assert_eq!(entry.parent_reference, Fid::new((5u64 << 48) | 5));
     }
 
     #[test]
@@ -480,9 +464,9 @@ mod tests {
         let rec = FileRecord::parse(42, &mut buf).expect("parse");
         let entry = RawMftEntry::from_record(&rec);
         // file_reference = (seq << 48) | record_number; with seq=1, record=42
-        assert_eq!(entry.fid(), (1u64 << 48) | 42);
+        assert_eq!(entry.fid(), Fid::new((1u64 << 48) | 42));
         // parent_directory_reference was built as (5 << 48) | 5
-        assert_eq!(entry.parent_fid(), (5u64 << 48) | 5);
+        assert_eq!(entry.parent_fid(), Fid::new((5u64 << 48) | 5));
         assert_eq!(entry.file_name(), &OsString::from("hello.txt"));
         assert!(!entry.is_dir());
     }

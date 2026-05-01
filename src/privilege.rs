@@ -9,12 +9,22 @@ use windows::core::Owned;
 
 pub(crate) fn is_elevated() -> windows::core::Result<bool> {
     let mut handle: HANDLE = HANDLE::default();
+    // SAFETY: `GetCurrentProcess` returns a pseudo-handle with the
+    // necessary access; `&mut handle` is a valid out-pointer. The Win32
+    // call writes a real token handle on success which we wrap in
+    // `Owned` immediately so it is closed on scope exit.
     unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut handle)? };
+    // SAFETY: `handle` was initialised by the successful `OpenProcessToken`
+    // call above and ownership has not been transferred elsewhere.
     let handle = unsafe { Owned::new(handle) };
 
     let mut elevation = TOKEN_ELEVATION::default();
     let mut returned_length = 0;
 
+    // SAFETY: `*handle` is a live token handle owned by the local
+    // `Owned` wrapper; `&mut elevation` and `&mut returned_length` are
+    // valid out-pointers, and the buffer length matches the size of
+    // `TOKEN_ELEVATION` exactly.
     unsafe {
         GetTokenInformation(
             *handle,

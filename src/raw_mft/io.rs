@@ -68,6 +68,8 @@ impl VolumeReader {
 
     fn raw_seek(&self, offset: u64) -> io::Result<()> {
         let mut new_pos: i64 = 0;
+        // SAFETY: `self.handle` is a live volume handle owned by this
+        // `VolumeReader`; `&mut new_pos` is a unique stack out-pointer.
         let res = unsafe {
             SetFilePointerEx(
                 self.handle,
@@ -83,6 +85,12 @@ impl VolumeReader {
     fn refill(&mut self, sector_pos: u64) -> io::Result<()> {
         self.raw_seek(sector_pos)?;
         let mut bytes_read: u32 = 0;
+        // SAFETY: `self.handle` is a live volume handle. The output
+        // buffer is `self.buf` of exactly the slice length we pass;
+        // `&mut bytes_read` is a unique stack out-pointer. The Win32
+        // `ReadFile` requires sector-aligned offsets and lengths for
+        // `FILE_FLAG_NO_BUFFERING` opens — the caller (`refill`) is
+        // responsible for invoking us with a sector-aligned offset.
         let res = unsafe {
             ReadFile(
                 self.handle,

@@ -131,6 +131,9 @@ impl<'a> NtfsAttribute<'a> {
         if data.len() < size_of::<NtfsAttributeHeader>() {
             return None;
         }
+        // SAFETY: We have just verified `data.len() >= sizeof(NtfsAttributeHeader)`.
+        // The header is `#[repr(C, packed)]` (alignment 1), so any byte
+        // pointer is suitably aligned to form a reference.
         let header = unsafe { &*(data.as_ptr() as *const NtfsAttributeHeader) };
         let length = header.length as usize;
         if length < size_of::<NtfsAttributeHeader>() || length > data.len() {
@@ -187,6 +190,27 @@ impl<'a> NtfsAttribute<'a> {
         }
     }
 
+    /// Borrowed UTF-16 view of the attribute name without allocation.
+    /// Returns `None` if the attribute is unnamed or the name bytes are
+    /// not 2-byte aligned (mirrors the behavior of `as_file_name`).
+    pub fn name_slice(&self) -> Option<&'a [u16]> {
+        let n = self.header.name_length as usize;
+        if n == 0 {
+            return None;
+        }
+        let off = self.header.name_offset as usize;
+        let end = off.checked_add(n.checked_mul(2)?)?;
+        if end > self.length {
+            return None;
+        }
+        let bytes = &self.data()[off..end];
+        if (bytes.as_ptr() as usize) % 2 != 0 {
+            return None;
+        }
+        // SAFETY: aligned and length is `n * 2` bytes.
+        Some(unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const u16, n) })
+    }
+
     /// Decoded attribute name as a String (lossy). `None` if the
     /// attribute is unnamed.
     pub fn name_string(&self) -> Option<String> {
@@ -214,6 +238,9 @@ impl<'a> NtfsAttribute<'a> {
         if self.length < size_of::<NtfsResidentAttributeHeader>() {
             return None;
         }
+        // SAFETY: `is_non_resident == 0` (resident) and we just verified
+        // `self.length >= sizeof(NtfsResidentAttributeHeader)`. The
+        // header is packed (alignment 1).
         Some(unsafe { &*(self.data.as_ptr() as *const NtfsResidentAttributeHeader) })
     }
 
@@ -224,6 +251,9 @@ impl<'a> NtfsAttribute<'a> {
         if self.length < size_of::<NtfsNonResidentAttributeHeader>() {
             return None;
         }
+        // SAFETY: `is_non_resident != 0` and we just verified
+        // `self.length >= sizeof(NtfsNonResidentAttributeHeader)`. The
+        // header is packed (alignment 1).
         Some(unsafe { &*(self.data.as_ptr() as *const NtfsNonResidentAttributeHeader) })
     }
 
@@ -245,6 +275,8 @@ impl<'a> NtfsAttribute<'a> {
         if v.len() < size_of::<NtfsStandardInformation>() {
             return None;
         }
+        // SAFETY: We have just verified `v.len() >= sizeof(NtfsStandardInformation)`.
+        // The struct is packed (alignment 1).
         Some(unsafe { &*(v.as_ptr() as *const NtfsStandardInformation) })
     }
 

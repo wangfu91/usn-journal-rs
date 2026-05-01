@@ -1,6 +1,6 @@
 [package]
 name = "usn-journal-rs"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
 description = "A Rust library for working with the NTFS USN change journal and enumerating the MFT."
 license = "MIT"
@@ -16,10 +16,15 @@ targets = [
 ]
 
 [dependencies]
-chrono = "0.4"
+bitflags = "2"
+chrono = { version = "0.4", optional = true }
 log = "0.4"
 lru = "0.16"
 thiserror = "2.0"
+
+[features]
+default = []
+chrono = ["dep:chrono"]
 
 [dependencies.windows]
 version = "0.62.2"
@@ -42,9 +47,18 @@ divan = "0.1"
 name = "raw_mft"
 harness = false
 
+[[bench]]
+name = "journal"
+harness = false
+
+[[bench]]
+name = "path_resolver"
+harness = false
+
 [profile.test]
 opt-level = 0
 debug = true
-lto = false
-codegen-units = 1
 incremental = false
+
+[profile.bench]
+lto = "thin"

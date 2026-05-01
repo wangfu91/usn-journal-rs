@@ -7,27 +7,33 @@
 - Run the full test suite with `cargo test`.
 - Run a single test with `cargo test <full-or-partial-test-name>`, for example `cargo test path::tests::test_resolve_path_with_cache_hit`.
 - List exact test names with `cargo test -- --list`.
-- Run examples with `cargo run --example read_journal`, `cargo run --example enum_mft`, `cargo run --example raw_mft`, or `cargo run --example change_monitor`.
-- Run benchmarks with `sudo cargo bench --bench raw_mft` (Divan harness). Filter a single bench with `cargo bench --bench raw_mft -- raw_mft_iter`. Set `USN_TEST_DRIVE` (default `C`) to pick the volume.
+- Run examples with `cargo run --example read_journal`, `cargo run --example enum_mft`, `cargo run --example raw_mft`, `cargo run --example change_monitor`, or `cargo run --example pretty_print`.
+- Run benchmarks with `cargo bench --bench raw_mft` (Divan harness). Available bench targets: `raw_mft`, `journal`, `path_resolver`. Filter a single bench with `cargo bench --bench raw_mft -- raw_mft_iter`. Set `USN_TEST_DRIVE` (default `C`) to pick the volume.
 - Release validation also uses `cargo package` before publishing to crates.io.
 
 ## High-level architecture
 
-- `src\lib.rs` defines the public crate surface: `volume`, `journal`, `mft`, `raw_mft`, `path`, `errors`, shared constants, and the `UsnResult<T>` alias.
-- `src\volume.rs` is the handle boundary. It opens raw volume handles from either a drive letter or mount point, stores the handle in `Volume`, and closes it in `Drop`.
-- `src\journal.rs` and `src\mft.rs` are the two main APIs. Both wrap a `Volume`, issue `DeviceIoControl` calls for the relevant FSCTL operations, keep iteration state in an iterator struct, and yield parsed entries as Rust iterators.
-- `src\record.rs` is the shared low-level parser for buffers returned by the Windows APIs. It extracts the next cursor (`USN` or file ID), validates record boundaries, and returns typed `USN_RECORD_V2` references for both journal and MFT iteration.
-- `src\path.rs` is the shared path-resolution layer. It abstracts over `UsnEntry`, `MftEntry`, and `RawMftEntry` through `PathResolvableEntry`, and `PathResolver::new_with_cache` adds an LRU cache of directory file IDs for large scans.
-- `src\raw_mft\` reads the `$MFT` file directly from the volume and parses each FILE record into a rich `RawMftEntry` (full timestamps, real / allocated size, hard link count, alternate data streams, sparse / compressed / encrypted flags, data-run summary, file-name namespace). Submodules: `boot` (boot sector geometry), `fixup` (USA verification), `io` (sector-aligned `VolumeReader`), `attribute` / `data_run` / `record` (on-disk structures), `extent` (record number → volume offset), `entry` (`RawMftEntry` builder). NTFS only — ReFS volumes return `UsnError::UnsupportedFilesystem`.
-- Supporting modules are narrow and focused: `src\privilege.rs` checks elevation, `src\time.rs` converts FILETIME values, and `src\errors.rs` defines the crate-wide error type.
+- `src\lib.rs` defines the public crate surface: `volume`, `journal`, `mft`, `raw_mft`, `path`, `errors`, `types`, `time`, and the `UsnResult<T>` alias.
+- `src\volume.rs` is the handle boundary. It opens raw volume handles from either a drive letter or mount point, stores the handle in `Volume`, and closes it in `Drop`. Fields are private; use accessor methods.
+- `src\journal\` is the USN journal module directory (split from `src\journal.rs`). Submodules: `mod.rs`, `journal.rs` (`UsnJournal`), `iter.rs` (`UsnJournalIter`), `entry.rs` (`UsnEntry`), `reason.rs` (reason-flag lookup table), `options.rs` (`JournalIterOptions`), `data.rs`, `defaults.rs`.
+- `src\mft.rs` is the MFT enumeration API. It wraps a `Volume`, issues `FSCTL_ENUM_USN_DATA`, keeps iteration state in `MftIter`, and yields `MftEntry` per record.
+- `src\usn_record.rs` is the shared low-level parser for buffers returned by the Windows APIs. It extracts the next cursor (`USN` or file ID), validates record boundaries, and returns typed `USN_RECORD_V2` references for both journal and MFT iteration.
+- `src\path.rs` is the shared path-resolution layer. It abstracts over `UsnEntry`, `MftEntry`, and `RawMftEntry` through `PathResolvableEntry`. Use the fluent builder `PathResolver::new(v).with_lru_cache(n)` for LRU-cached resolution, or `.with_in_memory_tree(&raw_mft)?` for O(1) resolution on large scans (no per-lookup syscalls).
+- `src\raw_mft\` reads the `$MFT` file directly from the volume and parses each FILE record into a rich `RawMftEntry` (full timestamps, real / allocated size, hard link count, alternate data streams, sparse / compressed / encrypted flags, data-run summary, file-name namespace). Submodules: `boot` (boot sector geometry), `fixup` (USA verification), `io` (sector-aligned `VolumeReader`), `attribute` / `data_run` / `record` (on-disk structures), `extent` (record number → volume offset), `entry` (`RawMftEntry` builder). **NTFS only** — ReFS volumes return `UsnError::UnsupportedFilesystem`.
+- `src\types.rs` defines the `Usn(i64)` and `Fid(u64)` newtypes used throughout the public API.
+- `src\time.rs` defines `Filetime(u64)` with `try_to_system_time`, `to_unix_seconds`, and (with `chrono` feature) `to_chrono_utc`.
+- Supporting modules: `src\privilege.rs` checks elevation, `src\errors.rs` defines the crate-wide `UsnError` enum and `UsnResult<T>` alias.
 
 ## Key conventions
 
 - The crate is Windows-only and targets NTFS/ReFS volumes. Real USN journal and MFT access is privilege-gated, so code paths that open volumes should continue to check elevation early.
-- Keep unsafe Win32 interaction localized. Public APIs expose Rust structs and iterators, while raw buffer walking and pointer validation stay in helper code such as `record.rs` and the small FFI call sites.
+- Keep unsafe Win32 interaction localized. Public APIs expose Rust structs and iterators, while raw buffer walking and pointer validation stay in helper code such as `usn_record.rs` and the small FFI call sites.
 - Both `UsnJournalIter` and `MftIter` yield `UsnResult<_>` per item instead of failing the whole scan on a single record-level problem. Match that pattern when extending enumeration APIs.
-- Reuse the shared parsing helpers in `src\record.rs` for cursor extraction and record validation instead of duplicating buffer logic in `journal.rs` or `mft.rs`.
-- Use `UsnError` and the `UsnResult<T>` alias for public fallible APIs.
+- Reuse the shared parsing helpers in `src\usn_record.rs` for cursor extraction and record validation instead of duplicating buffer logic in `journal\` or `mft.rs`.
+- Use `UsnError` and the `UsnResult<T>` alias for public fallible APIs. Prefer concrete variants (`NotElevated`, `UnsupportedFilesystem`, `BufferTooSmall`, `InvalidRecord`) over generic catch-alls.
+- Use `Usn` and `Fid` newtypes in all new code; do not use bare `i64`/`u64` for these concepts.
+- `Filetime` is the canonical timestamp type. `chrono` is an **optional** feature (`--features chrono`); default builds must not depend on it.
+- Raw `$MFT` access (`RawMft`) is **NTFS only**. ReFS volumes return `UsnError::UnsupportedFilesystem`. Guard accordingly.
 - Tests live inline in the module files under `#[cfg(test)]` rather than in a separate `tests\` tree.
 - Error-path tests for Win32 calls use `injectorpp` to fake API behavior, while integration-style volume and privilege tests accept permission-related outcomes on non-elevated runs.
-- When adding path-aware enumeration code, prefer `PathResolver::new_with_cache` for long-running scans and preserve the current cache behavior that stores directory paths and invalidates stale entries on name mismatch.
+- When adding path-aware enumeration code, use `PathResolver::new(v).with_lru_cache(n)` for moderate scans and `.with_in_memory_tree(&raw_mft)?` for full-volume scans. Do not use the removed `PathResolver::new_with_cache`.

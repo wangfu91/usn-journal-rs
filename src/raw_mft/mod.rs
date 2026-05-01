@@ -13,7 +13,7 @@
 //!
 //! let volume = Volume::from_drive_letter('C').expect("open volume");
 //! let mft = RawMft::new(&volume).expect("read $MFT");
-//! for entry in mft.iter().expect("iter") {
+//! for entry in mft.try_iter().expect("iter") {
 //!     match entry {
 //!         Ok(e) if e.is_used => {
 //!             println!("{:>8}: {}", e.record_number, e.file_name.to_string_lossy());
@@ -44,6 +44,7 @@ mod io;
 mod record;
 
 use std::io::{Read, Seek, SeekFrom};
+use std::num::NonZeroUsize;
 
 use log::{debug, warn};
 
@@ -64,14 +65,20 @@ pub use attribute::FileNameNamespace;
 pub use data_run::{DataRun as DataRunInfo, DataRunSummary};
 pub use entry::{AdsInfo, RawMftEntry};
 
-/// Default number of FILE records to read in a single batched I/O.
-pub const DEFAULT_BATCH_RECORDS: usize = 64;
+/// Default I/O buffer size for raw `$MFT` iteration.
+pub const DEFAULT_BUFFER_BYTES: NonZeroUsize = match NonZeroUsize::new(256 * 1024) {
+    Some(v) => v,
+    None => unreachable!(),
+};
 
 /// Options controlling iteration behaviour.
+///
+/// Use [`RawMftOptions::builder`] for the fluent builder API, or construct
+/// directly via struct-literal syntax. [`Default`] is also implemented.
 #[derive(Debug, Clone)]
 pub struct RawMftOptions {
-    /// Number of records read per I/O batch.
-    pub batch_records: usize,
+    /// Size of the I/O buffer in bytes used for batched reads of FILE records.
+    pub buffer_bytes: NonZeroUsize,
     /// Honour the `$MFT` `$BITMAP` to skip unused records.
     pub skip_unused: bool,
     /// First record number to yield.
@@ -84,11 +91,57 @@ pub struct RawMftOptions {
 impl Default for RawMftOptions {
     fn default() -> Self {
         Self {
-            batch_records: DEFAULT_BATCH_RECORDS,
+            buffer_bytes: DEFAULT_BUFFER_BYTES,
             skip_unused: true,
             start_record: FIRST_NORMAL_RECORD,
             end_record: None,
         }
+    }
+}
+
+impl RawMftOptions {
+    /// Returns a fluent builder for [`RawMftOptions`].
+    pub fn builder() -> RawMftOptionsBuilder {
+        RawMftOptionsBuilder::default()
+    }
+}
+
+/// Fluent builder for [`RawMftOptions`].
+#[derive(Debug, Default, Clone)]
+#[must_use]
+pub struct RawMftOptionsBuilder {
+    inner: RawMftOptions,
+}
+
+impl RawMftOptionsBuilder {
+    /// Set the I/O buffer size in bytes.
+    pub fn buffer_bytes(mut self, v: NonZeroUsize) -> Self {
+        self.inner.buffer_bytes = v;
+        self
+    }
+
+    /// Whether to honour the `$MFT` `$BITMAP` and skip unused records.
+    pub fn skip_unused(mut self, v: bool) -> Self {
+        self.inner.skip_unused = v;
+        self
+    }
+
+    /// Set the inclusive starting record number.
+    pub fn start_record(mut self, v: u64) -> Self {
+        self.inner.start_record = v;
+        self
+    }
+
+    /// Set the exclusive end record number, or `None` to iterate the full MFT.
+    pub fn end_record(mut self, v: Option<u64>) -> Self {
+        self.inner.end_record = v;
+        self
+    }
+
+    /// Finalize the builder.
+    #[must_use]
+    pub fn build(self) -> RawMftOptions {
+        self.inner
     }
 }
 
@@ -136,7 +189,7 @@ impl<'a> RawMft<'a> {
         let (off, used) = parsed.attrs_range();
         for_each_attribute(parsed.data, off, used, |attr| {
             let type_id = attr.type_id();
-            let unnamed = attr.name_string().is_none();
+            let unnamed = attr.name_slice().is_none();
             if type_id == NtfsAttributeType::Data as u32 && unnamed && attr.is_non_resident() {
                 if let Some(h) = attr.nonresident_header() {
                     let runs_off = h.data_runs_offset as usize;
@@ -185,38 +238,40 @@ impl<'a> RawMft<'a> {
     }
 
     /// Total number of FILE records this MFT can address.
+    #[must_use]
+    #[inline]
     pub fn record_count(&self) -> u64 {
         self.extent_map.record_count()
     }
 
     /// Cluster size in bytes.
+    #[must_use]
+    #[inline]
     pub fn cluster_size(&self) -> u64 {
         self.boot.cluster_size
     }
 
     /// File record size in bytes.
+    #[must_use]
+    #[inline]
     pub fn file_record_size(&self) -> u64 {
         self.boot.file_record_size
     }
 
     /// Begin iteration with default options.
-    pub fn iter(&self) -> Result<RawMftIter<'_>, UsnError> {
-        self.iter_with_options(RawMftOptions::default())
+    pub fn try_iter(&self) -> Result<RawMftIter<'_>, UsnError> {
+        self.try_iter_with_options(RawMftOptions::default())
     }
 
     /// Begin iteration with custom options.
-    pub fn iter_with_options(
+    pub fn try_iter_with_options(
         &self,
         options: RawMftOptions,
     ) -> Result<RawMftIter<'_>, UsnError> {
-        let buffer_bytes = options
-            .batch_records
-            .saturating_mul(self.boot.file_record_size as usize)
-            .max(crate::raw_mft::io::DEFAULT_BUFFER_BYTES);
         let reader = VolumeReader::with_buffer_bytes(
             self.volume.handle,
             self.boot.bytes_per_sector as u64,
-            buffer_bytes,
+            options.buffer_bytes.get(),
         )?;
         let total = self.record_count();
         let end = options.end_record.unwrap_or(total).min(total);
@@ -368,7 +423,7 @@ fn read_nonresident(
 }
 
 fn io_err(e: std::io::Error) -> UsnError {
-    UsnError::OtherError(format!("raw_mft I/O error: {e}"))
+    UsnError::Io(e)
 }
 
 #[cfg(test)]
@@ -378,7 +433,7 @@ mod tests {
     #[test]
     fn options_defaults_are_sensible() {
         let o = RawMftOptions::default();
-        assert_eq!(o.batch_records, DEFAULT_BATCH_RECORDS);
+        assert_eq!(o.buffer_bytes, DEFAULT_BUFFER_BYTES);
         assert!(o.skip_unused);
         assert_eq!(o.start_record, FIRST_NORMAL_RECORD);
         assert!(o.end_record.is_none());
@@ -401,7 +456,7 @@ mod tests {
         fn open_volume_or_skip() -> Option<Volume> {
             match Volume::from_drive_letter(pick_drive()) {
                 Ok(v) => Some(v),
-                Err(UsnError::PermissionError) => {
+                Err(UsnError::NotElevated) => {
                     eprintln!("skipping: requires admin privileges");
                     None
                 }
@@ -427,7 +482,7 @@ mod tests {
             let mut used = 0u64;
             let mut named = 0u64;
             let mut had_timestamps = false;
-            for r in mft.iter().expect("iter").take(50_000) {
+            for r in mft.try_iter().expect("iter").take(50_000) {
                 let entry = match r {
                     Ok(e) => e,
                     Err(_) => continue,
@@ -439,7 +494,7 @@ mod tests {
                 if !entry.file_name.is_empty() {
                     named += 1;
                 }
-                if entry.si_created.is_some() && !entry.file_name.is_empty() {
+                if entry.si_created.as_u64() != 0 && !entry.file_name.is_empty() {
                     had_timestamps = true;
                 }
             }
@@ -460,7 +515,7 @@ mod tests {
             let mut resolver = PathResolver::new_with_cache(&volume);
             let mut resolved_any = false;
             // Cap the search so the test stays bounded on huge volumes.
-            for r in mft.iter().expect("iter").flatten().take(20_000) {
+            for r in mft.try_iter().expect("iter").flatten().take(20_000) {
                 if r.is_directory || r.file_name.is_empty() {
                     continue;
                 }

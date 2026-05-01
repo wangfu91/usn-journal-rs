@@ -36,7 +36,7 @@ fn pick_drive() -> char {
 fn open_volume() -> Option<Volume> {
     match Volume::from_drive_letter(pick_drive()) {
         Ok(v) => Some(v),
-        Err(UsnError::PermissionError) => {
+        Err(UsnError::NotElevated) => {
             eprintln!("skipping bench: requires admin privileges");
             None
         }
@@ -59,7 +59,7 @@ fn raw_mft_iter(bencher: Bencher) {
     };
     bencher.bench_local(|| {
         let mut count = 0u64;
-        if let Ok(it) = mft.iter() {
+        if let Ok(it) = mft.try_iter() {
             for r in it.take(BENCH_RECORD_LIMIT) {
                 if r.is_ok() {
                     count += 1;
@@ -76,7 +76,7 @@ fn usn_mft_iter(bencher: Bencher) {
     let mft = Mft::new(&volume);
     bencher.bench_local(|| {
         let mut count = 0u64;
-        if let Ok(it) = mft.iter() {
+        if let Ok(it) = mft.try_iter() {
             for r in it.take(BENCH_RECORD_LIMIT) {
                 if r.is_ok() {
                     count += 1;
@@ -100,7 +100,7 @@ fn raw_mft_iter_with_path_resolver(bencher: Bencher) {
     bencher.bench_local(|| {
         let mut resolver = PathResolver::new(&volume);
         let mut count = 0u64;
-        if let Ok(it) = mft.iter() {
+        if let Ok(it) = mft.try_iter() {
             for r in it.flatten().take(BENCH_RECORD_LIMIT) {
                 let _ = resolver.resolve_path(&r);
                 count += 1;
@@ -123,7 +123,7 @@ fn raw_mft_iter_with_cached_resolver(bencher: Bencher) {
     bencher.bench_local(|| {
         let mut resolver = PathResolver::new_with_cache(&volume);
         let mut count = 0u64;
-        if let Ok(it) = mft.iter() {
+        if let Ok(it) = mft.try_iter() {
             for r in it.flatten().take(BENCH_RECORD_LIMIT) {
                 let _ = resolver.resolve_path(&r);
                 count += 1;
@@ -133,8 +133,11 @@ fn raw_mft_iter_with_cached_resolver(bencher: Bencher) {
     });
 }
 
-#[divan::bench(args = [16usize, 64, 256, 1024])]
-fn raw_mft_batch_size(bencher: Bencher, batch: usize) {
+/// Benchmark sweep over `buffer_bytes` sizes (in bytes).
+/// The plan replaces `batch_records` with `buffer_bytes: NonZeroUsize`.
+/// Parametrized in byte sizes: 16KB, 64KB, 256KB, 1MB.
+#[divan::bench(args = [16 * 1024, 64 * 1024, 256 * 1024, 1024 * 1024])]
+fn raw_mft_buffer_size(bencher: Bencher, buffer_bytes: usize) {
     let Some(volume) = open_volume() else { return };
     let mft = match RawMft::new(&volume) {
         Ok(m) => m,
@@ -145,11 +148,11 @@ fn raw_mft_batch_size(bencher: Bencher, batch: usize) {
     };
     bencher.bench_local(|| {
         let opts = usn_journal_rs::raw_mft::RawMftOptions {
-            batch_records: batch,
+            buffer_bytes: std::num::NonZeroUsize::new(buffer_bytes).unwrap(),
             ..Default::default()
         };
         let mut count = 0u64;
-        if let Ok(it) = mft.iter_with_options(opts) {
+        if let Ok(it) = mft.try_iter_with_options(opts) {
             for r in it.take(BENCH_RECORD_LIMIT) {
                 if r.is_ok() {
                     count += 1;

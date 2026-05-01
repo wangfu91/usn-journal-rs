@@ -1,124 +1,135 @@
 [![Crates.io](https://img.shields.io/crates/v/usn-journal-rs.svg)](https://crates.io/crates/usn-journal-rs)
 [![Docs.rs](https://docs.rs/usn-journal-rs/badge.svg)](https://docs.rs/usn-journal-rs)
+[![CI](https://github.com/wangfu91/usn-journal-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/wangfu91/usn-journal-rs/actions)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-# usn-journal-rs 🚀
+# usn-journal-rs
 
-A Rust library for working with the NTFS USN change journal and enumerating the MFT.
+Safe, ergonomic Rust bindings for the Windows NTFS/ReFS USN change journal and
+Master File Table (MFT).
 
-## Overview 📝
+## Overview
 
-**usn-journal-rs** provides safe, ergonomic abstractions for manipulating the USN change journal and accessing MFT records on NTFS volumes. It enables applications to efficiently enumerate file entries and monitor file system changes on Windows systems.
+**usn-journal-rs** lets you read the USN change journal, enumerate the MFT via
+the Windows FSCTL APIs, and parse the raw `$MFT` file directly for rich
+per-record metadata. It exposes idiomatic Rust iterators and builder-pattern
+option structs over the underlying `DeviceIoControl` calls.
 
-## Features ✨
+The crate is **Windows-only**. It targets NTFS and ReFS volumes and requires the
+calling process to be running as Administrator — raw volume handles and the USN
+journal IOCTLs are privilege-gated by the OS.
 
-- 🔍 Read and monitor USN journal records
-- 📂 Enumerate NTFS MFT entries
-- 🧬 Read raw `$MFT` for rich metadata (timestamps, sizes, ADS, sparse/compressed flags)
-- 🏷️ Resolve file IDs to full paths
-- 🦀 High-level, idiomatic Rust API
-- 🛡️ Safe abstractions over Windows FFI
+## Features
 
-## Examples 🧑‍💻
+- Read and iterate USN journal records with a configurable reason mask and start USN
+- Enumerate MFT entries via the `FSCTL_ENUM_USN_DATA` API
+- Parse raw `$MFT` records (NTFS only) for full timestamps, real/allocated sizes, hard-link
+  counts, alternate data streams, and sparse/compressed/encrypted flags
+- Resolve file IDs to full paths with three strategies: syscall-only, LRU-cached,
+  or an in-memory directory tree for O(1) resolution on large scans
+- Lightweight `Filetime(u64)` newtype — `chrono` is **not** a default dependency
+- Strong `Usn(i64)` and `Fid(u64)` newtypes throughout
 
-### Enumerate USN Journal Entries
+## Quick start
+
+Add to `Cargo.toml`:
+
+```toml
+[dependencies]
+usn-journal-rs = "0.5"
+```
+
+Iterate the USN change journal on drive `C:`:
 
 ```rust
-use usn_journal_rs::{volume::Volume, journal::UsnJournal};
+use usn_journal_rs::errors::UsnError;
+use usn_journal_rs::journal::{JournalIterOptions, UsnEntry, UsnJournal, USN_REASON_MASK_ALL};
+use usn_journal_rs::volume::Volume;
+use usn_journal_rs::Usn;
 
-let drive_letter = 'C';
-let volume = Volume::from_drive_letter(drive_letter)?;
-let journal = UsnJournal::new(&volume);
-for entry_result in journal.iter()? {
-    match entry_result {
-        Ok(entry) => println!("USN entry: {:?}", entry),
-        Err(e) => eprintln!("Error reading USN entry: {e}"),
+fn main() -> Result<(), UsnError> {
+    let volume = Volume::from_drive_letter('C')?;
+    let journal = UsnJournal::new(&volume);
+
+    let opts = JournalIterOptions::builder()
+        .start_usn(Usn::new(0))
+        .reason_mask(USN_REASON_MASK_ALL)
+        .only_on_close(false)
+        .buffer_size(64 * 1024)
+        .build();
+
+    for result in journal.try_iter_with_options(opts)? {
+        let entry: UsnEntry = result?;
+        println!("{}", entry); // compact one-line Display
     }
+    Ok(())
 }
 ```
 
-### Enumerate MFT Entries
+## Examples
 
-```rust
-use usn_journal_rs::{volume::Volume, mft::Mft};
+| Example | Description | Run |
+|---------|-------------|-----|
+| `read_journal` | Iterate all USN journal records on a volume | `cargo run --example read_journal` |
+| `enum_mft` | Enumerate every MFT entry via FSCTL | `cargo run --example enum_mft` |
+| `raw_mft` | Parse raw `$MFT` records with full metadata | `cargo run --example raw_mft` |
+| `change_monitor` | Watch for live filesystem changes via USN | `cargo run --example change_monitor` |
+| `pretty_print` | Multi-line formatted output for USN entries | `cargo run --example pretty_print` |
 
-let drive_letter = 'C';
-let volume = Volume::from_drive_letter(drive_letter)?;
-let mft = Mft::new(&volume);
-for entry_result in mft.iter()? {
-    match entry_result {
-        Ok(entry) => println!("MFT entry: {:?}", entry),
-        Err(e) => eprintln!("Error reading MFT entry: {e}"),
-    }
-}
-```
+All examples require Administrator privileges.
 
-You can find more usage examples in the [`examples`](examples/) directory. To run an example, use:
+## Performance notes
+
+Benchmarks are run with [Divan](https://github.com/nvzqz/divan) on a 200 k-record NTFS volume.
+
+- **Raw `$MFT` iteration** — ~6× faster than 0.4.x (262 ms vs 1.64 s). Achieved via
+  zero-copy fixup parsing (`VolumeReader::borrow_at`) and elimination of per-record memcpy.
+- **In-memory directory-tree path resolution** — ~40× faster than the syscall-based resolver
+  for full-volume scans (<500 ms vs ~21 s). Use `PathResolver::new(v).with_in_memory_tree(&raw_mft)?`.
+- **Buffer size** — tune with `RawMftOptions::builder().buffer_bytes(NonZeroUsize::new(256 * 1024).unwrap()).build()`.
+
+Run benchmarks:
 
 ```sh
-sudo cargo run --example change_monitor
+cargo bench --bench raw_mft
+cargo bench --bench journal
+cargo bench --bench path_resolver
 ```
 
-Replace `change_monitor` with any example file name in the directory.
+Set `USN_TEST_DRIVE=D` to target a different volume (default: `C`).
 
-### Enumerate Raw `$MFT` Records (Rich Metadata)
+## Cargo features
 
-For applications that need timestamps, real / allocated sizes, alternate
-data streams, sparse / compressed flags, and the namespace of each file
-name, `RawMft` reads the `$MFT` file directly from the volume:
+| Feature | Default | Description |
+|---------|---------|-------------|
+| `chrono` | no | Adds `Filetime::to_chrono_utc()` returning `chrono::DateTime<Utc>` |
 
-```rust
-use usn_journal_rs::{volume::Volume, raw_mft::RawMft};
+Enable with:
 
-let volume = Volume::from_drive_letter('C')?;
-let mft = RawMft::new(&volume)?;
-for entry in mft.iter()? {
-    let entry = entry?;
-    if entry.is_used && !entry.file_name.is_empty() {
-        println!(
-            "{:>8} {} size={} ads={} created={:?}",
-            entry.record_number,
-            entry.file_name.to_string_lossy(),
-            entry.real_size,
-            entry.alternate_data_streams.len(),
-            entry.si_created,
-        );
-    }
-}
+```toml
+usn-journal-rs = { version = "0.5", features = ["chrono"] }
 ```
 
-This path is **NTFS only**; ReFS volumes have no `$MFT` and return
-`UsnError::UnsupportedFilesystem`.
+Without the feature, use `Filetime::try_to_system_time()` or `Filetime::to_unix_seconds()`.
 
-### Benchmarks
+## Privileges
 
-Benchmarks use [Divan](https://github.com/nvzqz/divan). Run with:
+All APIs that open a volume (`Volume::from_drive_letter`, `Volume::from_mount_point`) require
+the process to run as **Administrator**. On non-elevated processes the crate returns
+`UsnError::NotElevated` before attempting any system call.
 
-```sh
-sudo cargo bench --bench raw_mft
-```
+## Filesystem support
 
-Set `USN_TEST_DRIVE` to choose the drive letter (default `C`).
+| Feature | NTFS | ReFS |
+|---------|------|------|
+| USN journal | ✅ | ✅ |
+| MFT enumeration (`Mft`) | ✅ | ✅ |
+| Raw `$MFT` (`RawMft`) | ✅ | ❌ — returns `UsnError::UnsupportedFilesystem` |
+## Migrating from 0.4.x
 
-## Platform Support 🖥️
+See [CHANGELOG.md](CHANGELOG.md) for a full list of breaking changes and before/after
+migration snippets.
 
-- 🪟 **Windows** NTFS/ReFS volumes
-- 🔑 Requires administrator privilege to access the USN journal or MFT.
-
-## Documentation 📚
-
-See [docs.rs/usn-journal-rs](https://docs.rs/usn-journal-rs) for full API documentation.
-
-## Contributing 🤝
-
-Contributions are welcome! Please open issues or pull requests on [GitHub](https://github.com/wangfu91/usn-journal-rs).
-
-## License 📝
+## License
 
 MIT License. See [LICENSE](LICENSE) for details.
-
----
-
-> **Note:** 
- - This crate is Windows-only.
- - ReFS does not have a Master File Table (MFT).

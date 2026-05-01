@@ -54,6 +54,11 @@ impl<'a> FileRecord<'a> {
         if data.len() < size_of::<FileRecordHeader>() {
             return false;
         }
+        // SAFETY: We have just verified `data.len() >= sizeof(FileRecordHeader)`.
+        // `FileRecordHeader` is `#[repr(C, packed)]`, i.e. has alignment 1,
+        // so any byte pointer is sufficiently aligned to form a reference;
+        // Rust's packed-struct field access performs unaligned reads.
+        // The reference is bound to the borrow of `data`.
         let h = unsafe { &*(data.as_ptr() as *const FileRecordHeader) };
         if &h.signature != FILE_RECORD_SIGNATURE {
             return false;
@@ -84,6 +89,9 @@ impl<'a> FileRecord<'a> {
             });
         }
         let (usa_offset, usa_count) = {
+            // SAFETY: `is_valid(data)` returned true, so the buffer is at
+            // least `sizeof(FileRecordHeader)` bytes long. The header is
+            // `#[repr(C, packed)]` so any pointer is suitably aligned.
             let h = unsafe { &*(data.as_ptr() as *const FileRecordHeader) };
             (
                 h.update_sequence_offset as usize,
@@ -91,6 +99,8 @@ impl<'a> FileRecord<'a> {
             )
         };
         fixup::apply_fixup(number, data, usa_offset, usa_count)?;
+        // SAFETY: Same as above. `apply_fixup` did not shrink the buffer
+        // (it only writes inside it), so `data` still covers the header.
         let header = unsafe { &*(data.as_ptr() as *const FileRecordHeader) };
         Ok(FileRecord {
             data,

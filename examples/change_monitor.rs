@@ -18,7 +18,7 @@ fn run() -> Result<(), UsnError> {
 
     let journal_data = usn_journal.query(true)?;
 
-    let enum_options = journal::EnumOptions {
+    let enum_options = journal::JournalIterOptions {
         start_usn: journal_data.next_usn,
         only_on_close: false,
         wait_for_more: true,
@@ -27,11 +27,14 @@ fn run() -> Result<(), UsnError> {
 
     let mut path_resolver = PathResolver::new(&volume);
 
-    for result in usn_journal.iter_with_options(enum_options)? {
+    for result in usn_journal.try_iter_with_options(enum_options)? {
         match result {
             Ok(entry) => {
                 let full_path = path_resolver.resolve_path(&entry);
-                println!("{}", entry.pretty_format(full_path));
+                match full_path {
+                    Some(p) => println!("{entry} -> {}", p.display()),
+                    None => println!("{entry}"),
+                }
             }
             Err(e) => {
                 eprintln!("Error reading USN entry: {e}");

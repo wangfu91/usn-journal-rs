@@ -6,8 +6,8 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum UsnError {
-    #[error("Access denied: Administrator privileges required.")]
-    PermissionError,
+    #[error("This operation requires Administrator privileges")]
+    NotElevated,
 
     #[error("Invalid options: {0}")]
     InvalidOptions(&'static str),
@@ -18,23 +18,17 @@ pub enum UsnError {
     #[error("Invalid mount point: {0}")]
     InvalidMountPointError(String),
 
-    #[error("IO error: {0}")]
-    IoError(#[from] std::io::Error),
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
 
-    #[error("Windows API error: {0}")]
-    WinApiError(#[from] windows::core::Error),
-
-    #[error("Other error: {0}")]
-    OtherError(String),
+    #[error("Win32 API error: {0}")]
+    WinApi(#[from] windows::core::Error),
 
     #[error("Invalid NTFS boot sector: {0}")]
     InvalidBootSector(&'static str),
 
     #[error("Invalid MFT record {number}: {reason}")]
-    InvalidMftRecord {
-        number: u64,
-        reason: &'static str,
-    },
+    InvalidMftRecord { number: u64, reason: &'static str },
 
     #[error("Update sequence array mismatch in MFT record {number}")]
     FixupMismatch { number: u64 },
@@ -47,6 +41,12 @@ pub enum UsnError {
 
     #[error("Unsupported filesystem: {0}")]
     UnsupportedFilesystem(&'static str),
+
+    #[error("Buffer too small: needed {needed} bytes, got {got}")]
+    BufferTooSmall { needed: usize, got: usize },
+
+    #[error("Invalid record at offset {offset}: {reason}")]
+    InvalidRecord { offset: u64, reason: &'static str },
 }
 
 #[cfg(test)]
@@ -80,12 +80,36 @@ mod tests {
         }
 
         #[test]
-        fn test_permission_error_display() {
-            let error = UsnError::PermissionError;
+        fn test_not_elevated_display() {
+            let error = UsnError::NotElevated;
             let error_string = error.to_string();
             assert_eq!(
                 error_string,
-                "Access denied: Administrator privileges required."
+                "This operation requires Administrator privileges"
+            );
+        }
+
+        #[test]
+        fn test_buffer_too_small_display() {
+            let error = UsnError::BufferTooSmall {
+                needed: 1024,
+                got: 256,
+            };
+            assert_eq!(
+                error.to_string(),
+                "Buffer too small: needed 1024 bytes, got 256"
+            );
+        }
+
+        #[test]
+        fn test_invalid_record_display() {
+            let error = UsnError::InvalidRecord {
+                offset: 4096,
+                reason: "bad magic",
+            };
+            assert_eq!(
+                error.to_string(),
+                "Invalid record at offset 4096: bad magic"
             );
         }
 
@@ -98,24 +122,16 @@ mod tests {
         }
 
         #[test]
-        fn test_other_error_display() {
-            let message = "Custom error message";
-            let error = UsnError::OtherError(message.to_string());
-            let error_string = error.to_string();
-            assert_eq!(error_string, "Other error: Custom error message");
-        }
-
-        #[test]
         fn test_io_error_conversion() {
             let io_error = IoError::new(ErrorKind::NotFound, "File not found");
             let usn_error = UsnError::from(io_error);
 
             match usn_error {
-                UsnError::IoError(ref e) => {
+                UsnError::Io(ref e) => {
                     assert_eq!(e.kind(), ErrorKind::NotFound);
                     assert_eq!(e.to_string(), "File not found");
                 }
-                _ => panic!("Expected IoError variant"),
+                _ => panic!("Expected Io variant"),
             }
         }
 
@@ -125,10 +141,10 @@ mod tests {
             let usn_error = UsnError::from(win_error);
 
             match usn_error {
-                UsnError::WinApiError(ref e) => {
+                UsnError::WinApi(ref e) => {
                     assert_eq!(e.code(), ERROR_ACCESS_DENIED.into());
                 }
-                _ => panic!("Expected WinApiError variant"),
+                _ => panic!("Expected WinApi variant"),
             }
         }
 
@@ -137,7 +153,7 @@ mod tests {
             let io_error = IoError::new(ErrorKind::PermissionDenied, "Access denied");
             let usn_error = UsnError::from(io_error);
             let error_string = usn_error.to_string();
-            assert!(error_string.contains("IO error:"));
+            assert!(error_string.contains("I/O error:"));
             assert!(error_string.contains("Access denied"));
         }
     }
@@ -150,7 +166,7 @@ mod tests {
         fn test_result_type_integration() {
             // Test that UsnError works correctly with Result types
             fn returns_permission_error() -> Result<(), UsnError> {
-                Err(UsnError::PermissionError)
+                Err(UsnError::NotElevated)
             }
 
             fn returns_ok() -> Result<String, UsnError> {
@@ -171,7 +187,7 @@ mod tests {
 
             // Test that the source chain is preserved
             assert!(usn_error.source().is_some());
-            if let UsnError::IoError(ref e) = usn_error {
+            if let UsnError::Io(ref e) = usn_error {
                 assert_eq!(e.to_string(), "Original error");
             }
         }
@@ -184,12 +200,8 @@ mod tests {
         #[test]
         fn test_common_permission_scenarios() {
             // Test that permission errors have the expected message
-            let error = UsnError::PermissionError;
-            assert!(
-                error
-                    .to_string()
-                    .contains("Administrator privileges required")
-            );
+            let error = UsnError::NotElevated;
+            assert!(error.to_string().contains("Administrator privileges"));
         }
 
         #[test]
@@ -222,10 +234,10 @@ mod tests {
                 let win_error = windows::core::Error::from(code);
                 let usn_error = UsnError::from(win_error);
 
-                if let UsnError::WinApiError(ref e) = usn_error {
+                if let UsnError::WinApi(ref e) = usn_error {
                     assert_eq!(e.code(), code.into());
                 } else {
-                    panic!("Expected WinApiError variant");
+                    panic!("Expected WinApi variant");
                 }
             }
         }

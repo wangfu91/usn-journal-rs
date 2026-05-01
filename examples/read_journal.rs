@@ -11,13 +11,16 @@ fn run() -> Result<(), UsnError> {
     let volume = Volume::from_drive_letter(drive_letter)?;
     let usn_journal = UsnJournal::new(&volume);
 
-    let mut path_resolver = PathResolver::new_with_cache(&volume);
+    let mut path_resolver = PathResolver::new(&volume).with_lru_cache(std::num::NonZeroUsize::new(4096).unwrap());
 
-    for result in usn_journal.iter()? {
+    for result in usn_journal.try_iter()? {
         match result {
             Ok(entry) => {
                 let full_path = path_resolver.resolve_path(&entry);
-                println!("{}", entry.pretty_format(full_path));
+                match full_path {
+                    Some(p) => println!("{entry} -> {}", p.display()),
+                    None => println!("{entry}"),
+                }
             }
             Err(e) => {
                 eprintln!("Error reading USN entry: {e}");

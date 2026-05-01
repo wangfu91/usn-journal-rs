@@ -10,13 +10,16 @@ fn run() -> Result<(), UsnError> {
     let drive_letter = 'C';
     let volume = Volume::from_drive_letter(drive_letter)?;
     let mft = Mft::new(&volume);
-    let mut path_resolver = PathResolver::new_with_cache(&volume);
+    let mut path_resolver = PathResolver::new(&volume).with_lru_cache(std::num::NonZeroUsize::new(4096).unwrap());
 
-    for result in mft.iter()? {
+    for result in mft.try_iter()? {
         match result {
             Ok(entry) => {
                 let full_path = path_resolver.resolve_path(&entry);
-                println!("{}", entry.pretty_format(full_path));
+                match full_path {
+                    Some(p) => println!("{entry} -> {}", p.display()),
+                    None => println!("{entry}"),
+                }
             }
             Err(e) => {
                 eprintln!("Error reading MFT entry: {e}");

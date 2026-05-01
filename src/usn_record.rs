@@ -21,9 +21,14 @@ pub(crate) fn read_next_start_usn(buffer: &[u8], bytes_read: u32) -> UsnResult<U
         ));
     }
 
-    let mut raw = [0u8; size_of::<Usn>()];
-    raw.copy_from_slice(&buffer[..cursor_len]);
-    Ok(Usn::from_le_bytes(raw))
+    // SAFETY: `bytes_read >= cursor_len` and `cursor_len <= buffer.len()`
+    // (enforced by `checked_bytes_read`), so reading 8 bytes from the
+    // start of the buffer is in bounds. We use `read_unaligned` because
+    // the buffer may not be 8-byte aligned, and the FSCTL output stores
+    // the cursor in native (little-endian on Windows) byte order.
+    let value =
+        unsafe { std::ptr::read_unaligned::<i64>(buffer.as_ptr() as *const i64) };
+    Ok(Usn::new(value))
 }
 
 pub(crate) fn read_next_start_fid(buffer: &[u8], bytes_read: u32) -> UsnResult<u64> {
@@ -59,6 +64,14 @@ pub(crate) fn find_next_record<'a>(
         ));
     }
 
+    // SAFETY: `offset_usize + min_record_len <= bytes_read <= buffer.len()`
+    // (checked above), so the pointer arithmetic and the read of the
+    // `USN_RECORD_V2` header are within the allocated buffer. The Win32
+    // FSCTL output guarantees a `USN_RECORD_V2`-shaped layout at this
+    // offset; the struct's natural alignment (8) is satisfied because
+    // `DeviceIoControl` returns records aligned to the start of a
+    // 64-bit-aligned output buffer (we always allocate `Vec<u8>`/aligned
+    // buffers from the iterators).
     let record = unsafe { &*(buffer.as_ptr().add(offset_usize) as *const USN_RECORD_V2) };
 
     let record_len = record.RecordLength as usize;
