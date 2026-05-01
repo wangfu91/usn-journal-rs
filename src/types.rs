@@ -47,63 +47,151 @@ impl fmt::Display for Usn {
     }
 }
 
-/// NTFS file reference number — a 64-bit value where the lower 48 bits
-/// are the record number into the `$MFT` and the upper 16 bits are a
-/// sequence number used for collision detection.
+/// File identifier returned by the USN journal and MFT enumeration APIs.
+///
+/// NTFS uses a 64-bit file reference number, where the lower 48 bits are
+/// the record number into the `$MFT` and the upper 16 bits are a sequence
+/// number used for collision detection. ReFS uses 128-bit file IDs in
+/// `USN_RECORD_V3`.
 #[must_use]
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
-#[repr(transparent)]
-pub struct Fid(pub u64);
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Fid {
+    /// Standard NTFS 64-bit file reference number.
+    Standard(u64),
+    /// ReFS / USN v3 128-bit file identifier.
+    Extended(u128),
+}
+
+impl Default for Fid {
+    #[inline]
+    fn default() -> Self {
+        Self::Standard(0)
+    }
+}
 
 impl Fid {
-    /// Construct a `Fid` from its raw 64-bit representation.
+    /// Construct a standard 64-bit NTFS file reference number.
     #[inline]
     pub const fn new(v: u64) -> Self {
-        Self(v)
+        Self::Standard(v)
     }
 
-    /// Return the raw 64-bit representation.
+    /// Construct a standard 64-bit NTFS file reference number.
     #[inline]
-    pub const fn get(self) -> u64 {
-        self.0
+    pub const fn from_u64(v: u64) -> Self {
+        Self::Standard(v)
     }
 
-    /// Lower 48 bits — record number into the `$MFT`.
+    /// Construct a 128-bit file identifier.
     #[inline]
-    pub const fn record_number(self) -> u64 {
-        self.0 & 0x0000_FFFF_FFFF_FFFF
+    pub const fn from_u128(v: u128) -> Self {
+        Self::Extended(v)
     }
 
-    /// Upper 16 bits — sequence number for collision detection.
+    /// Construct a 128-bit file identifier from raw little-endian bytes.
     #[inline]
-    pub const fn sequence(self) -> u16 {
-        ((self.0 >> 48) & 0xFFFF) as u16
+    pub const fn from_bytes(bytes: [u8; 16]) -> Self {
+        Self::Extended(u128::from_le_bytes(bytes))
+    }
+
+    /// Returns `true` if this is a standard NTFS 64-bit file reference.
+    #[inline]
+    pub const fn is_standard(self) -> bool {
+        matches!(self, Self::Standard(_))
+    }
+
+    /// Returns `true` if this is a 128-bit file identifier.
+    #[inline]
+    pub const fn is_extended(self) -> bool {
+        matches!(self, Self::Extended(_))
+    }
+
+    /// Return the raw 64-bit representation when this is a standard NTFS ID.
+    #[inline]
+    pub const fn as_u64(self) -> Option<u64> {
+        match self {
+            Self::Standard(v) => Some(v),
+            Self::Extended(_) => None,
+        }
+    }
+
+    /// Return the raw 128-bit representation.
+    ///
+    /// Standard 64-bit IDs are zero-extended.
+    #[inline]
+    pub const fn as_u128(self) -> u128 {
+        match self {
+            Self::Standard(v) => v as u128,
+            Self::Extended(v) => v,
+        }
+    }
+
+    /// Return the raw little-endian bytes of this identifier.
+    #[inline]
+    pub const fn as_bytes(self) -> [u8; 16] {
+        self.as_u128().to_le_bytes()
+    }
+
+    /// Lower 48 bits of a standard NTFS ID — the record number into `$MFT`.
+    ///
+    /// Returns `None` for 128-bit file IDs because the concept is NTFS-specific.
+    #[inline]
+    pub const fn record_number(self) -> Option<u64> {
+        match self {
+            Self::Standard(v) => Some(v & 0x0000_FFFF_FFFF_FFFF),
+            Self::Extended(_) => None,
+        }
+    }
+
+    /// Upper 16 bits of a standard NTFS ID — sequence number for collision detection.
+    ///
+    /// Returns `None` for 128-bit file IDs because the concept is NTFS-specific.
+    #[inline]
+    pub const fn sequence(self) -> Option<u16> {
+        match self {
+            Self::Standard(v) => Some(((v >> 48) & 0xFFFF) as u16),
+            Self::Extended(_) => None,
+        }
     }
 }
 
 impl From<u64> for Fid {
     #[inline]
     fn from(v: u64) -> Self {
-        Self(v)
+        Self::Standard(v)
     }
 }
 
-impl From<Fid> for u64 {
+impl From<u128> for Fid {
     #[inline]
-    fn from(v: Fid) -> Self {
-        v.0
+    fn from(v: u128) -> Self {
+        Self::Extended(v)
+    }
+}
+
+impl TryFrom<Fid> for u64 {
+    type Error = &'static str;
+
+    #[inline]
+    fn try_from(v: Fid) -> Result<Self, Self::Error> {
+        v.as_u64()
+            .ok_or("128-bit file identifiers cannot be represented as u64")
     }
 }
 
 impl fmt::Display for Fid {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "0x{:x}", self.0)
+        match self {
+            Self::Standard(v) => write!(f, "0x{v:x}"),
+            Self::Extended(v) => write!(f, "0x{v:032x}"),
+        }
     }
 }
 
 bitflags::bitflags! {
     /// Strongly-typed view over an NTFS file-attribute bitmask
     /// (the value stored in `USN_RECORD_V2::FileAttributes`,
+    /// `USN_RECORD_V3::FileAttributes`,
     /// `MftEntry::file_attributes`, and `RawMftEntry::si_file_attributes`).
     ///
     /// Mirrors the Win32 `FILE_ATTRIBUTE_*` constants. Unknown bits are
@@ -135,7 +223,7 @@ bitflags::bitflags! {
 
 bitflags::bitflags! {
     /// Strongly-typed view over a USN reason bitmask (the value stored
-    /// in `USN_RECORD_V2::Reason` and `UsnEntry::reason`).
+    /// in `USN_RECORD_V2::Reason`, `USN_RECORD_V3::Reason`, and `UsnEntry::reason`).
     ///
     /// Mirrors the Win32 `USN_REASON_*` constants. Unknown bits are
     /// preserved on round-trip via [`bitflags`]'s `from_bits_retain`.
@@ -191,9 +279,9 @@ mod tests {
     fn fid_record_and_sequence() {
         let raw: u64 = (0xABCDu64 << 48) | 0x0000_0000_0000_002A;
         let fid = Fid::new(raw);
-        assert_eq!(fid.record_number(), 0x2A);
-        assert_eq!(fid.sequence(), 0xABCD);
-        assert_eq!(fid.get(), raw);
+        assert_eq!(fid.record_number(), Some(0x2A));
+        assert_eq!(fid.sequence(), Some(0xABCD));
+        assert_eq!(fid.as_u64(), Some(raw));
     }
 
     #[test]
@@ -204,8 +292,34 @@ mod tests {
     #[test]
     fn fid_round_trip() {
         let v = Fid::new(0xDEAD_BEEF);
-        let u: u64 = v.into();
+        let u: u64 = v.try_into().expect("standard fid");
         assert_eq!(u, 0xDEAD_BEEF);
-        assert_eq!(Fid::from(0x42u64).get(), 0x42);
+        assert_eq!(Fid::from(0x42u64).as_u64(), Some(0x42));
+    }
+
+    #[test]
+    fn extended_fid_round_trip() {
+        let fid = Fid::from_u128(0x1122_3344_5566_7788_99aa_bbcc_ddee_ff00);
+        assert!(fid.is_extended());
+        assert_eq!(
+            fid.as_bytes(),
+            [
+                0x00, 0xff, 0xee, 0xdd, 0xcc, 0xbb, 0xaa, 0x99, 0x88, 0x77, 0x66, 0x55, 0x44,
+                0x33, 0x22, 0x11,
+            ]
+        );
+        assert_eq!(format!("{fid}"), "0x112233445566778899aabbccddeeff00");
+        assert_eq!(fid.record_number(), None);
+        assert_eq!(fid.sequence(), None);
+        assert!(u64::try_from(fid).is_err());
+    }
+
+    #[test]
+    fn extended_fid_from_bytes_round_trip() {
+        let raw = [
+            1, 2, 3, 4, 5, 6, 7, 8, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x10, 0x20,
+        ];
+        let fid = Fid::from_bytes(raw);
+        assert_eq!(fid.as_bytes(), raw);
     }
 }

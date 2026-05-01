@@ -6,14 +6,17 @@ use std::{ffi::OsString, os::windows::ffi::OsStringExt};
 use windows::Win32::Storage::FileSystem::{
     FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_HIDDEN, FILE_FLAGS_AND_ATTRIBUTES,
 };
-use windows::Win32::System::Ioctl::USN_RECORD_V2;
 
 use crate::time::Filetime;
+use crate::usn_record::UsnRecordRef;
 use crate::{Fid, Usn};
 
 use super::reason::format_reason;
 
 /// Represents a USN entry in the USN journal.
+///
+/// `fid` / `parent_fid` may be either standard 64-bit NTFS file references
+/// or 128-bit file IDs from `USN_RECORD_V3` on ReFS.
 #[derive(Debug)]
 pub struct UsnEntry {
     pub usn: Usn,
@@ -27,41 +30,42 @@ pub struct UsnEntry {
 }
 
 impl UsnEntry {
-    /// Create a new `UsnEntry` from a raw USN_RECORD_V2 record.
+    /// Create a new `UsnEntry` from a validated raw USN record.
     ///
     /// # Arguments
-    /// * `record` - Reference to a USN_RECORD_V2 structure from the Windows API.
+    /// * `record` - Reference to a validated `USN_RECORD_V2` or `USN_RECORD_V3`
+    ///   structure from the Windows API.
     ///
     /// # Returns
     /// A parsed `UsnEntry` with decoded fields and file name.
-    pub(crate) fn new(record: &USN_RECORD_V2) -> Self {
-        let file_name_len = record.FileNameLength as usize / std::mem::size_of::<u16>();
+    pub(crate) fn new(record: UsnRecordRef<'_>) -> Self {
+        let file_name_len = record.file_name_length() as usize / std::mem::size_of::<u16>();
 
         // https://learn.microsoft.com/en-us/windows/win32/api/winioctl/ns-winioctl-usn_record_v2
         // When working with FileName, do not count on the file name that contains a trailing '\0' delimiter,
         // but instead determine the length of the file name by using FileNameLength.
         // Do not perform any compile-time pointer arithmetic using FileName.
         // Instead, make necessary calculations at run time by using the value of the FileNameOffset member.
-        // Doing so helps make your code compatible with any future versions of USN_RECORD_V2.
-        // SAFETY: `record` is a validated `USN_RECORD_V2` reference that
+        // Doing so helps make your code compatible with any future versions of the USN record.
+        // SAFETY: `record` is a validated `USN_RECORD_V2` / `USN_RECORD_V3` reference that
         // came from `find_next_record`, which has already checked that
         // `FileName` plus `FileNameLength` lies entirely within the
         // record's `RecordLength`. `FileName` is laid out in memory as
         // `FileNameLength` bytes (== `file_name_len` u16 code units)
-        // starting at `record.FileName.as_ptr()`.
+        // starting at `record.file_name_ptr()`.
         let file_name_data =
-            unsafe { std::slice::from_raw_parts(record.FileName.as_ptr(), file_name_len) };
+            unsafe { std::slice::from_raw_parts(record.file_name_ptr(), file_name_len) };
         let file_name = OsString::from_wide(file_name_data);
 
         UsnEntry {
-            usn: Usn::new(record.Usn),
-            time: Filetime::from_raw_i64(record.TimeStamp),
-            fid: Fid::new(record.FileReferenceNumber),
-            parent_fid: Fid::new(record.ParentFileReferenceNumber),
-            reason: record.Reason,
-            source_info: record.SourceInfo,
+            usn: Usn::new(record.usn()),
+            time: Filetime::from_raw_i64(record.timestamp()),
+            fid: record.fid(),
+            parent_fid: record.parent_fid(),
+            reason: record.reason(),
+            source_info: record.source_info(),
             file_name,
-            file_attributes: record.FileAttributes,
+            file_attributes: record.file_attributes(),
         }
     }
 

@@ -57,10 +57,10 @@ impl PathResolvableEntry for UsnEntry {
     }
 }
 
-/// Mask a 64-bit NTFS file reference number to its 48-bit record number
-/// portion (clearing the 16-bit sequence number in the high bits).
-pub(crate) fn mask_fid_to_record_number(fid: u64) -> u64 {
-    fid & 0x0000_FFFF_FFFF_FFFF
+/// Mask a standard 64-bit NTFS file reference number to its 48-bit record
+/// number portion (clearing the 16-bit sequence number in the high bits).
+pub(crate) fn mask_fid_to_record_number(fid: Fid) -> Option<u64> {
+    fid.record_number()
 }
 
 /// Resolves file paths from file IDs on an NTFS/ReFS volume.
@@ -87,7 +87,7 @@ pub(crate) fn mask_fid_to_record_number(fid: u64) -> u64 {
 #[derive(Debug)]
 pub struct PathResolver<'a> {
     volume: &'a Volume,
-    dir_fid_path_cache: Option<LruCache<u64, (Arc<Path>, OsString)>>,
+    dir_fid_path_cache: Option<LruCache<Fid, (Arc<Path>, OsString)>>,
     scratch: RefCell<Vec<u8>>,
     in_memory_tree: Option<InMemoryDirTree>,
 }
@@ -189,18 +189,22 @@ impl<'a> PathResolver<'a> {
     /// Resolve `entry` to a full path, using the in-memory tree (if
     /// configured), then the LRU cache (if configured), falling back to
     /// `OpenFileById` syscalls.
+    ///
+    /// Standard 64-bit NTFS IDs can use all resolver strategies. Extended
+    /// 128-bit IDs (for example ReFS `USN_RECORD_V3` entries) skip the
+    /// in-memory raw-`$MFT` tree and are resolved via `OpenFileById`.
     #[must_use]
     pub fn resolve_path<E: PathResolvableEntry>(&mut self, entry: &E) -> Option<PathBuf> {
         if let Some(tree) = &self.in_memory_tree
-            && let Some(p) = tree.resolve_with_optional_drive(entry.fid().get(), self.volume.drive_letter())
+            && let Some(p) = tree.resolve_with_optional_drive(entry.fid(), self.volume.drive_letter())
         {
             return Some(p);
         }
         if let Some(cache) = &mut self.dir_fid_path_cache {
             resolve_path_with_cache(
                 self.volume,
-                entry.fid().get(),
-                entry.parent_fid().get(),
+                entry.fid(),
+                entry.parent_fid(),
                 entry.file_name(),
                 entry.is_dir(),
                 cache,
@@ -209,8 +213,8 @@ impl<'a> PathResolver<'a> {
         } else {
             resolve_path(
                 self.volume,
-                entry.fid().get(),
-                entry.parent_fid().get(),
+                entry.fid(),
+                entry.parent_fid(),
                 entry.file_name(),
                 &self.scratch,
             )
@@ -220,8 +224,8 @@ impl<'a> PathResolver<'a> {
 
 fn resolve_path(
     volume: &Volume,
-    fid: u64,
-    parent_fid: u64,
+    fid: Fid,
+    parent_fid: Fid,
     file_name: &OsString,
     scratch: &RefCell<Vec<u8>>,
 ) -> Option<PathBuf> {
@@ -237,11 +241,11 @@ fn resolve_path(
 /// Internal: Resolve the full path from file ID, parent file ID, and file name.
 fn resolve_path_with_cache(
     volume: &Volume,
-    fid: u64,
-    parent_fid: u64,
+    fid: Fid,
+    parent_fid: Fid,
     file_name: &OsString,
     is_dir: bool,
-    cache: &mut LruCache<u64, (Arc<Path>, OsString)>,
+    cache: &mut LruCache<Fid, (Arc<Path>, OsString)>,
     scratch: &RefCell<Vec<u8>>,
 ) -> Option<PathBuf> {
     // 1. Check cache for the current FID.
@@ -284,15 +288,29 @@ fn resolve_path_with_cache(
 /// Resolves a file ID to its full path on the specified NTFS/ReFS volume.
 fn file_id_to_path(
     volume: &Volume,
-    file_id: u64,
+    file_id: Fid,
     scratch: &RefCell<Vec<u8>>,
 ) -> windows::core::Result<PathBuf> {
+    let (id, id_type) = match file_id {
+        Fid::Standard(id) => (
+            FileSystem::FILE_ID_DESCRIPTOR_0 {
+                FileId: i64::from_ne_bytes(id.to_ne_bytes()),
+            },
+            FileSystem::FileIdType,
+        ),
+        Fid::Extended(_) => (
+            FileSystem::FILE_ID_DESCRIPTOR_0 {
+                ExtendedFileId: crate::usn_record::fid_to_file_id_128(file_id)
+                    .expect("extended fid branch must produce FILE_ID_128"),
+            },
+            FileSystem::ExtendedFileIdType,
+        ),
+    };
+
     let file_id_desc = FILE_ID_DESCRIPTOR {
-        Type: FileSystem::FileIdType,
+        Type: id_type,
         dwSize: size_of::<FileSystem::FILE_ID_DESCRIPTOR>() as u32,
-        Anonymous: FileSystem::FILE_ID_DESCRIPTOR_0 {
-            FileId: file_id.try_into()?,
-        },
+        Anonymous: id,
     };
 
     // SAFETY: `volume.handle` is a live volume handle owned by `volume`.
@@ -408,7 +426,7 @@ fn file_id_to_path(
 /// UTF-16 units so we don't pay an `OsString` allocation per entry.
 #[derive(Debug, Clone)]
 struct DirEntry {
-    parent: u64,
+    parent: Fid,
     name: Box<[u16]>,
 }
 
@@ -440,13 +458,15 @@ impl InMemoryDirTree {
             if entry.file_name.is_empty() {
                 continue;
             }
-            let key = mask_fid_to_record_number(entry.file_reference.get());
+            let Some(key) = mask_fid_to_record_number(entry.file_reference) else {
+                continue;
+            };
             // Encode the file name as raw UTF-16 once and store it.
             let units: Vec<u16> = entry.file_name.encode_wide().collect();
             entries.insert(
                 key,
                 DirEntry {
-                    parent: entry.parent_reference.get(),
+                    parent: entry.parent_reference,
                     name: units.into_boxed_slice(),
                 },
             );
@@ -472,9 +492,11 @@ impl InMemoryDirTree {
     #[doc(hidden)]
     pub fn insert(&mut self, fid: u64, parent: u64, name: &[u16]) {
         self.entries.insert(
-            mask_fid_to_record_number(fid),
+            Fid::new(fid)
+                .record_number()
+                .expect("standard fid must expose record number"),
             DirEntry {
-                parent,
+                parent: Fid::new(parent),
                 name: name.to_vec().into_boxed_slice(),
             },
         );
@@ -485,22 +507,22 @@ impl InMemoryDirTree {
     /// cycle is detected.
     #[must_use]
     pub fn resolve(&self, fid: Fid) -> Option<PathBuf> {
-        self.resolve_with_optional_drive(fid.get(), None)
+        self.resolve_with_optional_drive(fid, None)
     }
 
     /// Walks parents and prepends `<drive>:\` to the resolved path.
     #[must_use]
     pub fn resolve_with_drive_letter(&self, fid: Fid, drive: char) -> Option<PathBuf> {
-        self.resolve_with_optional_drive(fid.get(), Some(drive))
+        self.resolve_with_optional_drive(fid, Some(drive))
     }
 
-    fn resolve_with_optional_drive(&self, fid: u64, drive: Option<char>) -> Option<PathBuf> {
+    fn resolve_with_optional_drive(&self, fid: Fid, drive: Option<char>) -> Option<PathBuf> {
         // Maximum walk depth — far above the practical NTFS path-component
         // limit (~64 segments) and below any realistic cycle length.
         const MAX_STEPS: usize = 256;
 
         let mut chain: Vec<&[u16]> = Vec::with_capacity(32);
-        let mut current = mask_fid_to_record_number(fid);
+        let mut current = mask_fid_to_record_number(fid)?;
         let mut steps = 0usize;
         loop {
             if steps >= MAX_STEPS {
@@ -511,7 +533,7 @@ impl InMemoryDirTree {
             let entry = self.entries.get(&current)?;
             chain.push(&entry.name);
 
-            let parent = mask_fid_to_record_number(entry.parent);
+            let parent = mask_fid_to_record_number(entry.parent)?;
             // NTFS root directory has record number 5 and self-references.
             if parent == current || parent == 5 {
                 break;
@@ -534,7 +556,7 @@ impl InMemoryDirTree {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{mft::MftEntry, volume::Volume};
+    use crate::{mft::MftEntry, usn_record::UsnRecordRef, volume::Volume};
     use std::{ffi::OsString, mem, ptr};
     use windows::Win32::{Foundation::HANDLE, System::Ioctl::USN_RECORD_V2};
 
@@ -635,7 +657,7 @@ mod tests {
 
         let record_ref = unsafe { &*(buffer.as_ptr() as *const USN_RECORD_V2) };
 
-        let entry = crate::journal::UsnEntry::new(record_ref);
+        let entry = crate::journal::UsnEntry::new(UsnRecordRef::V2(record_ref));
 
         assert_eq!(entry.fid(), Fid::new(0x789ABC));
         assert_eq!(entry.parent_fid(), Fid::new(0xDEF123));
@@ -657,7 +679,7 @@ mod tests {
         let cached_path = arc_path("C:\\Documents\\Folder");
         let cached_name = OsString::from("test.txt");
         if let Some(ref mut cache) = resolver.dir_fid_path_cache {
-            cache.put(0x123456, (Arc::clone(&cached_path), cached_name.clone()));
+            cache.put(Fid::new(0x123456), (Arc::clone(&cached_path), cached_name.clone()));
         }
 
         let entry = MockEntry {
@@ -683,7 +705,7 @@ mod tests {
         let cached_parent_path = arc_path("C:\\Documents");
         let cached_parent_name = OsString::from("Documents");
         if let Some(ref mut cache) = resolver.dir_fid_path_cache {
-            cache.put(0x654321, (cached_parent_path, cached_parent_name));
+            cache.put(Fid::new(0x654321), (cached_parent_path, cached_parent_name));
         }
 
         let entry = MockEntry {
@@ -709,7 +731,7 @@ mod tests {
         let cached_parent_path = arc_path("C:\\Documents");
         let cached_parent_name = OsString::from("Documents");
         if let Some(ref mut cache) = resolver.dir_fid_path_cache {
-            cache.put(0x654321, (cached_parent_path, cached_parent_name));
+            cache.put(Fid::new(0x654321), (cached_parent_path, cached_parent_name));
         }
 
         let entry = MockEntry {
@@ -726,8 +748,8 @@ mod tests {
 
         // Verify the directory was cached
         if let Some(ref cache) = resolver.dir_fid_path_cache {
-            assert!(cache.peek(&0x123456).is_some());
-            let (cached_path, cached_name) = cache.peek(&0x123456).unwrap();
+            assert!(cache.peek(&Fid::new(0x123456)).is_some());
+            let (cached_path, cached_name) = cache.peek(&Fid::new(0x123456)).unwrap();
             assert_eq!(&**cached_path, path.as_path());
             assert_eq!(cached_name, &OsString::from("NewFolder"));
         }
@@ -743,14 +765,14 @@ mod tests {
         let cached_path = arc_path("C:\\Documents\\OldName");
         let cached_old_name = OsString::from("OldName");
         if let Some(ref mut cache) = resolver.dir_fid_path_cache {
-            cache.put(0x123456, (cached_path, cached_old_name));
+            cache.put(Fid::new(0x123456), (cached_path, cached_old_name));
         }
 
         // Pre-populate parent cache
         let cached_parent_path = arc_path("C:\\Documents");
         let cached_parent_name = OsString::from("Documents");
         if let Some(ref mut cache) = resolver.dir_fid_path_cache {
-            cache.put(0x654321, (cached_parent_path, cached_parent_name));
+            cache.put(Fid::new(0x654321), (cached_parent_path, cached_parent_name));
         }
 
         let entry = MockEntry {
@@ -767,7 +789,7 @@ mod tests {
 
         // Verify the cache was updated with the new name
         if let Some(ref cache) = resolver.dir_fid_path_cache {
-            let (updated_path, updated_name) = cache.peek(&0x123456).unwrap();
+            let (updated_path, updated_name) = cache.peek(&Fid::new(0x123456)).unwrap();
             assert_eq!(updated_path.to_string_lossy(), "C:\\Documents\\NewName");
             assert_eq!(updated_name, &OsString::from("NewName"));
         }

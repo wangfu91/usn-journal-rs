@@ -19,7 +19,7 @@ and idiomatic Rust refactoring. **Breaking changes throughout** — see the
   to <500 ms (~40× faster).
 - `chrono` is now an optional feature; default builds expose a lightweight
   `Filetime(u64)` newtype.
-- Strong typing via `Usn(i64)` and `Fid(u64)` newtypes.
+- Strong typing via `Usn(i64)` and `Fid` typed file IDs (64-bit NTFS + 128-bit ReFS).
 - Builder patterns for all iterator option structs.
 - Concrete `UsnError` variants — no more `OtherError(String)`.
 
@@ -46,6 +46,7 @@ and idiomatic Rust refactoring. **Breaking changes throughout** — see the
   fluent builder API.
 - `InMemoryDirTree::from_raw_mft` for O(1) path resolution without per-lookup
   syscalls.
+- USN v3 / 128-bit file ID support for `UsnJournal`, `Mft`, and `PathResolver`.
 - `UsnError::NotElevated`, `UsnError::UnsupportedFilesystem(String)`,
   `UsnError::BufferTooSmall { needed, got }`, and
   `UsnError::InvalidRecord { offset, reason }` variants.
@@ -67,6 +68,9 @@ and idiomatic Rust refactoring. **Breaking changes throughout** — see the
   `mft::EnumOptions` renamed to `MftIterOptions`.
 - Fallible iteration entry points renamed to `try_iter` / `try_iter_with_options`.
 - `PathResolvableEntry::fid()` and `parent_fid()` now return `Fid`.
+- `Fid` now represents both standard 64-bit NTFS file references and
+  128-bit ReFS file IDs. Use `is_standard()`, `is_extended()`, `as_u64()`,
+  `as_u128()`, and `as_bytes()` to inspect the underlying representation.
 - `src/journal.rs` split into the `src/journal/` module directory
   (`mod.rs`, `journal.rs`, `iter.rs`, `entry.rs`, `reason.rs`, `options.rs`,
   `data.rs`, `defaults.rs`).

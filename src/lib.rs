@@ -8,6 +8,7 @@
 //!
 //! ## Features
 //! - Enumerate USN journal records or MFT entries as Rust iterators
+//! - Parse both `USN_RECORD_V2` and `USN_RECORD_V3` records
 //! - Resolve file IDs to full paths
 //! - Safe wrappers over Windows API calls
 //!

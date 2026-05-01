@@ -1,9 +1,10 @@
 use std::{ffi::OsString, mem, ptr};
 
+use windows::Win32::Storage::FileSystem::FILE_ID_128;
 use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_HIDDEN};
 use windows::Win32::System::Ioctl::{
-    USN_JOURNAL_DATA_V0, USN_RECORD_V2, USN_REASON_CLOSE, USN_REASON_DATA_EXTEND,
-    USN_REASON_FILE_CREATE,
+    USN_JOURNAL_DATA_V0, USN_RECORD_V2, USN_RECORD_V3, USN_REASON_CLOSE,
+    USN_REASON_DATA_EXTEND, USN_REASON_FILE_CREATE,
 };
 
 use crate::{Fid, Usn};
@@ -81,6 +82,62 @@ fn create_mock_usn_record(
     buffer
 }
 
+fn create_mock_usn_record_v3(
+    usn: i64,
+    fid: u128,
+    parent_fid: u128,
+    reason: u32,
+    file_name: &str,
+    file_attributes: u32,
+) -> Vec<u8> {
+    let file_name_utf16: Vec<u16> = file_name.encode_utf16().collect();
+    let file_name_len = file_name_utf16.len() * mem::size_of::<u16>();
+    let base_size = mem::size_of::<USN_RECORD_V3>();
+    let total_size = base_size + file_name_len;
+    let aligned_size = (total_size + 7) & !7;
+
+    let mut buffer = vec![0u8; aligned_size];
+
+    let record = USN_RECORD_V3 {
+        RecordLength: aligned_size as u32,
+        MajorVersion: 3,
+        MinorVersion: 0,
+        FileReferenceNumber: FILE_ID_128 {
+            Identifier: fid.to_le_bytes(),
+        },
+        ParentFileReferenceNumber: FILE_ID_128 {
+            Identifier: parent_fid.to_le_bytes(),
+        },
+        Usn: usn,
+        TimeStamp: 0x12345678ABCDEF01i64,
+        Reason: reason,
+        SourceInfo: 0,
+        SecurityId: 0,
+        FileAttributes: file_attributes,
+        FileNameLength: file_name_len as u16,
+        FileNameOffset: mem::offset_of!(USN_RECORD_V3, FileName) as u16,
+        FileName: [0; 1],
+    };
+
+    unsafe {
+        ptr::copy_nonoverlapping(
+            &record as *const USN_RECORD_V3 as *const u8,
+            buffer.as_mut_ptr(),
+            base_size - mem::size_of::<u16>(),
+        );
+        let filename_ptr = buffer
+            .as_mut_ptr()
+            .add(mem::offset_of!(USN_RECORD_V3, FileName));
+        ptr::copy_nonoverlapping(
+            file_name_utf16.as_ptr() as *const u8,
+            filename_ptr,
+            file_name_len,
+        );
+    }
+
+    buffer
+}
+
 #[test]
 fn test_usn_journal_data_from_conversion() {
     let raw_data = create_mock_usn_journal_data();
@@ -108,7 +165,7 @@ fn test_usn_entry_creation() {
 
     let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
 
-    let entry = UsnEntry::new(record);
+    let entry = UsnEntry::new(crate::usn_record::UsnRecordRef::V2(record));
     assert_eq!(entry.usn, Usn::new(0x2000));
     assert_eq!(entry.fid, Fid::new(0x123456));
     assert_eq!(entry.parent_fid, Fid::new(0x654321));
@@ -134,7 +191,7 @@ fn test_usn_entry_directory_detection() {
 
     let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
 
-    let entry = UsnEntry::new(record);
+    let entry = UsnEntry::new(crate::usn_record::UsnRecordRef::V2(record));
     assert!(entry.is_dir());
     assert!(!entry.is_hidden());
 }
@@ -152,7 +209,7 @@ fn test_usn_entry_hidden_detection() {
 
     let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
 
-    let entry = UsnEntry::new(record);
+    let entry = UsnEntry::new(crate::usn_record::UsnRecordRef::V2(record));
     assert!(!entry.is_dir());
     assert!(entry.is_hidden());
 }
@@ -170,7 +227,7 @@ fn test_usn_entry_reason_string_conversion() {
 
     let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
 
-    let entry = UsnEntry::new(record);
+    let entry = UsnEntry::new(crate::usn_record::UsnRecordRef::V2(record));
     let reason_string = entry.get_reason_string();
 
     assert!(reason_string.contains("FILE_CREATE"));
@@ -188,7 +245,7 @@ fn test_usn_entry_unknown_reason() {
 
     let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
 
-    let entry = UsnEntry::new(record);
+    let entry = UsnEntry::new(crate::usn_record::UsnRecordRef::V2(record));
     let reason_string = entry.get_reason_string();
     assert_eq!(reason_string, "UNKNOWN");
 }
@@ -206,7 +263,7 @@ fn test_usn_entry_display_smoke() {
 
     let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
 
-    let entry = UsnEntry::new(record);
+    let entry = UsnEntry::new(crate::usn_record::UsnRecordRef::V2(record));
     let formatted = format!("{entry}");
 
     assert!(formatted.contains("USN 0x7000"));
@@ -214,5 +271,29 @@ fn test_usn_entry_display_smoke() {
     assert!(formatted.contains("0xabc123"));
     assert!(formatted.contains("0x654321"));
     assert!(formatted.contains("document.txt"));
+}
+
+#[test]
+fn test_usn_entry_creation_v3_extended_ids() {
+    let fid = 0x0011_2233_4455_6677_8899_aabb_ccdd_eeffu128;
+    let parent_fid = 0xffee_ddcc_bbaa_9988_7766_5544_3322_1100u128;
+    let record_data = create_mock_usn_record_v3(
+        0x2000,
+        fid,
+        parent_fid,
+        windows::Win32::System::Ioctl::USN_REASON_FILE_CREATE,
+        "refs.txt",
+        0,
+    );
+
+    let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V3) };
+    let entry = UsnEntry::new(crate::usn_record::UsnRecordRef::V3(record));
+
+    assert_eq!(entry.usn, Usn::new(0x2000));
+    assert_eq!(entry.fid, Fid::from_u128(fid));
+    assert_eq!(entry.parent_fid, Fid::from_u128(parent_fid));
+    assert_eq!(entry.file_name, OsString::from("refs.txt"));
+    assert!(entry.fid.is_extended());
+    assert!(entry.parent_fid.is_extended());
 }
 

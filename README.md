@@ -21,14 +21,14 @@ journal IOCTLs are privilege-gated by the OS.
 
 ## Features
 
-- Read and iterate USN journal records with a configurable reason mask and start USN
-- Enumerate MFT entries via the `FSCTL_ENUM_USN_DATA` API
+- Read and iterate `USN_RECORD_V2` / `USN_RECORD_V3` journal records with a configurable reason mask and start USN
+- Enumerate MFT entries via the `FSCTL_ENUM_USN_DATA` API, including ReFS 128-bit file IDs
 - Parse raw `$MFT` records (NTFS only) for full timestamps, real/allocated sizes, hard-link
   counts, alternate data streams, and sparse/compressed/encrypted flags
 - Resolve file IDs to full paths with three strategies: syscall-only, LRU-cached,
   or an in-memory directory tree for O(1) resolution on large scans
 - Lightweight `Filetime(u64)` newtype — `chrono` is **not** a default dependency
-- Strong `Usn(i64)` and `Fid(u64)` newtypes throughout
+- Strong `Usn(i64)` and `Fid` typed IDs throughout (`Fid` supports both 64-bit NTFS and 128-bit ReFS file IDs)
 
 ## Quick start
 
@@ -125,6 +125,10 @@ the process to run as **Administrator**. On non-elevated processes the crate ret
 | USN journal | ✅ | ✅ |
 | MFT enumeration (`Mft`) | ✅ | ✅ |
 | Raw `$MFT` (`RawMft`) | ✅ | ❌ — returns `UsnError::UnsupportedFilesystem` |
+
+On ReFS, journal and `Mft` entries may expose 128-bit file IDs via
+`Fid::is_extended()`, `Fid::as_u128()`, and `Fid::as_bytes()`.
+
 ## Migrating from 0.4.x
 
 See [CHANGELOG.md](CHANGELOG.md) for a full list of breaking changes and before/after

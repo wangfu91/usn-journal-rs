@@ -1,6 +1,110 @@
-use crate::{Usn, UsnError, UsnResult};
+use crate::{Fid, Usn, UsnError, UsnResult};
 use std::mem::size_of;
-use windows::Win32::System::Ioctl::USN_RECORD_V2;
+use windows::Win32::Storage::FileSystem::FILE_ID_128;
+use windows::Win32::System::Ioctl::{USN_RECORD_COMMON_HEADER, USN_RECORD_V2, USN_RECORD_V3};
+
+#[derive(Copy, Clone, Debug)]
+pub(crate) enum UsnRecordRef<'a> {
+    V2(&'a USN_RECORD_V2),
+    V3(&'a USN_RECORD_V3),
+}
+
+impl<'a> UsnRecordRef<'a> {
+    #[inline]
+    pub(crate) const fn usn(self) -> i64 {
+        match self {
+            Self::V2(record) => record.Usn,
+            Self::V3(record) => record.Usn,
+        }
+    }
+
+    #[inline]
+    pub(crate) const fn timestamp(self) -> i64 {
+        match self {
+            Self::V2(record) => record.TimeStamp,
+            Self::V3(record) => record.TimeStamp,
+        }
+    }
+
+    #[inline]
+    pub(crate) const fn reason(self) -> u32 {
+        match self {
+            Self::V2(record) => record.Reason,
+            Self::V3(record) => record.Reason,
+        }
+    }
+
+    #[inline]
+    pub(crate) const fn source_info(self) -> u32 {
+        match self {
+            Self::V2(record) => record.SourceInfo,
+            Self::V3(record) => record.SourceInfo,
+        }
+    }
+
+    #[inline]
+    pub(crate) const fn file_attributes(self) -> u32 {
+        match self {
+            Self::V2(record) => record.FileAttributes,
+            Self::V3(record) => record.FileAttributes,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn fid(self) -> Fid {
+        match self {
+            Self::V2(record) => Fid::new(record.FileReferenceNumber),
+            Self::V3(record) => Fid::from(file_id_128_to_u128(record.FileReferenceNumber)),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn parent_fid(self) -> Fid {
+        match self {
+            Self::V2(record) => Fid::new(record.ParentFileReferenceNumber),
+            Self::V3(record) => Fid::from(file_id_128_to_u128(record.ParentFileReferenceNumber)),
+        }
+    }
+
+    #[inline]
+    pub(crate) const fn file_name_length(self) -> u16 {
+        match self {
+            Self::V2(record) => record.FileNameLength,
+            Self::V3(record) => record.FileNameLength,
+        }
+    }
+
+    #[inline]
+    pub(crate) const fn file_name_offset(self) -> u16 {
+        match self {
+            Self::V2(record) => record.FileNameOffset,
+            Self::V3(record) => record.FileNameOffset,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn file_name_ptr(self) -> *const u16 {
+        match self {
+            Self::V2(record) => record.FileName.as_ptr(),
+            Self::V3(record) => record.FileName.as_ptr(),
+        }
+    }
+}
+
+#[inline]
+pub(crate) const fn file_id_128_to_u128(file_id: FILE_ID_128) -> u128 {
+    u128::from_le_bytes(file_id.Identifier)
+}
+
+#[inline]
+pub(crate) const fn fid_to_file_id_128(fid: Fid) -> Option<FILE_ID_128> {
+    match fid {
+        Fid::Extended(value) => Some(FILE_ID_128 {
+            Identifier: value.to_le_bytes(),
+        }),
+        Fid::Standard(_) => None,
+    }
+}
 
 fn checked_bytes_read(buffer: &[u8], bytes_read: u32) -> UsnResult<usize> {
     let bytes_read = bytes_read as usize;
@@ -49,7 +153,7 @@ pub(crate) fn find_next_record<'a>(
     buffer: &'a [u8],
     bytes_read: u32,
     offset: &mut u32,
-) -> UsnResult<Option<&'a USN_RECORD_V2>> {
+) -> UsnResult<Option<UsnRecordRef<'a>>> {
     let bytes_read = checked_bytes_read(buffer, bytes_read)?;
     let offset_usize = *offset as usize;
 
@@ -57,24 +161,23 @@ pub(crate) fn find_next_record<'a>(
         return Ok(None);
     }
 
-    let min_record_len = size_of::<USN_RECORD_V2>();
+    let min_record_len = size_of::<USN_RECORD_COMMON_HEADER>();
     if bytes_read - offset_usize < min_record_len {
         return Err(UsnError::InvalidRecordData(
             "insufficient bytes remaining for USN record header",
         ));
     }
 
-    // SAFETY: `offset_usize + min_record_len <= bytes_read <= buffer.len()`
-    // (checked above), so the pointer arithmetic and the read of the
-    // `USN_RECORD_V2` header are within the allocated buffer. The Win32
-    // FSCTL output guarantees a `USN_RECORD_V2`-shaped layout at this
-    // offset; the struct's natural alignment (8) is satisfied because
-    // `DeviceIoControl` returns records aligned to the start of a
-    // 64-bit-aligned output buffer (we always allocate `Vec<u8>`/aligned
-    // buffers from the iterators).
-    let record = unsafe { &*(buffer.as_ptr().add(offset_usize) as *const USN_RECORD_V2) };
+    // SAFETY: `offset_usize + min_record_len <= bytes_read <= buffer.len()`,
+    // so reading the fixed-size common header with `read_unaligned` is
+    // in bounds even if the record start is only byte-aligned.
+    let header = unsafe {
+        std::ptr::read_unaligned(
+            buffer.as_ptr().add(offset_usize) as *const USN_RECORD_COMMON_HEADER,
+        )
+    };
 
-    let record_len = record.RecordLength as usize;
+    let record_len = header.RecordLength as usize;
     if record_len < min_record_len {
         return Err(UsnError::InvalidRecordData(
             "record length is smaller than header",
@@ -86,8 +189,41 @@ pub(crate) fn find_next_record<'a>(
         ));
     }
 
-    let file_name_offset = record.FileNameOffset as usize;
-    let file_name_length = record.FileNameLength as usize;
+    let record = match header.MajorVersion {
+        2 => {
+            if record_len < size_of::<USN_RECORD_V2>() {
+                return Err(UsnError::InvalidRecordData(
+                    "record length is smaller than USN_RECORD_V2",
+                ));
+            }
+            // SAFETY: `record_len` has been validated against the V2 header size
+            // and stays within `buffer`. The FSCTL buffer is 8-byte aligned and
+            // USN records are quad-aligned, so reinterpreting the record bytes
+            // as `USN_RECORD_V2` is sound for the lifetime of `buffer`.
+            let record = unsafe { &*(buffer.as_ptr().add(offset_usize) as *const USN_RECORD_V2) };
+            UsnRecordRef::V2(record)
+        }
+        3 => {
+            if record_len < size_of::<USN_RECORD_V3>() {
+                return Err(UsnError::InvalidRecordData(
+                    "record length is smaller than USN_RECORD_V3",
+                ));
+            }
+            // SAFETY: same argument as the V2 branch above, but for the V3
+            // layout requested via `READ_USN_JOURNAL_DATA_V1` /
+            // `MFT_ENUM_DATA_V1`.
+            let record = unsafe { &*(buffer.as_ptr().add(offset_usize) as *const USN_RECORD_V3) };
+            UsnRecordRef::V3(record)
+        }
+        _ => {
+            return Err(UsnError::InvalidRecordData(
+                "unsupported USN record major version",
+            ));
+        }
+    };
+
+    let file_name_offset = record.file_name_offset() as usize;
+    let file_name_length = record.file_name_length() as usize;
     if !file_name_length.is_multiple_of(size_of::<u16>()) {
         return Err(UsnError::InvalidRecordData(
             "file name length is not aligned to UTF-16 units",

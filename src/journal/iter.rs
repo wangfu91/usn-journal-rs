@@ -6,10 +6,13 @@ use log::{debug, warn};
 use windows::Win32::Foundation::{ERROR_HANDLE_EOF, HANDLE};
 use windows::Win32::System::IO::DeviceIoControl;
 use windows::Win32::System::Ioctl::{
-    FSCTL_READ_USN_JOURNAL, READ_USN_JOURNAL_DATA_V0, USN_RECORD_V2,
+    FSCTL_READ_USN_JOURNAL, READ_USN_JOURNAL_DATA_V1,
 };
 
-use crate::{UsnResult, usn_record};
+use crate::{
+    UsnResult,
+    usn_record::{self, UsnRecordRef},
+};
 
 use super::entry::UsnEntry;
 
@@ -48,13 +51,15 @@ impl UsnJournalIter {
     ///
     /// Returns `Ok(true)` if data was read, `Ok(false)` if EOF, or an error.
     fn get_data(&mut self) -> windows::core::Result<bool> {
-        let read_data = READ_USN_JOURNAL_DATA_V0 {
+        let read_data = READ_USN_JOURNAL_DATA_V1 {
             StartUsn: self.next_start_usn,
             ReasonMask: self.reason_mask,
             ReturnOnlyOnClose: self.return_only_on_close,
             Timeout: self.timeout,
             BytesToWaitFor: self.bytes_to_wait_for,
             UsnJournalID: self.journal_id,
+            MinMajorVersion: 2,
+            MaxMajorVersion: 3,
         };
 
         // SAFETY: `self.volume_handle` is a live volume handle owned by
@@ -69,7 +74,7 @@ impl UsnJournalIter {
                 self.volume_handle,
                 FSCTL_READ_USN_JOURNAL,
                 Some(&read_data as *const _ as *mut _),
-                size_of::<READ_USN_JOURNAL_DATA_V0>() as u32,
+                size_of::<READ_USN_JOURNAL_DATA_V1>() as u32,
                 Some(self.buffer.as_mut_ptr() as *mut c_void),
                 self.buffer.len() as u32,
                 Some(&mut self.bytes_read),
@@ -89,8 +94,8 @@ impl UsnJournalIter {
 
     /// Find the next USN record in the buffer, reading more data if needed.
     ///
-    /// Returns `Ok(Some(&USN_RECORD_V2))` if a record is found, `Ok(None)` if EOF, or an error.
-    fn find_next_entry(&mut self) -> UsnResult<Option<&USN_RECORD_V2>> {
+    /// Returns `Ok(Some(record))` if a record is found, `Ok(None)` if EOF, or an error.
+    fn find_next_entry(&mut self) -> UsnResult<Option<UsnRecordRef<'_>>> {
         if self.offset < self.bytes_read {
             return usn_record::find_next_record(&self.buffer, self.bytes_read, &mut self.offset);
         }
