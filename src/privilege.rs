@@ -1,3 +1,10 @@
+//! Privilege helpers for Windows elevation checks.
+//!
+//! This module contains the small amount of Win32 token plumbing needed to
+//! determine whether the current process is running elevated. The crate uses
+//! this check to gate operations that require administrative access to a
+//! volume or the USN journal.
+
 use std::mem::size_of;
 
 use windows::Win32::{
@@ -7,6 +14,15 @@ use windows::Win32::{
 };
 use windows::core::Owned;
 
+/// Returns whether the current process is running elevated.
+///
+/// This checks the process token via `OpenProcessToken` and
+/// `GetTokenInformation(TokenElevation, ...)`.
+///
+/// # Errors
+///
+/// Returns the underlying Win32 error if opening the process token or reading
+/// its elevation state fails.
 pub(crate) fn is_elevated() -> windows::core::Result<bool> {
     let mut handle: HANDLE = HANDLE::default();
     // SAFETY: `GetCurrentProcess` returns a pseudo-handle with the
@@ -42,24 +58,6 @@ pub(crate) fn is_elevated() -> windows::core::Result<bool> {
 mod tests {
     use super::*;
     use injectorpp::interface::injector::*;
-
-    // Unit tests for privilege checking functionality
-    mod privilege_tests {
-        use super::*;
-
-        #[test]
-        fn test_is_elevated_returns_bool() {
-            // Test that the function returns a Result<bool, _>
-            match is_elevated() {
-                Ok(_elevated) => {
-                    // Function succeeded and returned a boolean value
-                }
-                Err(_) => {
-                    // Function may fail on some systems, which is acceptable
-                }
-            }
-        }
-    }
 
     // Mocked tests for error scenarios
     mod mocked_privilege_tests {
@@ -126,27 +124,6 @@ mod tests {
             assert!(result.is_err());
             if let Err(err) = result {
                 assert_eq!(err.code(), ERROR_INVALID_HANDLE.into());
-            }
-        }
-    }
-
-    // Integration tests that check actual privilege status
-    mod integration_tests {
-        use super::*;
-
-        #[test]
-        fn test_privilege_detection_integration() {
-            // This test will succeed regardless of elevation status
-            // It just ensures the function can execute without panicking
-            match is_elevated() {
-                Ok(elevated) => {
-                    eprintln!("Process elevation status: {elevated}");
-                    // No assertions - we just want to ensure it works
-                }
-                Err(e) => {
-                    eprintln!("Failed to check elevation status: {e}");
-                    // This is also acceptable - some systems may not support this check
-                }
             }
         }
     }
