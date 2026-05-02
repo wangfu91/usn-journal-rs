@@ -190,7 +190,7 @@ impl fmt::Display for Fid {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Standard(v) => write!(f, "0x{v:x}"),
-            Self::Extended(v) => write!(f, "0x{v:032x}"),
+            Self::Extended(v) => write!(f, "0x{v:x}"),
         }
     }
 }
@@ -306,16 +306,16 @@ mod tests {
 
     #[test]
     fn extended_fid_round_trip() {
-        let fid = Fid::from_u128(0x1122_3344_5566_7788_99aa_bbcc_ddee_ff00);
+        let fid = Fid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_11c6);
         assert!(fid.is_extended());
         assert_eq!(
             fid.as_bytes(),
             [
-                0x00, 0xff, 0xee, 0xdd, 0xcc, 0xbb, 0xaa, 0x99, 0x88, 0x77, 0x66, 0x55, 0x44, 0x33,
-                0x22, 0x11,
+                0xc6, 0x11, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00,
             ]
         );
-        assert_eq!(format!("{fid}"), "0x112233445566778899aabbccddeeff00");
+        assert_eq!(format!("{fid}"), "0x11c6");
         assert_eq!(fid.record_number(), None);
         assert_eq!(fid.sequence(), None);
         assert!(u64::try_from(fid).is_err());
