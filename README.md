@@ -45,7 +45,8 @@ Iterate the USN change journal on drive `C:`:
 use usn_journal_rs::errors::UsnError;
 use usn_journal_rs::journal::{JournalIterOptions, UsnEntry, UsnJournal, USN_REASON_MASK_ALL};
 use usn_journal_rs::volume::Volume;
-use usn_journal_rs::Usn;
+use usn_journal_rs::{Usn, UsnReason};
+use std::num::NonZeroUsize;
 
 fn main() -> Result<(), UsnError> {
     let volume = Volume::from_drive_letter('C')?;
@@ -53,9 +54,9 @@ fn main() -> Result<(), UsnError> {
 
     let opts = JournalIterOptions::builder()
         .start_usn(Usn::new(0))
-        .reason_mask(USN_REASON_MASK_ALL)
+        .reason_mask(UsnReason::from_bits_retain(USN_REASON_MASK_ALL))
         .only_on_close(false)
-        .buffer_size(64 * 1024)
+        .buffer_bytes(NonZeroUsize::new(64 * 1024).unwrap())
         .build();
 
     for result in journal.try_iter_with_options(opts)? {

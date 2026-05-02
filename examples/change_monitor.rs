@@ -1,6 +1,6 @@
 use usn_journal_rs::{
     errors::UsnError,
-    journal::{self, UsnJournal},
+    journal::{JournalIterOptions, UsnJournal},
     path::PathResolver,
     volume::Volume,
 };
@@ -18,12 +18,11 @@ fn run() -> Result<(), UsnError> {
 
     let journal_data = usn_journal.query(true)?;
 
-    let enum_options = journal::JournalIterOptions {
-        start_usn: journal_data.next_usn,
-        only_on_close: false,
-        wait_for_more: true,
-        ..Default::default()
-    };
+    let enum_options = JournalIterOptions::builder()
+        .start_usn(journal_data.next_usn)
+        .only_on_close(false)
+        .wait_for_more(true)
+        .build();
 
     let mut path_resolver = PathResolver::new(&volume);
 

@@ -78,14 +78,16 @@ fn journal_iter_filtered(bencher: Bencher) {
     let Some(volume) = open_volume() else { return };
     let limit = bench_record_limit();
 
+    use usn_journal_rs::UsnReason;
     use windows::Win32::System::Ioctl::{USN_REASON_FILE_CREATE, USN_REASON_FILE_DELETE};
 
     bencher.bench_local(|| {
         let journal = UsnJournal::new(&volume);
-        let opts = usn_journal_rs::journal::JournalIterOptions {
-            reason_mask: USN_REASON_FILE_CREATE | USN_REASON_FILE_DELETE,
-            ..Default::default()
-        };
+        let opts = usn_journal_rs::journal::JournalIterOptions::builder()
+            .reason_mask(UsnReason::from_bits_retain(
+                USN_REASON_FILE_CREATE | USN_REASON_FILE_DELETE,
+            ))
+            .build();
         let mut count = 0u64;
         if let Ok(it) = journal.try_iter_with_options(opts) {
             for r in it.take(limit) {

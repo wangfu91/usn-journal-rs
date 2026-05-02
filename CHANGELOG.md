@@ -128,10 +128,12 @@ Or via mount point:
 - use usn_journal_rs::journal::EnumOptions;
 - let opts = EnumOptions { start_usn: 0, ..Default::default() };
 + use usn_journal_rs::journal::{JournalIterOptions, USN_REASON_MASK_ALL};
-+ use usn_journal_rs::Usn;
++ use std::num::NonZeroUsize;
++ use usn_journal_rs::{Usn, UsnReason};
 + let opts = JournalIterOptions::builder()
 +     .start_usn(Usn::new(0))
-+     .reason_mask(USN_REASON_MASK_ALL)
++     .reason_mask(UsnReason::from_bits_retain(USN_REASON_MASK_ALL))
++     .buffer_bytes(NonZeroUsize::new(64 * 1024).unwrap())
 +     .build();
 ```
 

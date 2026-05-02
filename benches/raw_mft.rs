@@ -149,10 +149,9 @@ fn raw_mft_buffer_size(bencher: Bencher, buffer_bytes: usize) {
         }
     };
     bencher.bench_local(|| {
-        let opts = usn_journal_rs::raw_mft::RawMftIterOptions {
-            buffer_bytes: std::num::NonZeroUsize::new(buffer_bytes).unwrap(),
-            ..Default::default()
-        };
+        let opts = usn_journal_rs::raw_mft::RawMftIterOptions::builder()
+            .buffer_bytes(std::num::NonZeroUsize::new(buffer_bytes).unwrap())
+            .build();
         let mut count = 0u64;
         if let Ok(it) = mft.try_iter_with_options(opts) {
             for r in it.take(BENCH_RECORD_LIMIT) {

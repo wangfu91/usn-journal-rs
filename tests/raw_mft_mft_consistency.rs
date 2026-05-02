@@ -14,7 +14,7 @@ use std::collections::HashSet;
 
 use usn_journal_rs::{
     errors::UsnError,
-    mft::{Mft, MftIterOptions},
+    mft::{Mft, MftIterOptions, UsnRecordVersion},
     path::PathResolver,
     raw_mft::RawMft,
     volume::Volume,
@@ -271,10 +271,9 @@ fn raw_mft_and_mft_api_record_parity_standard_ids() {
 
     // Pin MaxMajorVersion=2: forces USN_RECORD_V2 (64-bit standard IDs) even
     // on Windows 11 builds that would otherwise return USN_RECORD_V3.
-    let options = MftIterOptions {
-        max_usn_record_version: 2,
-        ..MftIterOptions::default()
-    };
+    let options = MftIterOptions::builder()
+        .max_usn_record_version(UsnRecordVersion::V2)
+        .build();
 
     let mft = Mft::new(&volume);
     let iter = match mft.try_iter_with_options(options) {

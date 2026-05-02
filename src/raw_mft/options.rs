@@ -4,19 +4,18 @@ use crate::raw_mft::{DEFAULT_BUFFER_BYTES, record::FIRST_NORMAL_RECORD};
 
 /// Options controlling iteration behaviour.
 ///
-/// Use [`RawMftIterOptions::builder`] for the fluent builder API, or construct
-/// directly via struct-literal syntax. [`Default`] is also implemented.
+/// Use [`RawMftIterOptions::builder`] for the fluent builder API.
 #[derive(Debug, Clone)]
 pub struct RawMftIterOptions {
     /// Size of the I/O buffer in bytes used for batched reads of FILE records.
-    pub buffer_bytes: NonZeroUsize,
+    pub(crate) buffer_bytes: NonZeroUsize,
     /// Honour the `$MFT` `$BITMAP` to skip unused records.
-    pub skip_unused: bool,
+    pub(crate) skip_unused: bool,
     /// First record number to yield.
-    pub start_record: u64,
+    pub(crate) start_record: u64,
     /// Last record number to yield (exclusive); `None` means up to the
     /// total number of MFT records.
-    pub end_record: Option<u64>,
+    pub(crate) end_record: Option<u64>,
 }
 
 impl Default for RawMftIterOptions {

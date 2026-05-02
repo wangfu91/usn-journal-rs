@@ -1,6 +1,7 @@
 //! Options for iterating over the USN journal.
 
-use crate::Usn;
+use crate::{Usn, UsnReason};
+use std::num::NonZeroUsize;
 
 use super::defaults::{DEFAULT_BUFFER_BYTES, USN_REASON_MASK_ALL};
 
@@ -9,26 +10,26 @@ use super::defaults::{DEFAULT_BUFFER_BYTES, USN_REASON_MASK_ALL};
 ///
 /// Allows customization of the starting USN, reason mask, buffer size, and other parameters.
 ///
-/// Use [`JournalIterOptions::builder`] for the fluent builder API, or construct
-/// directly via struct-literal syntax. [`Default`] is also implemented.
+/// Use [`JournalIterOptions::builder`] for the fluent builder API.
 pub struct JournalIterOptions {
-    pub start_usn: Usn,
-    pub reason_mask: u32,
-    pub only_on_close: bool,
-    pub timeout: u64,
-    pub wait_for_more: bool,
-    pub buffer_size: usize,
+    pub(crate) start_usn: Usn,
+    pub(crate) reason_mask: UsnReason,
+    pub(crate) only_on_close: bool,
+    pub(crate) timeout: u64,
+    pub(crate) wait_for_more: bool,
+    pub(crate) buffer_bytes: NonZeroUsize,
 }
 
 impl Default for JournalIterOptions {
     fn default() -> Self {
         JournalIterOptions {
             start_usn: Usn::new(0),
-            reason_mask: USN_REASON_MASK_ALL,
+            reason_mask: UsnReason::from_bits_retain(USN_REASON_MASK_ALL),
             only_on_close: false,
             timeout: 0,
             wait_for_more: false,
-            buffer_size: DEFAULT_BUFFER_BYTES,
+            buffer_bytes: NonZeroUsize::new(DEFAULT_BUFFER_BYTES)
+                .expect("default journal buffer size is non-zero"),
         }
     }
 }
@@ -55,7 +56,7 @@ impl JournalIterOptionsBuilder {
     }
 
     /// Set the reason mask filter.
-    pub fn reason_mask(mut self, v: u32) -> Self {
+    pub fn reason_mask(mut self, v: UsnReason) -> Self {
         self.inner.reason_mask = v;
         self
     }
@@ -79,8 +80,8 @@ impl JournalIterOptionsBuilder {
     }
 
     /// Set the in-memory buffer size, in bytes.
-    pub fn buffer_size(mut self, v: usize) -> Self {
-        self.inner.buffer_size = v;
+    pub fn buffer_bytes(mut self, v: NonZeroUsize) -> Self {
+        self.inner.buffer_bytes = v;
         self
     }
 

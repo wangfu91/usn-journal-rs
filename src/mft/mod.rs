@@ -13,7 +13,7 @@ mod options;
 pub use entry::MftEntry;
 pub use iter::MftIter;
 pub use mft::Mft;
-pub use options::{MftIterOptions, MftIterOptionsBuilder};
+pub use options::{MftIterOptions, MftIterOptionsBuilder, UsnRecordVersion};
 
 #[cfg(test)]
 mod tests;
