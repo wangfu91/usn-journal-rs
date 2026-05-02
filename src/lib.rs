@@ -50,6 +50,7 @@
 //! MIT License. See [LICENSE](https://github.com/wangfu91/usn-journal-rs/blob/main/LICENSE).
 
 pub mod errors;
+mod file_attributes;
 pub mod journal;
 pub mod mft;
 pub mod path;

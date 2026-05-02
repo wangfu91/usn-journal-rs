@@ -111,6 +111,16 @@ impl<'a> UsnRecordView<'a> {
             Self::V3(record) => record.FileName.as_ptr(),
         }
     }
+
+    /// Borrow the UTF-16 file name as a slice of code units.
+    #[inline]
+    pub(crate) fn file_name_slice(self) -> &'a [u16] {
+        let file_name_len = self.file_name_length() as usize / std::mem::size_of::<u16>();
+        // SAFETY: Callers only obtain `UsnRecordView` from `find_next_record`,
+        // which validates that `FileNameOffset + FileNameLength` stays within
+        // the record bounds and that the length is aligned to UTF-16 units.
+        unsafe { std::slice::from_raw_parts(self.file_name_ptr(), file_name_len) }
+    }
 }
 
 /// Convert a Windows `FILE_ID_128` to a native `u128`.

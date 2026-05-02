@@ -14,15 +14,7 @@ use crate::{
 
 use super::entry::UsnEntry;
 
-/// Iterate over USN journal entries.
-///
-/// This iterator yields `Result<UsnEntry, UsnError>` items.
-pub struct UsnJournalIter {
-    pub(super) volume_handle: HANDLE,
-    pub(super) journal_id: u64,
-    pub(super) buffer: Vec<u8>,
-    pub(super) bytes_read: u32,
-    pub(super) offset: u32,
+pub(super) struct UsnJournalIterConfig {
     pub(super) next_start_usn: i64,
     pub(super) reason_mask: u32,
     pub(super) return_only_on_close: u32,
@@ -30,7 +22,43 @@ pub struct UsnJournalIter {
     pub(super) bytes_to_wait_for: u64,
 }
 
+/// Iterate over USN journal entries.
+///
+/// This iterator yields `Result<UsnEntry, UsnError>` items.
+pub struct UsnJournalIter {
+    volume_handle: HANDLE,
+    journal_id: u64,
+    buffer: Vec<u8>,
+    bytes_read: u32,
+    offset: u32,
+    next_start_usn: i64,
+    reason_mask: u32,
+    return_only_on_close: u32,
+    timeout: u64,
+    bytes_to_wait_for: u64,
+}
+
 impl UsnJournalIter {
+    pub(super) fn new(
+        volume_handle: HANDLE,
+        journal_id: u64,
+        buffer: Vec<u8>,
+        config: UsnJournalIterConfig,
+    ) -> Self {
+        Self {
+            volume_handle,
+            journal_id,
+            buffer,
+            bytes_read: 0,
+            offset: 0,
+            next_start_usn: config.next_start_usn,
+            reason_mask: config.reason_mask,
+            return_only_on_close: config.return_only_on_close,
+            timeout: config.timeout,
+            bytes_to_wait_for: config.bytes_to_wait_for,
+        }
+    }
+
     /// Swap in a caller-provided buffer to avoid allocating during long
     /// iteration loops. The buffer is cleared and resized to the
     /// originally requested capacity. Purely additive; may be called

@@ -36,14 +36,12 @@ impl<'a> Mft<'a> {
             ));
         }
 
-        Ok(MftIter {
-            volume_handle: self.volume.handle,
-            low_usn: options.low_usn.get(),
-            high_usn: options.high_usn.get(),
-            buffer: vec![0u8; options.buffer_size],
-            bytes_read: 0,
-            offset: 0,
-            next_start_fid: options.low_usn.get() as u64,
-        })
+        Ok(MftIter::new(
+            self.volume.handle,
+            options.low_usn.get(),
+            options.high_usn.get(),
+            vec![0u8; options.buffer_size],
+            options.low_usn.get() as u64,
+        ))
     }
 }

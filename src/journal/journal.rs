@@ -19,7 +19,7 @@ use super::defaults::{
     DEFAULT_BUFFER_BYTES, DEFAULT_JOURNAL_ALLOCATION_DELTA, DEFAULT_JOURNAL_MAX_SIZE,
     USN_REASON_MASK_ALL,
 };
-use super::iter::UsnJournalIter;
+use super::iter::{UsnJournalIter, UsnJournalIterConfig};
 use super::options::JournalIterOptions;
 
 #[derive(Debug, Clone)]
@@ -47,18 +47,18 @@ impl<'a> UsnJournal<'a> {
     /// front; subsequent per-record errors are surfaced as iterator items.
     pub fn try_iter(&self) -> UsnResult<UsnJournalIter> {
         let journal_data = self.query(true)?;
-        Ok(UsnJournalIter {
-            volume_handle: self.volume.handle,
-            journal_id: journal_data.journal_id,
-            buffer: vec![0u8; DEFAULT_BUFFER_BYTES],
-            bytes_read: 0,
-            offset: 0,
-            next_start_usn: 0,
-            reason_mask: USN_REASON_MASK_ALL,
-            return_only_on_close: 0,
-            timeout: 0,
-            bytes_to_wait_for: 1,
-        })
+        Ok(UsnJournalIter::new(
+            self.volume.handle,
+            journal_data.journal_id,
+            vec![0u8; DEFAULT_BUFFER_BYTES],
+            UsnJournalIterConfig {
+                next_start_usn: 0,
+                reason_mask: USN_REASON_MASK_ALL,
+                return_only_on_close: 0,
+                timeout: 0,
+                bytes_to_wait_for: 1,
+            },
+        ))
     }
 
     /// Returns an iterator over the USN journal entries with custom options.
@@ -67,18 +67,18 @@ impl<'a> UsnJournal<'a> {
     /// to handle individual entry errors gracefully without stopping iteration.
     pub fn try_iter_with_options(&self, options: JournalIterOptions) -> UsnResult<UsnJournalIter> {
         let journal_data = self.query(true)?;
-        Ok(UsnJournalIter {
-            volume_handle: self.volume.handle,
-            journal_id: journal_data.journal_id,
-            buffer: vec![0u8; options.buffer_size],
-            bytes_read: 0,
-            offset: 0,
-            next_start_usn: options.start_usn.get(),
-            reason_mask: options.reason_mask,
-            return_only_on_close: options.only_on_close as u32,
-            timeout: options.timeout,
-            bytes_to_wait_for: options.wait_for_more as u64,
-        })
+        Ok(UsnJournalIter::new(
+            self.volume.handle,
+            journal_data.journal_id,
+            vec![0u8; options.buffer_size],
+            UsnJournalIterConfig {
+                next_start_usn: options.start_usn.get(),
+                reason_mask: options.reason_mask,
+                return_only_on_close: options.only_on_close as u32,
+                timeout: options.timeout,
+                bytes_to_wait_for: options.wait_for_more as u64,
+            },
+        ))
     }
 
     /// Query the USN journal state for a volume, optionally creating it if not active.

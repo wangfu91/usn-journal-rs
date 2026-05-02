@@ -24,16 +24,34 @@ use super::entry::MftEntry;
 /// This iterator yields `Result<MftEntry, UsnError>` items, allowing applications
 /// to handle individual entry errors without stopping the entire iteration process.
 pub struct MftIter {
-    pub(super) volume_handle: HANDLE,
-    pub(super) low_usn: i64,
-    pub(super) high_usn: i64,
-    pub(super) buffer: Vec<u8>,
-    pub(super) bytes_read: u32,
-    pub(super) offset: u32,
-    pub(super) next_start_fid: u64,
+    volume_handle: HANDLE,
+    low_usn: i64,
+    high_usn: i64,
+    buffer: Vec<u8>,
+    bytes_read: u32,
+    offset: u32,
+    next_start_fid: u64,
 }
 
 impl MftIter {
+    pub(super) fn new(
+        volume_handle: HANDLE,
+        low_usn: i64,
+        high_usn: i64,
+        buffer: Vec<u8>,
+        next_start_fid: u64,
+    ) -> Self {
+        Self {
+            volume_handle,
+            low_usn,
+            high_usn,
+            buffer,
+            bytes_read: 0,
+            offset: 0,
+            next_start_fid,
+        }
+    }
+
     /// Swap in a caller-provided buffer to avoid allocating during long
     /// iteration loops. The buffer is cleared and resized to the
     /// originally requested capacity. This may be invoked any number of

@@ -3,10 +3,7 @@
 use std::fmt;
 use std::{ffi::OsString, os::windows::ffi::OsStringExt};
 
-use windows::Win32::Storage::FileSystem::{
-    FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_HIDDEN, FILE_FLAGS_AND_ATTRIBUTES,
-};
-
+use crate::file_attributes::FileAttributeView;
 use crate::usn_record::UsnRecordView;
 use crate::{Fid, Filetime, Usn};
 
@@ -45,23 +42,7 @@ impl UsnEntry {
     /// # Returns
     /// A parsed `UsnEntry` with decoded fields and file name.
     pub(crate) fn new(record: UsnRecordView<'_>) -> Self {
-        let file_name_len = record.file_name_length() as usize / std::mem::size_of::<u16>();
-
-        // https://learn.microsoft.com/en-us/windows/win32/api/winioctl/ns-winioctl-usn_record_v2
-        // When working with FileName, do not count on the file name that contains a trailing '\0' delimiter,
-        // but instead determine the length of the file name by using FileNameLength.
-        // Do not perform any compile-time pointer arithmetic using FileName.
-        // Instead, make necessary calculations at run time by using the value of the FileNameOffset member.
-        // Doing so helps make your code compatible with any future versions of the USN record.
-        // SAFETY: `record` is a validated `USN_RECORD_V2` / `USN_RECORD_V3` reference that
-        // came from `find_next_record`, which has already checked that
-        // `FileName` plus `FileNameLength` lies entirely within the
-        // record's `RecordLength`. `FileName` is laid out in memory as
-        // `FileNameLength` bytes (== `file_name_len` u16 code units)
-        // starting at `record.file_name_ptr()`.
-        let file_name_data =
-            unsafe { std::slice::from_raw_parts(record.file_name_ptr(), file_name_len) };
-        let file_name = OsString::from_wide(file_name_data);
+        let file_name = OsString::from_wide(record.file_name_slice());
 
         UsnEntry {
             usn: Usn::new(record.usn()),
@@ -83,16 +64,14 @@ impl UsnEntry {
     #[must_use]
     #[inline]
     pub fn is_dir(&self) -> bool {
-        let attributes = FILE_FLAGS_AND_ATTRIBUTES(self.file_attributes);
-        attributes.contains(FILE_ATTRIBUTE_DIRECTORY)
+        <Self as FileAttributeView>::has_directory_attribute(self)
     }
 
     /// Returns true if this entry represents a hidden file or directory.
     #[must_use]
     #[inline]
     pub fn is_hidden(&self) -> bool {
-        let attributes = FILE_FLAGS_AND_ATTRIBUTES(self.file_attributes);
-        attributes.contains(FILE_ATTRIBUTE_HIDDEN)
+        <Self as FileAttributeView>::has_hidden_attribute(self)
     }
 
     /// Strongly-typed view of [`UsnEntry::reason`].
@@ -110,7 +89,7 @@ impl UsnEntry {
     #[must_use]
     #[inline]
     pub fn file_attributes_flags(&self) -> crate::FileAttributes {
-        crate::FileAttributes::from_bits_retain(self.file_attributes)
+        <Self as FileAttributeView>::file_attribute_flags(self)
     }
 
     /// Converts a USN reason bitfield to a human-readable string using Windows constants.
@@ -122,6 +101,12 @@ impl UsnEntry {
     /// Formats a compact reason summary using `|` as separator (no spaces).
     fn reason_compact(&self) -> String {
         self.get_reason_string().replace(" | ", "|")
+    }
+}
+
+impl FileAttributeView for UsnEntry {
+    fn raw_file_attributes(&self) -> u32 {
+        self.file_attributes
     }
 }
 

@@ -7,6 +7,7 @@ use log::warn;
 
 use crate::{
     Fid, Filetime,
+    file_attributes::FileAttributeView,
     path::PathResolvableEntry,
     raw_mft::{
         attribute::{FileNameNamespace, NtfsAttributeType, file_attr_flags, for_each_attribute},
@@ -241,7 +242,13 @@ impl RawMftEntry {
     #[must_use]
     #[inline]
     pub fn si_file_attributes_flags(&self) -> crate::FileAttributes {
-        crate::FileAttributes::from_bits_retain(self.si_file_attributes)
+        <Self as FileAttributeView>::file_attribute_flags(self)
+    }
+}
+
+impl FileAttributeView for RawMftEntry {
+    fn raw_file_attributes(&self) -> u32 {
+        self.si_file_attributes
     }
 }
 

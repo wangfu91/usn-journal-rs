@@ -3,10 +3,7 @@
 use std::fmt;
 use std::{ffi::OsString, os::windows::ffi::OsStringExt};
 
-use windows::Win32::Storage::FileSystem::{
-    FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_HIDDEN, FILE_FLAGS_AND_ATTRIBUTES,
-};
-
+use crate::file_attributes::FileAttributeView;
 use crate::usn_record::UsnRecordView;
 use crate::{Fid, Usn};
 
@@ -31,15 +28,7 @@ pub struct MftEntry {
 impl MftEntry {
     /// Create a new `MftEntry` from a validated raw USN record view.
     pub(crate) fn new(record: UsnRecordView<'_>) -> Self {
-        let file_name_len = record.file_name_length() as usize / std::mem::size_of::<u16>();
-        // SAFETY: `record` was returned by `find_next_record`, which has
-        // validated that `FileName` plus `FileNameLength` lies entirely
-        // within the record's buffer. The MFT FSCTL output uses the same
-        // trailing UTF-16 layout for `USN_RECORD_V2` and `USN_RECORD_V3`,
-        // so this is identical to `UsnEntry::new`.
-        let file_name_data =
-            unsafe { std::slice::from_raw_parts(record.file_name_ptr(), file_name_len) };
-        let file_name = OsString::from_wide(file_name_data);
+        let file_name = OsString::from_wide(record.file_name_slice());
 
         MftEntry {
             usn: Usn::new(record.usn()),
@@ -54,16 +43,14 @@ impl MftEntry {
     #[must_use]
     #[inline]
     pub fn is_dir(&self) -> bool {
-        let attributes = FILE_FLAGS_AND_ATTRIBUTES(self.file_attributes);
-        attributes.contains(FILE_ATTRIBUTE_DIRECTORY)
+        <Self as FileAttributeView>::has_directory_attribute(self)
     }
 
     /// Returns true if this entry represents a hidden file or directory.
     #[must_use]
     #[inline]
     pub fn is_hidden(&self) -> bool {
-        let attributes = FILE_FLAGS_AND_ATTRIBUTES(self.file_attributes);
-        attributes.contains(FILE_ATTRIBUTE_HIDDEN)
+        <Self as FileAttributeView>::has_hidden_attribute(self)
     }
 
     /// Strongly-typed view of [`MftEntry::file_attributes`].
@@ -72,7 +59,13 @@ impl MftEntry {
     #[must_use]
     #[inline]
     pub fn file_attributes_flags(&self) -> crate::FileAttributes {
-        crate::FileAttributes::from_bits_retain(self.file_attributes)
+        <Self as FileAttributeView>::file_attribute_flags(self)
+    }
+}
+
+impl FileAttributeView for MftEntry {
+    fn raw_file_attributes(&self) -> u32 {
+        self.file_attributes
     }
 }
 
