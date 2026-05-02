@@ -493,7 +493,7 @@ mod tests {
                 if !entry.file_name.is_empty() {
                     named += 1;
                 }
-                if entry.si_created.as_u64() != 0 && !entry.file_name.is_empty() {
+                if entry.si_created.raw() != 0 && !entry.file_name.is_empty() {
                     had_timestamps = true;
                 }
             }

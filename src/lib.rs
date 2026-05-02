@@ -65,6 +65,10 @@ pub use types::{Fid, FileAttributes, Usn, UsnReason};
 /// A convenient type alias for Results with UsnError.
 pub type UsnResult<T> = std::result::Result<T, UsnError>;
 
+/// Windows FILETIME wrapper used throughout the crate.
+#[doc(inline)]
+pub use time::Filetime;
+
 mod time;
 pub mod volume;
 

@@ -6,14 +6,13 @@ use std::os::windows::ffi::OsStringExt;
 use log::warn;
 
 use crate::{
-    Fid,
+    Fid, Filetime,
     path::PathResolvableEntry,
     raw_mft::{
         attribute::{FileNameNamespace, NtfsAttributeType, file_attr_flags, for_each_attribute},
         data_run::{DataRunSummary, summarize_runs},
         record::FileRecord,
     },
-    time::Filetime,
 };
 
 /// Information about a single named alternate data stream (`$DATA`
@@ -83,15 +82,15 @@ impl RawMftEntry {
             reparse_tag: None,
             namespace: FileNameNamespace::Posix,
             file_name: OsString::new(),
-            si_created: Filetime::from_u64(0),
-            si_modified: Filetime::from_u64(0),
-            si_mft_modified: Filetime::from_u64(0),
-            si_accessed: Filetime::from_u64(0),
+            si_created: Filetime::new(0),
+            si_modified: Filetime::new(0),
+            si_mft_modified: Filetime::new(0),
+            si_accessed: Filetime::new(0),
             si_file_attributes: 0,
-            fn_created: Filetime::from_u64(0),
-            fn_modified: Filetime::from_u64(0),
-            fn_mft_modified: Filetime::from_u64(0),
-            fn_accessed: Filetime::from_u64(0),
+            fn_created: Filetime::new(0),
+            fn_modified: Filetime::new(0),
+            fn_mft_modified: Filetime::new(0),
+            fn_accessed: Filetime::new(0),
             real_size: 0,
             allocated_size: 0,
             is_resident: true,
@@ -110,10 +109,10 @@ impl RawMftEntry {
             let type_id = attr.type_id();
             if type_id == NtfsAttributeType::StandardInformation as u32 {
                 if let Some(si) = attr.as_standard_info() {
-                    entry.si_created = Filetime::from_u64(si.creation_time);
-                    entry.si_modified = Filetime::from_u64(si.modification_time);
-                    entry.si_mft_modified = Filetime::from_u64(si.mft_record_modification_time);
-                    entry.si_accessed = Filetime::from_u64(si.access_time);
+                    entry.si_created = Filetime::new(si.creation_time);
+                    entry.si_modified = Filetime::new(si.modification_time);
+                    entry.si_mft_modified = Filetime::new(si.mft_record_modification_time);
+                    entry.si_accessed = Filetime::new(si.access_time);
                     entry.si_file_attributes = si.file_attributes;
                 }
             } else if type_id == NtfsAttributeType::FileName as u32 {
@@ -130,11 +129,10 @@ impl RawMftEntry {
                         entry.namespace = ns;
                         entry.file_name = OsString::from_wide(name_units);
                         entry.parent_reference = Fid::new(header.parent_directory_reference);
-                        entry.fn_created = Filetime::from_u64(header.creation_time);
-                        entry.fn_modified = Filetime::from_u64(header.modification_time);
-                        entry.fn_mft_modified =
-                            Filetime::from_u64(header.mft_record_modification_time);
-                        entry.fn_accessed = Filetime::from_u64(header.access_time);
+                        entry.fn_created = Filetime::new(header.creation_time);
+                        entry.fn_modified = Filetime::new(header.modification_time);
+                        entry.fn_mft_modified = Filetime::new(header.mft_record_modification_time);
+                        entry.fn_accessed = Filetime::new(header.access_time);
                         let fa = header.file_attributes;
                         if fa & file_attr_flags::REPARSE_POINT != 0 {
                             entry.is_reparse_point = true;
@@ -442,7 +440,7 @@ mod tests {
             "ads"
         );
         assert_eq!(entry.alternate_data_streams[0].real_size, 3);
-        assert!(entry.si_created.as_u64() != 0);
+        assert!(entry.si_created.raw() != 0);
         assert_eq!(entry.parent_reference, Fid::new((5u64 << 48) | 5));
     }
 

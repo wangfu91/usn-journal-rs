@@ -7,9 +7,8 @@ use windows::Win32::Storage::FileSystem::{
     FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_HIDDEN, FILE_FLAGS_AND_ATTRIBUTES,
 };
 
-use crate::time::Filetime;
 use crate::usn_record::UsnRecordView;
-use crate::{Fid, Usn};
+use crate::{Fid, Filetime, Usn};
 
 use super::reason::format_reason;
 
@@ -66,7 +65,11 @@ impl UsnEntry {
 
         UsnEntry {
             usn: Usn::new(record.usn()),
-            time: Filetime::from_raw_i64(record.timestamp()),
+            time: Filetime::new(if record.timestamp() < 0 {
+                0
+            } else {
+                record.timestamp() as u64
+            }),
             fid: record.fid(),
             parent_fid: record.parent_fid(),
             reason: record.reason(),

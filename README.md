@@ -68,13 +68,13 @@ fn main() -> Result<(), UsnError> {
 
 ## Examples
 
-| Example | Description | Run |
-|---------|-------------|-----|
-| `read_journal` | Iterate all USN journal records on a volume | `cargo run --example read_journal` |
-| `enum_mft` | Enumerate every MFT entry via FSCTL | `cargo run --example enum_mft` |
-| `raw_mft` | Parse raw `$MFT` records with full metadata | `cargo run --example raw_mft` |
-| `change_monitor` | Watch for live filesystem changes via USN | `cargo run --example change_monitor` |
-| `pretty_print` | Multi-line formatted output for USN entries | `cargo run --example pretty_print` |
+| Example          | Description                                 | Run                                  |
+| ---------------- | ------------------------------------------- | ------------------------------------ |
+| `read_journal`   | Iterate all USN journal records on a volume | `cargo run --example read_journal`   |
+| `enum_mft`       | Enumerate every MFT entry via FSCTL         | `cargo run --example enum_mft`       |
+| `raw_mft`        | Parse raw `$MFT` records with full metadata | `cargo run --example raw_mft`        |
+| `change_monitor` | Watch for live filesystem changes via USN   | `cargo run --example change_monitor` |
+| `pretty_print`   | Multi-line formatted output for USN entries | `cargo run --example pretty_print`   |
 
 All examples require Administrator privileges.
 
@@ -101,20 +101,6 @@ cargo bench --bench path_resolver
 
 Set `USN_TEST_DRIVE=D` to target a different volume (default: `C`).
 
-## Cargo features
-
-| Feature | Default | Description |
-|---------|---------|-------------|
-| `chrono` | no | Adds `Filetime::to_chrono_utc()` returning `chrono::DateTime<Utc>` |
-
-Enable with:
-
-```toml
-usn-journal-rs = { version = "0.5", features = ["chrono"] }
-```
-
-Without the feature, use `Filetime::try_to_system_time()` or `Filetime::to_unix_seconds()`.
-
 ## Privileges
 
 All APIs that open a volume (`Volume::from_drive_letter`, `Volume::from_mount_point`) require
@@ -123,11 +109,11 @@ the process to run as **Administrator**. On non-elevated processes the crate ret
 
 ## Filesystem support
 
-| Feature | NTFS | ReFS |
-|---------|------|------|
-| USN journal | ✅ | ✅ |
-| MFT enumeration (`Mft`) | ✅ | ✅ |
-| Raw `$MFT` (`RawMft`) | ✅ | ❌ — returns `UsnError::UnsupportedFilesystem` |
+| Feature                 | NTFS | ReFS                                          |
+| ----------------------- | ---- | --------------------------------------------- |
+| USN journal             | ✅    | ✅                                             |
+| MFT enumeration (`Mft`) | ✅    | ✅                                             |
+| Raw `$MFT` (`RawMft`)   | ✅    | ❌ — returns `UsnError::UnsupportedFilesystem` |
 
 On ReFS, journal and `Mft` entries may expose 128-bit file IDs via
 `Fid::is_extended()`, `Fid::as_u128()`, and `Fid::as_bytes()`.

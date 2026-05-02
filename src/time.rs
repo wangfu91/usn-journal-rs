@@ -1,5 +1,6 @@
 use crate::errors::UsnError;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use windows::Win32::Foundation::FILETIME;
 
 /// Number of 100-nanosecond intervals between the Windows FILETIME epoch
 /// (1601-01-01 UTC) and the Unix epoch (1970-01-01 UTC).
@@ -14,41 +15,30 @@ pub(crate) const WINDOWS_TO_UNIX_OFFSET_100NS: u64 = 116_444_736_000_000_000u64;
 /// downstream conversion (e.g. `SystemTime`, `chrono::DateTime<Utc>`,
 /// `time::OffsetDateTime`) suits their use case.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct Filetime(pub u64);
+#[repr(transparent)]
+pub struct Filetime(u64);
 
 impl Filetime {
-    /// Build a `Filetime` from the signed 64-bit representation used by
-    /// USN journal records. Negative inputs are clamped to zero.
+    /// Construct a `Filetime` from its raw 100-ns interval count.
     #[must_use]
     #[inline]
-    pub fn from_raw_i64(i: i64) -> Self {
-        if i < 0 {
-            Filetime(0)
-        } else {
-            Filetime(i as u64)
-        }
+    pub const fn new(value: u64) -> Self {
+        Self(value)
     }
 
-    /// Build a `Filetime` from a raw `u64`.
+    /// Return the raw 100-ns interval count since the Windows epoch.
     #[must_use]
     #[inline]
-    pub const fn from_u64(u: u64) -> Self {
-        Filetime(u)
-    }
-
-    /// Raw 100-ns interval count since the Windows epoch.
-    #[must_use]
-    #[inline]
-    pub const fn as_u64(self) -> u64 {
+    pub const fn raw(self) -> u64 {
         self.0
     }
 
-    /// Try to convert to `SystemTime`. Returns `None` only when the
-    /// resulting `SystemTime` cannot be represented on the current
-    /// platform (Windows-epoch underflow on systems that lack pre-Unix
-    /// `SystemTime` support, etc.).
+    /// Convert to `SystemTime`.
+    ///
+    /// Returns `None` only when the resulting `SystemTime` cannot be
+    /// represented on the current platform.
     #[must_use]
-    pub fn try_to_system_time(self) -> Option<SystemTime> {
+    pub fn to_system_time(self) -> Option<SystemTime> {
         if self.0 >= WINDOWS_TO_UNIX_OFFSET_100NS {
             let intervals = self.0 - WINDOWS_TO_UNIX_OFFSET_100NS;
             let secs = intervals / 10_000_000;
@@ -60,12 +50,6 @@ impl Filetime {
             let nanos = ((intervals % 10_000_000) * 100) as u32;
             UNIX_EPOCH.checked_sub(Duration::new(secs, nanos))
         }
-    }
-
-    /// Convert to `SystemTime`, falling back to `UNIX_EPOCH` on failure.
-    #[must_use]
-    pub fn to_system_time_or_epoch(self) -> SystemTime {
-        self.try_to_system_time().unwrap_or(UNIX_EPOCH)
     }
 
     /// Number of seconds since the Unix epoch (may be negative).
@@ -83,18 +67,22 @@ impl Filetime {
         let intervals = self.0 as i128 - WINDOWS_TO_UNIX_OFFSET_100NS as i128;
         intervals * 100
     }
+}
 
-    /// Convert this FILETIME to a `chrono::DateTime<Utc>`. Returns
-    /// `None` if the value is out of `chrono`'s representable range.
-    ///
-    /// This method is only available when the `chrono` crate feature is
-    /// enabled.
-    #[cfg(feature = "chrono")]
-    #[must_use]
-    pub fn to_chrono_utc(self) -> Option<chrono::DateTime<chrono::Utc>> {
-        let secs = self.to_unix_seconds();
-        let nanos = ((self.0 % 10_000_000) * 100) as u32;
-        chrono::DateTime::<chrono::Utc>::from_timestamp(secs, nanos)
+impl From<FILETIME> for Filetime {
+    #[inline]
+    fn from(value: FILETIME) -> Self {
+        Self(((value.dwHighDateTime as u64) << 32) | value.dwLowDateTime as u64)
+    }
+}
+
+impl From<Filetime> for FILETIME {
+    #[inline]
+    fn from(value: Filetime) -> Self {
+        Self {
+            dwLowDateTime: value.raw() as u32,
+            dwHighDateTime: (value.raw() >> 32) as u32,
+        }
     }
 }
 
@@ -120,8 +108,8 @@ pub(crate) fn filetime_to_systemtime(filetime: i64) -> Result<SystemTime, UsnErr
         )));
     }
 
-    Filetime::from_u64(filetime as u64)
-        .try_to_system_time()
+    Filetime::new(filetime as u64)
+        .to_system_time()
         .ok_or_else(|| {
             UsnError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
@@ -316,8 +304,8 @@ mod tests {
 
         #[test]
         fn unix_epoch_boundary() {
-            let f = Filetime::from_u64(WINDOWS_TO_UNIX_OFFSET_100NS);
-            assert_eq!(f.try_to_system_time(), Some(UNIX_EPOCH));
+            let f = Filetime::new(WINDOWS_TO_UNIX_OFFSET_100NS);
+            assert_eq!(f.to_system_time(), Some(UNIX_EPOCH));
             assert_eq!(f.to_unix_seconds(), 0);
             assert_eq!(f.to_unix_nanos(), 0);
         }
@@ -325,7 +313,7 @@ mod tests {
         #[test]
         fn underflow_below_unix_epoch() {
             // 1 second before Unix epoch in FILETIME units.
-            let f = Filetime::from_u64(WINDOWS_TO_UNIX_OFFSET_100NS - 10_000_000);
+            let f = Filetime::new(WINDOWS_TO_UNIX_OFFSET_100NS - 10_000_000);
             // Should still be representable (1969-12-31 23:59:59) on platforms
             // where SystemTime supports pre-Unix-epoch times.
             assert_eq!(f.to_unix_seconds(), -1);
@@ -333,17 +321,30 @@ mod tests {
 
         #[test]
         fn zero_is_windows_epoch() {
-            let f = Filetime::from_u64(0);
+            let f = Filetime::new(0);
             // Windows epoch: 1601-01-01. Should be representable as
             // SystemTime on Windows.
-            let st = f.try_to_system_time().expect("windows epoch");
+            let st = f.to_system_time().expect("windows epoch");
             assert!(st < UNIX_EPOCH);
         }
 
         #[test]
-        fn from_raw_i64_clamps_negative() {
-            assert_eq!(Filetime::from_raw_i64(-5).as_u64(), 0);
-            assert_eq!(Filetime::from_raw_i64(42).as_u64(), 42);
+        fn new_raw_and_win32_conversions_round_trip() {
+            let raw = 0x0123_4567_89ab_cdef;
+            let filetime = Filetime::new(raw);
+            assert_eq!(filetime.raw(), raw);
+            assert_eq!(Filetime::new(raw), filetime);
+
+            let win32 = FILETIME {
+                dwLowDateTime: raw as u32,
+                dwHighDateTime: (raw >> 32) as u32,
+            };
+            let filetime_from_win32 = Filetime::from(win32);
+            assert_eq!(filetime_from_win32.raw(), raw);
+
+            let round_trip_win32: FILETIME = filetime_from_win32.into();
+            assert_eq!(round_trip_win32.dwLowDateTime, win32.dwLowDateTime);
+            assert_eq!(round_trip_win32.dwHighDateTime, win32.dwHighDateTime);
         }
     }
 

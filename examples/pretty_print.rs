@@ -25,7 +25,7 @@ fn pretty_format<P: AsRef<Path>>(entry: &UsnEntry, full_path_opt: Option<P>) -> 
 
     // Convert FILETIME to a SystemTime for display. On platforms or values that
     // cannot be represented, fall back to the raw FILETIME value.
-    let timestamp_str = match entry.time.try_to_system_time() {
+    let timestamp_str = match entry.time.to_system_time() {
         Some(st) => format_system_time(st),
         None => format!("{:?}", entry.time),
     };
@@ -52,8 +52,7 @@ fn pretty_format<P: AsRef<Path>>(entry: &UsnEntry, full_path_opt: Option<P>) -> 
     output
 }
 
-/// Formats a `SystemTime` as an ISO-8601-like UTC string without pulling in
-/// `chrono` so this example works under `--no-default-features` too.
+/// Formats a `SystemTime` as an ISO-8601-like UTC string.
 fn format_system_time(st: SystemTime) -> String {
     match st.duration_since(SystemTime::UNIX_EPOCH) {
         Ok(d) => {
