@@ -38,7 +38,7 @@ pub(crate) enum AttributeListInfo {
 
 /// Information about a single named alternate data stream (`$DATA`
 /// attribute with a non-empty attribute name).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct AdsInfo {
     pub name: OsString,
     pub real_size: u64,
@@ -47,7 +47,7 @@ pub struct AdsInfo {
 }
 
 /// Comprehensive metadata for one MFT record.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct RawMftEntry {
     pub record_number: u64,
     pub sequence_number: u16,

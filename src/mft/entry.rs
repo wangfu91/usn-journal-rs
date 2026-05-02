@@ -11,7 +11,7 @@ use crate::{Fid, FileAttributes, Usn};
 ///
 /// On NTFS the file IDs are standard 64-bit references. On ReFS, when the
 /// system returns `USN_RECORD_V3`, `fid` / `parent_fid` hold 128-bit IDs.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct MftEntry {
     /// Parsed Update Sequence Number.
     pub usn: Usn,

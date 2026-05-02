@@ -83,12 +83,6 @@ impl Fid {
         Self::Standard(v)
     }
 
-    /// Construct a standard 64-bit NTFS file reference number.
-    #[inline]
-    pub const fn from_u64(v: u64) -> Self {
-        Self::Standard(v)
-    }
-
     /// Construct a 128-bit file identifier.
     #[inline]
     pub const fn from_u128(v: u128) -> Self {

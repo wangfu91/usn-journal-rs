@@ -70,7 +70,7 @@ pub(crate) struct NtfsStandardInformation {
 
 /// File-name attribute namespace.
 #[allow(dead_code)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum FileNameNamespace {
     Posix = 0,

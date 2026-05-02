@@ -14,9 +14,9 @@ use windows::{
     core::HSTRING,
 };
 
-/// Internal source used to open a [`Volume`].
-#[derive(Debug)]
-pub(crate) enum VolumeSource {
+/// Source used to open a [`Volume`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum VolumeSource {
     /// Volume was opened via a drive letter (e.g. `'C'`).
     DriveLetter(char),
     /// Volume was opened via a mount point path.
@@ -68,6 +68,13 @@ impl Volume {
             VolumeSource::MountPoint(p) => Some(p),
             _ => None,
         }
+    }
+
+    /// Returns the source used to open this volume.
+    #[must_use]
+    #[inline]
+    pub fn source(&self) -> &VolumeSource {
+        &self.source
     }
 
     /// Creates a mock `Volume` for testing (invalid handle, no real device).
@@ -188,7 +195,10 @@ fn get_volume_handle_from_mount_point(mount_point: &Path) -> Result<HANDLE, UsnE
 mod tests {
     use windows::Win32::Foundation::ERROR_FILE_NOT_FOUND;
 
-    use crate::{errors::UsnError, volume::Volume};
+    use crate::{
+        errors::UsnError,
+        volume::{Volume, VolumeSource},
+    };
 
     // Integration tests that require actual filesystem access
     mod integration_tests {
@@ -205,6 +215,7 @@ mod tests {
                         Some(drive_letter),
                         "Drive letter should match"
                     );
+                    assert_eq!(volume.source(), &VolumeSource::DriveLetter(drive_letter));
                     assert!(volume.mount_point().is_none(), "Mount point should be None");
                     Ok(())
                 }

@@ -13,7 +13,7 @@ use super::reason::{CompactReason, format_reason};
 ///
 /// `fid` / `parent_fid` may be either standard 64-bit NTFS file references
 /// or 128-bit file IDs from `USN_RECORD_V3` on ReFS.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct UsnEntry {
     /// Parsed Update Sequence Number.
     pub usn: Usn,

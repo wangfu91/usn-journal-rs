@@ -45,6 +45,7 @@ and idiomatic Rust refactoring. **Breaking changes throughout** — see the
   `RawMftIterOptions::builder()`.
 - `PathResolver::new(v).with_lru_cache(n).with_in_memory_tree(&raw_mft)?`
   fluent builder API.
+- `usn_journal_rs::prelude` for common application imports.
 - `InMemoryDirTree::from_raw_mft` for O(1) path resolution without per-lookup
   syscalls.
 - USN v3 / 128-bit file ID support for `UsnJournal`, `Mft`, and `PathResolver`.
@@ -70,6 +71,9 @@ and idiomatic Rust refactoring. **Breaking changes throughout** — see the
   `mft::EnumOptions` renamed to `MftIterOptions`.
 - Fallible iteration entry points renamed to `try_iter` / `try_iter_with_options`.
 - `PathResolvableEntry::fid()` and `parent_fid()` now return `Fid`.
+- `VolumeSource` is public and exposed via `Volume::source()`.
+- Entry structs now derive `Clone`, `PartialEq`, `Eq`, and `Hash` where their
+  field types permit it.
 - `Fid` now represents both standard 64-bit NTFS file references and
   128-bit ReFS file IDs. Use `is_standard()`, `is_extended()`, `as_u64()`,
   `as_u128()`, and `as_bytes()` to inspect the underlying representation.
@@ -89,6 +93,7 @@ and idiomatic Rust refactoring. **Breaking changes throughout** — see the
 - `UsnError::OtherError(String)` catch-all variant.
 - `PathResolver::new_with_cache` (deprecated; use
   `PathResolver::new(v).with_lru_cache(n)`).
+- `Fid::from_u64`; use `Fid::new` or `Fid::from(u64)` instead.
 - External date/time crate integration from the public API.
 - Crate-root re-exports of `DEFAULT_JOURNAL_MAX_SIZE`,
   `DEFAULT_JOURNAL_ALLOCATION_DELTA`, `USN_REASON_MASK_ALL`, and

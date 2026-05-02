@@ -29,6 +29,7 @@ journal IOCTLs are privilege-gated by the OS.
   or an in-memory directory tree for O(1) resolution on large scans
 - Lightweight `Filetime(u64)` newtype with standard-library conversions
 - Strong `Usn`, `Fid`, `UsnReason`, and `FileAttributes` types throughout (`Fid` supports both 64-bit NTFS and 128-bit ReFS file IDs)
+- `usn_journal_rs::prelude` for the common high-level types and bitflags
 
 ## Quick start
 

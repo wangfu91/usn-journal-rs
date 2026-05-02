@@ -11,14 +11,14 @@
 use crate::errors::UsnError;
 
 /// One decoded data run.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum DataRun {
     Data { lcn: u64, clusters: u64 },
     Sparse { clusters: u64 },
 }
 
 /// Aggregated information about an attribute's runs.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub struct DataRunSummary {
     pub run_count: u32,
     pub total_clusters: u64,
