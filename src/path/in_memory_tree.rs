@@ -4,7 +4,7 @@
 //! numbers to `(parent, UTF-16 name)` pairs. Once constructed, resolving a
 //! file path to the root is a pure pointer-chase with no syscalls.
 
-use super::{NTFS_ROOT_RECORD_NUMBER, mask_fid_to_record_number};
+use super::util::{NTFS_ROOT_RECORD_NUMBER, mask_fid_to_record_number};
 use crate::{Fid, raw_mft::RawMft};
 use rustc_hash::FxHashMap;
 use std::{
