@@ -275,10 +275,9 @@ impl<'a> Iterator for RawMftIter<'a> {
             if !FileRecord::is_valid(buf) {
                 continue;
             }
-                    match FileRecord::parse(n, buf) {
+            match FileRecord::parse(n, buf) {
                 Ok(rec) => {
-                    let (mut entry, attr_list) =
-                        RawMftEntry::from_record_with_attr_list(&rec);
+                    let (mut entry, attr_list) = RawMftEntry::from_record_with_attr_list(&rec);
                     // `rec` is last used above; NLL ends the borrow on
                     // the reader's internal buffer here, so self.reader
                     // is free for the extension-record reads below.
@@ -358,7 +357,10 @@ fn enrich_from_attr_list(
     // 1. Materialise the flat $ATTRIBUTE_LIST byte slice.
     let data: Vec<u8> = match attr_list {
         AttributeListInfo::Resident(bytes) => bytes,
-        AttributeListInfo::NonResident { runs_data, data_size } => {
+        AttributeListInfo::NonResident {
+            runs_data,
+            data_size,
+        } => {
             let runs = match decode_runs(&runs_data) {
                 Ok((r, _)) => r,
                 Err(e) => {
