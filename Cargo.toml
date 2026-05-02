@@ -20,6 +20,7 @@ bitflags = "2"
 chrono = { version = "0.4", optional = true }
 log = "0.4"
 lru = "0.18"
+rustc-hash = "2"
 thiserror = "2"
 
 [features]

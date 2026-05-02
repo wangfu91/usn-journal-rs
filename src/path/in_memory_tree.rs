@@ -6,8 +6,8 @@
 
 use super::{NTFS_ROOT_RECORD_NUMBER, mask_fid_to_record_number};
 use crate::{Fid, raw_mft::RawMft};
+use rustc_hash::FxHashMap;
 use std::{
-    collections::HashMap,
     ffi::OsString,
     os::windows::ffi::{OsStrExt, OsStringExt},
     path::PathBuf,
@@ -29,14 +29,17 @@ struct DirEntry {
 /// allocations until the final assembly.
 #[derive(Debug, Default, Clone)]
 pub struct InMemoryDirTree {
-    entries: HashMap<u64, DirEntry>,
+    entries: FxHashMap<u64, DirEntry>,
 }
 
 impl InMemoryDirTree {
     /// Build the tree from a raw `$MFT` reader. Iterates every record
     /// once. Skips entries marked unused in the `$MFT $BITMAP`.
     pub fn from_raw_mft(raw_mft: &RawMft<'_>) -> crate::UsnResult<Self> {
-        let mut entries = HashMap::with_capacity(raw_mft.record_count() as usize);
+        let mut entries = FxHashMap::with_capacity_and_hasher(
+            raw_mft.record_count() as usize,
+            Default::default(),
+        );
         for r in raw_mft.try_iter()? {
             let entry = match r {
                 Ok(e) => e,
