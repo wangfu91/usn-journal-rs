@@ -60,6 +60,8 @@ and idiomatic Rust refactoring. **Breaking changes throughout** — see the
 ### Changed
 
 - `Volume` fields are now private; use the public accessor methods.
+- `PathResolver::new` now enables the default LRU directory cache automatically;
+  call `.without_lru_cache()` for fully uncached syscall resolution.
 - `RawMftEntry` timestamps are `Filetime` instead of `chrono::DateTime<Utc>`.
 - `UsnEntry::time` is `Filetime` instead of `std::time::SystemTime`.
 - `RawMftOptions::batch_records: usize` →

@@ -2,7 +2,10 @@
 //!
 //! Provides types and logic to resolve full file paths from file IDs using MFT or USN journal data.
 
-use crate::{Fid, journal::UsnEntry, mft::MftEntry, volume::Volume};
+pub mod in_memory_tree;
+pub use in_memory_tree::InMemoryDirTree;
+
+use crate::{Fid, journal::UsnEntry, mft::MftEntry, raw_mft::RawMft, volume::Volume};
 use lru::LruCache;
 use std::{
     cell::RefCell,
@@ -17,7 +20,14 @@ use windows::Win32::{
     Storage::FileSystem::{self, FILE_FLAGS_AND_ATTRIBUTES, FILE_ID_DESCRIPTOR},
 };
 
-const LRU_CACHE_CAPACITY: usize = 4 * 1024; // 4K
+/// NTFS root directory MFT record number (`$Root`).
+///
+/// In parent-chain walks, reaching this record means path resolution has
+/// reached the filesystem root and should stop climbing.
+pub(crate) const NTFS_ROOT_RECORD_NUMBER: u64 = 5;
+
+/// LRU cache mapping a file ID to its `(full_path, leaf_name)` pair.
+type DirLruCache = LruCache<Fid, (Arc<Path>, OsString)>;
 
 /// Trait for entries that can be resolved to a file path.
 pub trait PathResolvableEntry {
@@ -65,7 +75,7 @@ pub(crate) fn mask_fid_to_record_number(fid: Fid) -> Option<u64> {
 
 /// Resolves file paths from file IDs on an NTFS/ReFS volume.
 ///
-/// Use the builder methods to opt into performance features:
+/// Use [`PathResolver::builder`] to configure and construct an instance:
 ///
 /// ```no_run
 /// use usn_journal_rs::{volume::Volume, path::PathResolver};
@@ -73,12 +83,13 @@ pub(crate) fn mask_fid_to_record_number(fid: Fid) -> Option<u64> {
 ///
 /// let volume = Volume::from_drive_letter('C').unwrap();
 ///
-/// // Syscall-only (no cache):
-/// let resolver = PathResolver::new(&volume);
+/// // Default resolver — uncached, pure syscall resolution:
+/// let resolver = PathResolver::builder(&volume).build();
 ///
-/// // With LRU directory cache:
-/// let resolver = PathResolver::new(&volume)
-///     .with_lru_cache(NonZeroUsize::new(4096).unwrap());
+/// // With an LRU directory cache for repeated lookups in the same directory:
+/// let resolver = PathResolver::builder(&volume)
+///     .with_lru_cache(NonZeroUsize::new(4_096).unwrap())
+///     .build();
 /// ```
 ///
 /// `PathResolver` is intentionally `!Sync` — it carries an internal
@@ -87,103 +98,22 @@ pub(crate) fn mask_fid_to_record_number(fid: Fid) -> Option<u64> {
 #[derive(Debug)]
 pub struct PathResolver<'a> {
     volume: &'a Volume,
-    dir_fid_path_cache: Option<LruCache<Fid, (Arc<Path>, OsString)>>,
-    scratch: RefCell<Vec<u8>>,
+    dir_fid_path_cache: Option<DirLruCache>,
+    /// Reusable heap buffer for `GetFileInformationByHandleEx` calls.
+    buffer: RefCell<Vec<u8>>,
     in_memory_tree: Option<InMemoryDirTree>,
 }
 
 impl<'a> PathResolver<'a> {
-    /// Create a new `PathResolver` for the given volume.
+    /// Create a [`PathResolverBuilder`] for the given volume.
     ///
-    /// By default the resolver uses `OpenFileById` syscalls with no cache.
-    /// Chain [`with_lru_cache`][`Self::with_lru_cache`] or
-    /// [`with_in_memory_tree`][`Self::with_in_memory_tree`] to enable
-    /// faster resolution strategies.
+    /// The builder defaults to uncached syscall resolution. Use
+    /// [`PathResolverBuilder::with_lru_cache`] to add a directory path cache, or
+    /// [`PathResolverBuilder::build_with_in_memory_tree`] for the fastest NTFS
+    /// full-scan strategy.
     #[must_use]
-    pub fn new(volume: &'a Volume) -> Self {
-        PathResolver {
-            volume,
-            dir_fid_path_cache: None,
-            scratch: RefCell::new(Vec::new()),
-            in_memory_tree: None,
-        }
-    }
-
-    /// Enable an LRU cache of the given capacity for directory path lookups.
-    ///
-    /// When enabled, resolved parent-directory paths are stored in the cache
-    /// so that subsequent entries in the same directory avoid a
-    /// `OpenFileById` round-trip.
-    ///
-    /// # Example
-    /// ```no_run
-    /// use usn_journal_rs::{volume::Volume, path::PathResolver};
-    /// use std::num::NonZeroUsize;
-    ///
-    /// let volume = Volume::from_drive_letter('C').unwrap();
-    /// let resolver = PathResolver::new(&volume)
-    ///     .with_lru_cache(NonZeroUsize::new(4096).unwrap());
-    /// ```
-    #[must_use]
-    pub fn with_lru_cache(mut self, capacity: NonZeroUsize) -> Self {
-        self.dir_fid_path_cache = Some(LruCache::new(capacity));
-        self
-    }
-
-    /// Create a `PathResolver` with a default-capacity LRU cache.
-    ///
-    /// # Deprecated
-    /// Use [`PathResolver::new`] followed by
-    /// [`.with_lru_cache`][`Self::with_lru_cache`] instead:
-    ///
-    /// ```no_run
-    /// # use usn_journal_rs::{volume::Volume, path::PathResolver};
-    /// # use std::num::NonZeroUsize;
-    /// # let volume = Volume::from_drive_letter('C').unwrap();
-    /// let resolver = PathResolver::new(&volume)
-    ///     .with_lru_cache(NonZeroUsize::new(4096).unwrap());
-    /// ```
-    #[deprecated(
-        since = "0.5.0",
-        note = "Use `PathResolver::new(v).with_lru_cache(capacity)` instead"
-    )]
-    pub fn new_with_cache(volume: &'a Volume) -> Self {
-        let capacity = NonZeroUsize::new(LRU_CACHE_CAPACITY)
-            .expect("LRU_CACHE_CAPACITY must be greater than zero");
-        Self::new(volume).with_lru_cache(capacity)
-    }
-
-    /// Build and attach an in-memory directory tree from the given raw `$MFT`.
-    ///
-    /// Path resolution will check the tree first; on a miss it falls back to
-    /// `OpenFileById` syscalls (and caches the result if an LRU cache is also
-    /// enabled via [`with_lru_cache`][`Self::with_lru_cache`]).
-    ///
-    /// Returns an error on non-NTFS volumes (e.g. ReFS) or if the MFT
-    /// iteration fails.
-    ///
-    /// # Example
-    /// ```no_run
-    /// use usn_journal_rs::{volume::Volume, raw_mft::RawMft, path::PathResolver};
-    ///
-    /// let volume = Volume::from_drive_letter('C').unwrap();
-    /// let raw_mft = RawMft::new(&volume).unwrap();
-    /// let mut resolver = PathResolver::new(&volume)
-    ///     .with_in_memory_tree(&raw_mft)
-    ///     .unwrap();
-    /// for entry in raw_mft.try_iter().unwrap().flatten().take(100) {
-    ///     if let Some(path) = resolver.resolve_path(&entry) {
-    ///         println!("{}", path.display());
-    ///     }
-    /// }
-    /// ```
-    pub fn with_in_memory_tree(
-        mut self,
-        raw_mft: &crate::raw_mft::RawMft<'_>,
-    ) -> crate::UsnResult<Self> {
-        let tree = InMemoryDirTree::from_raw_mft(raw_mft)?;
-        self.in_memory_tree = Some(tree);
-        Ok(self)
+    pub fn builder(volume: &'a Volume) -> PathResolverBuilder<'a> {
+        PathResolverBuilder::new(volume)
     }
 
     /// Resolve `entry` to a full path, using the in-memory tree (if
@@ -209,7 +139,7 @@ impl<'a> PathResolver<'a> {
                 entry.file_name(),
                 entry.is_dir(),
                 cache,
-                &self.scratch,
+                &self.buffer,
             )
         } else {
             resolve_path(
@@ -217,9 +147,120 @@ impl<'a> PathResolver<'a> {
                 entry.fid(),
                 entry.parent_fid(),
                 entry.file_name(),
-                &self.scratch,
+                &self.buffer,
             )
         }
+    }
+}
+
+/// Builder for [`PathResolver`].
+///
+/// Obtain one via [`PathResolver::builder`].
+///
+/// # Example
+/// ```no_run
+/// use usn_journal_rs::{volume::Volume, raw_mft::RawMft, path::PathResolver};
+/// use std::num::NonZeroUsize;
+///
+/// let volume = Volume::from_drive_letter('C').unwrap();
+///
+/// // Uncached resolver (the default):
+/// let mut resolver = PathResolver::builder(&volume).build();
+///
+/// // With an LRU cache:
+/// let mut resolver = PathResolver::builder(&volume)
+///     .with_lru_cache(NonZeroUsize::new(4096).unwrap())
+///     .build();
+///
+/// // With in-memory tree (NTFS only):
+/// let raw_mft = RawMft::new(&volume).unwrap();
+/// let mut resolver = PathResolver::builder(&volume)
+///     .build_with_in_memory_tree(&raw_mft)
+///     .unwrap();
+/// ```
+#[derive(Debug)]
+pub struct PathResolverBuilder<'a> {
+    volume: &'a Volume,
+    lru_cache_capacity: Option<NonZeroUsize>,
+}
+
+impl<'a> PathResolverBuilder<'a> {
+    fn new(volume: &'a Volume) -> Self {
+        PathResolverBuilder {
+            volume,
+            lru_cache_capacity: None,
+        }
+    }
+
+    /// Enable an LRU directory path cache with the given capacity.
+    ///
+    /// By default the builder produces an uncached resolver. Calling this
+    /// method enables a cache that avoids repeated `OpenFileById` round-trips
+    /// for files in the same directory.
+    ///
+    /// # Example
+    /// ```no_run
+    /// use usn_journal_rs::{volume::Volume, path::PathResolver};
+    /// use std::num::NonZeroUsize;
+    ///
+    /// let volume = Volume::from_drive_letter('C').unwrap();
+    /// let resolver = PathResolver::builder(&volume)
+    ///     .with_lru_cache(NonZeroUsize::new(4096).unwrap())
+    ///     .build();
+    /// ```
+    #[must_use]
+    pub fn with_lru_cache(mut self, capacity: NonZeroUsize) -> Self {
+        self.lru_cache_capacity = Some(capacity);
+        self
+    }
+
+    /// Build a [`PathResolver`] without an in-memory directory tree.
+    #[must_use]
+    pub fn build(self) -> PathResolver<'a> {
+        PathResolver {
+            volume: self.volume,
+            dir_fid_path_cache: self.lru_cache_capacity.map(LruCache::new),
+            buffer: RefCell::new(Vec::new()),
+            in_memory_tree: None,
+        }
+    }
+
+    /// Build a [`PathResolver`] backed by an in-memory directory tree built
+    /// from the given raw `$MFT`.
+    ///
+    /// Path resolution checks the tree first; on a miss it falls back to
+    /// `OpenFileById` syscalls (and caches the result when the LRU cache is
+    /// enabled).
+    ///
+    /// Returns an error on non-NTFS volumes (e.g. ReFS) or if the MFT
+    /// iteration fails.
+    ///
+    /// # Example
+    /// ```no_run
+    /// use usn_journal_rs::{volume::Volume, raw_mft::RawMft, path::PathResolver};
+    ///
+    /// let volume = Volume::from_drive_letter('C').unwrap();
+    /// let raw_mft = RawMft::new(&volume).unwrap();
+    /// let mut resolver = PathResolver::builder(&volume)
+    ///     .build_with_in_memory_tree(&raw_mft)
+    ///     .unwrap();
+    /// for entry in raw_mft.try_iter().unwrap().flatten().take(100) {
+    ///     if let Some(path) = resolver.resolve_path(&entry) {
+    ///         println!("{}", path.display());
+    ///     }
+    /// }
+    /// ```
+    pub fn build_with_in_memory_tree(
+        self,
+        raw_mft: &RawMft<'_>,
+    ) -> crate::UsnResult<PathResolver<'a>> {
+        let tree = InMemoryDirTree::from_raw_mft(raw_mft)?;
+        Ok(PathResolver {
+            volume: self.volume,
+            dir_fid_path_cache: self.lru_cache_capacity.map(LruCache::new),
+            buffer: RefCell::new(Vec::new()),
+            in_memory_tree: Some(tree),
+        })
     }
 }
 
@@ -228,11 +269,11 @@ fn resolve_path(
     fid: Fid,
     parent_fid: Fid,
     file_name: &OsString,
-    scratch: &RefCell<Vec<u8>>,
+    buffer: &RefCell<Vec<u8>>,
 ) -> Option<PathBuf> {
-    if let Ok(resolved_parent_path) = file_id_to_path(volume, parent_fid, scratch) {
+    if let Ok(resolved_parent_path) = file_id_to_path(volume, parent_fid, buffer) {
         return Some(resolved_parent_path.join(file_name));
-    } else if let Ok(resolved_path) = file_id_to_path(volume, fid, scratch) {
+    } else if let Ok(resolved_path) = file_id_to_path(volume, fid, buffer) {
         return Some(resolved_path);
     }
 
@@ -246,8 +287,8 @@ fn resolve_path_with_cache(
     parent_fid: Fid,
     file_name: &OsString,
     is_dir: bool,
-    cache: &mut LruCache<Fid, (Arc<Path>, OsString)>,
-    scratch: &RefCell<Vec<u8>>,
+    cache: &mut DirLruCache,
+    buffer: &RefCell<Vec<u8>>,
 ) -> Option<PathBuf> {
     // 1. Check cache for the current FID.
     if let Some((cached_path, cached_file_name)) = cache.get(&fid) {
@@ -263,7 +304,7 @@ fn resolve_path_with_cache(
 
     if let Some((cached_parent_path, _)) = cache.get(&parent_fid) {
         parent_dir_path = Arc::clone(cached_parent_path);
-    } else if let Ok(resolved_parent_path) = file_id_to_path(volume, parent_fid, scratch) {
+    } else if let Ok(resolved_parent_path) = file_id_to_path(volume, parent_fid, buffer) {
         let parent_actual_name = resolved_parent_path
             .file_name()
             .map_or_else(OsString::new, |s| s.to_os_string());
@@ -290,7 +331,7 @@ fn resolve_path_with_cache(
 fn file_id_to_path(
     volume: &Volume,
     file_id: Fid,
-    scratch: &RefCell<Vec<u8>>,
+    buffer: &RefCell<Vec<u8>>,
 ) -> windows::core::Result<PathBuf> {
     let (id, id_type) = match file_id {
         Fid::Standard(id) => (
@@ -321,18 +362,18 @@ fn file_id_to_path(
         FileSystem::OpenFileById(
             volume.handle,
             &file_id_desc,
-            FileSystem::FILE_GENERIC_READ.0,
+            0,
             FileSystem::FILE_SHARE_READ
                 | FileSystem::FILE_SHARE_WRITE
                 | FileSystem::FILE_SHARE_DELETE,
             None,
-            FILE_FLAGS_AND_ATTRIBUTES::default(),
+            FILE_FLAGS_AND_ATTRIBUTES(FileSystem::FILE_FLAG_BACKUP_SEMANTICS.0),
         )?
     };
 
     let init_len = size_of::<u32>() + (Foundation::MAX_PATH as usize) * size_of::<u16>();
-    // Reuse the per-resolver scratch buffer to avoid reallocating per call.
-    let mut info_buffer = scratch.borrow_mut();
+    // Reuse the per-resolver buffer to avoid reallocating per call.
+    let mut info_buffer = buffer.borrow_mut();
     info_buffer.clear();
     info_buffer.resize(init_len, 0);
 
@@ -416,141 +457,6 @@ fn file_id_to_path(
 
     full_path.push(sub_path);
     Ok(full_path)
-}
-
-// =====================================================================
-// In-memory directory tree
-// =====================================================================
-
-/// Directory entry in the in-memory tree. Stores the parent file
-/// reference number (full 64-bit, not masked) and the leaf name as raw
-/// UTF-16 units so we don't pay an `OsString` allocation per entry.
-#[derive(Debug, Clone)]
-struct DirEntry {
-    parent: Fid,
-    name: Box<[u16]>,
-}
-
-/// Pre-built in-memory directory tree keyed by 48-bit MFT record number.
-///
-/// Built in a single pass over the raw `$MFT`. Resolving a path is then
-/// a pointer chase up to the root with no syscalls and no `PathBuf`
-/// allocations until the final assembly.
-#[derive(Debug, Default, Clone)]
-pub struct InMemoryDirTree {
-    entries: std::collections::HashMap<u64, DirEntry>,
-}
-
-impl InMemoryDirTree {
-    /// Build the tree from a raw `$MFT` reader. Iterates every record
-    /// once. Skips entries marked unused in the `$MFT $BITMAP`.
-    pub fn from_raw_mft(raw_mft: &crate::raw_mft::RawMft<'_>) -> crate::UsnResult<Self> {
-        use std::os::windows::ffi::OsStrExt;
-        let mut entries = std::collections::HashMap::with_capacity(raw_mft.record_count() as usize);
-        for r in raw_mft.try_iter()? {
-            let entry = match r {
-                Ok(e) => e,
-                Err(_) => continue,
-            };
-            if !entry.is_used {
-                continue;
-            }
-            if entry.file_name.is_empty() {
-                continue;
-            }
-            let Some(key) = mask_fid_to_record_number(entry.file_reference) else {
-                continue;
-            };
-            // Encode the file name as raw UTF-16 once and store it.
-            let units: Vec<u16> = entry.file_name.encode_wide().collect();
-            entries.insert(
-                key,
-                DirEntry {
-                    parent: entry.parent_reference,
-                    name: units.into_boxed_slice(),
-                },
-            );
-        }
-        Ok(InMemoryDirTree { entries })
-    }
-
-    /// Number of entries currently stored.
-    #[must_use]
-    #[inline]
-    pub fn len(&self) -> usize {
-        self.entries.len()
-    }
-
-    /// Returns `true` if the tree has no entries.
-    #[must_use]
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
-    }
-
-    /// Insert a directory entry (testing / advanced use).
-    #[doc(hidden)]
-    pub fn insert(&mut self, fid: u64, parent: u64, name: &[u16]) {
-        self.entries.insert(
-            Fid::new(fid)
-                .record_number()
-                .expect("standard fid must expose record number"),
-            DirEntry {
-                parent: Fid::new(parent),
-                name: name.to_vec().into_boxed_slice(),
-            },
-        );
-    }
-
-    /// Walks parents up to the root and returns the resolved path
-    /// (without drive prefix). Returns `None` if the chain breaks or a
-    /// cycle is detected.
-    #[must_use]
-    pub fn resolve(&self, fid: Fid) -> Option<PathBuf> {
-        self.resolve_with_optional_drive(fid, None)
-    }
-
-    /// Walks parents and prepends `<drive>:\` to the resolved path.
-    #[must_use]
-    pub fn resolve_with_drive_letter(&self, fid: Fid, drive: char) -> Option<PathBuf> {
-        self.resolve_with_optional_drive(fid, Some(drive))
-    }
-
-    fn resolve_with_optional_drive(&self, fid: Fid, drive: Option<char>) -> Option<PathBuf> {
-        // Maximum walk depth — far above the practical NTFS path-component
-        // limit (~64 segments) and below any realistic cycle length.
-        const MAX_STEPS: usize = 256;
-
-        let mut chain: Vec<&[u16]> = Vec::with_capacity(32);
-        let mut current = mask_fid_to_record_number(fid)?;
-        let mut steps = 0usize;
-        loop {
-            if steps >= MAX_STEPS {
-                return None;
-            }
-            steps += 1;
-
-            let entry = self.entries.get(&current)?;
-            chain.push(&entry.name);
-
-            let parent = mask_fid_to_record_number(entry.parent)?;
-            // NTFS root directory has record number 5 and self-references.
-            if parent == current || parent == 5 {
-                break;
-            }
-            current = parent;
-        }
-
-        let mut path = PathBuf::new();
-        if let Some(drive) = drive {
-            let drive = drive.to_ascii_uppercase();
-            path.push(format!("{drive}:\\"));
-        }
-        for units in chain.iter().rev() {
-            path.push(OsString::from_wide(units));
-        }
-        Some(path)
-    }
 }
 
 #[cfg(test)]
@@ -675,8 +581,9 @@ mod tests {
     #[test]
     fn test_resolve_path_with_cache_hit() {
         let volume = create_mock_volume();
-        let mut resolver =
-            PathResolver::new(&volume).with_lru_cache(NonZeroUsize::new(4096).unwrap());
+        let mut resolver = PathResolver::builder(&volume)
+            .with_lru_cache(NonZeroUsize::new(4096).unwrap())
+            .build();
 
         // Pre-populate cache
         let cached_path = arc_path("C:\\Documents\\Folder");
@@ -704,8 +611,9 @@ mod tests {
     #[test]
     fn test_resolve_path_with_cache_miss_parent_hit() {
         let volume = create_mock_volume();
-        let mut resolver =
-            PathResolver::new(&volume).with_lru_cache(NonZeroUsize::new(4096).unwrap());
+        let mut resolver = PathResolver::builder(&volume)
+            .with_lru_cache(NonZeroUsize::new(4096).unwrap())
+            .build();
 
         // Pre-populate cache with parent directory
         let cached_parent_path = arc_path("C:\\Documents");
@@ -730,8 +638,9 @@ mod tests {
     #[test]
     fn test_resolve_path_with_cache_directory_caching() {
         let volume = create_mock_volume();
-        let mut resolver =
-            PathResolver::new(&volume).with_lru_cache(NonZeroUsize::new(4096).unwrap());
+        let mut resolver = PathResolver::builder(&volume)
+            .with_lru_cache(NonZeroUsize::new(4096).unwrap())
+            .build();
 
         // Pre-populate cache with parent directory
         let cached_parent_path = arc_path("C:\\Documents");
@@ -764,8 +673,9 @@ mod tests {
     #[test]
     fn test_resolve_path_with_cache_name_mismatch() {
         let volume = create_mock_volume();
-        let mut resolver =
-            PathResolver::new(&volume).with_lru_cache(NonZeroUsize::new(4096).unwrap());
+        let mut resolver = PathResolver::builder(&volume)
+            .with_lru_cache(NonZeroUsize::new(4096).unwrap())
+            .build();
 
         // Pre-populate cache with old name
         let cached_path = arc_path("C:\\Documents\\OldName");
@@ -804,7 +714,7 @@ mod tests {
     #[test]
     fn test_resolve_path_failure() {
         let volume = create_mock_volume();
-        let mut resolver = PathResolver::new(&volume);
+        let mut resolver = PathResolver::builder(&volume).build();
 
         let entry = MockEntry {
             fid: Fid::new(0x123456),
@@ -827,7 +737,7 @@ mod tests {
     #[test]
     fn test_builder_default_has_no_cache_and_no_tree() {
         let volume = create_mock_volume();
-        let resolver = PathResolver::new(&volume);
+        let resolver = PathResolver::builder(&volume).build();
         assert!(resolver.dir_fid_path_cache.is_none());
         assert!(resolver.in_memory_tree.is_none());
     }
@@ -836,7 +746,7 @@ mod tests {
     fn test_builder_with_lru_cache_sets_cache() {
         let volume = create_mock_volume();
         let cap = NonZeroUsize::new(64).unwrap();
-        let resolver = PathResolver::new(&volume).with_lru_cache(cap);
+        let resolver = PathResolver::builder(&volume).with_lru_cache(cap).build();
         assert!(resolver.dir_fid_path_cache.is_some());
         assert!(resolver.in_memory_tree.is_none());
     }
@@ -845,7 +755,7 @@ mod tests {
     fn test_builder_lru_cache_respects_capacity() {
         let volume = create_mock_volume();
         let cap = NonZeroUsize::new(8).unwrap();
-        let resolver = PathResolver::new(&volume).with_lru_cache(cap);
+        let resolver = PathResolver::builder(&volume).with_lru_cache(cap).build();
         let cache = resolver.dir_fid_path_cache.as_ref().unwrap();
         assert_eq!(cache.cap(), NonZeroUsize::new(8).unwrap());
     }
@@ -854,9 +764,10 @@ mod tests {
     fn test_builder_with_lru_cache_twice_keeps_last() {
         // Calling with_lru_cache twice should use the last capacity.
         let volume = create_mock_volume();
-        let resolver = PathResolver::new(&volume)
+        let resolver = PathResolver::builder(&volume)
             .with_lru_cache(NonZeroUsize::new(32).unwrap())
-            .with_lru_cache(NonZeroUsize::new(128).unwrap());
+            .with_lru_cache(NonZeroUsize::new(128).unwrap())
+            .build();
         let cache = resolver.dir_fid_path_cache.as_ref().unwrap();
         assert_eq!(cache.cap(), NonZeroUsize::new(128).unwrap());
     }
@@ -867,63 +778,5 @@ mod tests {
         let tree = InMemoryDirTree::default();
         assert!(tree.is_empty());
         assert!(tree.resolve(Fid::new(0xDEADBEEF)).is_none());
-    }
-
-    mod in_memory_tree_tests {
-        use super::*;
-
-        fn utf16(s: &str) -> Vec<u16> {
-            s.encode_utf16().collect()
-        }
-
-        #[test]
-        fn resolve_four_deep_path() {
-            // Layout:
-            //   5 (root)  -> "Users" (10) -> "alice" (20) -> "docs" (30) -> "todo.txt" (40)
-            let mut tree = InMemoryDirTree::default();
-            tree.insert(10, 5, &utf16("Users"));
-            tree.insert(20, 10, &utf16("alice"));
-            tree.insert(30, 20, &utf16("docs"));
-            tree.insert(40, 30, &utf16("todo.txt"));
-
-            let p = tree.resolve(Fid::new(40)).expect("resolved");
-            // Without drive prefix, components join with the platform separator.
-            assert_eq!(
-                p.to_string_lossy().replace('/', "\\"),
-                "Users\\alice\\docs\\todo.txt"
-            );
-
-            let p = tree
-                .resolve_with_drive_letter(Fid::new(40), 'c')
-                .expect("with drive");
-            assert_eq!(p.to_string_lossy(), "C:\\Users\\alice\\docs\\todo.txt");
-        }
-
-        #[test]
-        fn cycle_detection() {
-            let mut tree = InMemoryDirTree::default();
-            // 10 -> 11 -> 10 (cycle)
-            tree.insert(10, 11, &utf16("a"));
-            tree.insert(11, 10, &utf16("b"));
-            // The walker bounds at 256 steps; the chain visits 10, 11, 10, 11...
-            // forever and returns None.
-            assert!(tree.resolve(Fid::new(10)).is_none());
-        }
-
-        #[test]
-        fn missing_fid_returns_none() {
-            let tree = InMemoryDirTree::default();
-            assert!(tree.resolve(Fid::new(0xDEADBEEF)).is_none());
-        }
-
-        #[test]
-        fn fid_with_sequence_bits_is_masked() {
-            let mut tree = InMemoryDirTree::default();
-            tree.insert(10, 5, &utf16("hello"));
-            // Lookup with the high 16 bits set (sequence number) must
-            // still resolve to the same record.
-            let fid = (0x0123u64 << 48) | 10;
-            assert!(tree.resolve(Fid::new(fid)).is_some());
-        }
     }
 }

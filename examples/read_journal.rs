@@ -11,8 +11,7 @@ fn run() -> Result<(), UsnError> {
     let volume = Volume::from_drive_letter(drive_letter)?;
     let usn_journal = UsnJournal::new(&volume);
 
-    let mut path_resolver =
-        PathResolver::new(&volume).with_lru_cache(std::num::NonZeroUsize::new(4096).unwrap());
+    let mut path_resolver = PathResolver::builder(&volume).build();
 
     for result in usn_journal.try_iter()? {
         match result {

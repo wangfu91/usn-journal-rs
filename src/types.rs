@@ -70,6 +70,13 @@ impl Default for Fid {
 }
 
 impl Fid {
+    /// Mask for the lower 48 bits (record number) of a standard NTFS file reference.
+    const RECORD_NUMBER_MASK: u64 = (1u64 << 48) - 1;
+    /// Mask for the upper 16 bits (sequence number) of a standard NTFS file reference.
+    const SEQUENCE_MASK: u64 = 0xFFFF;
+    /// Bit offset of the sequence number within a standard NTFS file reference.
+    const SEQUENCE_SHIFT: u32 = 48;
+
     /// Construct a standard 64-bit NTFS file reference number.
     #[inline]
     pub const fn new(v: u64) -> Self {
@@ -138,7 +145,7 @@ impl Fid {
     #[inline]
     pub const fn record_number(self) -> Option<u64> {
         match self {
-            Self::Standard(v) => Some(v & 0x0000_FFFF_FFFF_FFFF),
+            Self::Standard(v) => Some(v & Self::RECORD_NUMBER_MASK),
             Self::Extended(_) => None,
         }
     }
@@ -149,7 +156,7 @@ impl Fid {
     #[inline]
     pub const fn sequence(self) -> Option<u16> {
         match self {
-            Self::Standard(v) => Some(((v >> 48) & 0xFFFF) as u16),
+            Self::Standard(v) => Some(((v >> Self::SEQUENCE_SHIFT) & Self::SEQUENCE_MASK) as u16),
             Self::Extended(_) => None,
         }
     }

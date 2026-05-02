@@ -10,8 +10,7 @@ fn run() -> Result<(), UsnError> {
     let drive_letter = 'C';
     let volume = Volume::from_drive_letter(drive_letter)?;
     let mft = Mft::new(&volume);
-    let mut path_resolver =
-        PathResolver::new(&volume).with_lru_cache(std::num::NonZeroUsize::new(4096).unwrap());
+    let mut path_resolver = PathResolver::builder(&volume).build();
 
     for result in mft.try_iter()? {
         match result {

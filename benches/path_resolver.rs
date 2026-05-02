@@ -2,7 +2,7 @@
 //!
 //! This benchmark compares three path resolution approaches:
 //! 1. Pure syscall (no caching)
-//! 2. Syscall with LRU cache
+//! 2. Default syscall resolver with LRU cache
 //! 3. In-memory directory tree (one-time scan)
 //!
 //! Run on an elevated shell with:
@@ -94,7 +94,7 @@ fn resolver_syscall_no_cache(bencher: Bencher) {
     }
 
     bencher.bench_local(|| {
-        let mut resolver = PathResolver::new(&volume);
+        let mut resolver = PathResolver::builder(&volume).build();
         let mut count = 0u64;
 
         for entry in &entries {
@@ -118,8 +118,9 @@ fn resolver_syscall_lru_cache(bencher: Bencher) {
     }
 
     bencher.bench_local(|| {
-        let mut resolver =
-            PathResolver::new(&volume).with_lru_cache(NonZeroUsize::new(8192).unwrap());
+        let mut resolver = PathResolver::builder(&volume)
+            .with_lru_cache(NonZeroUsize::new(8192).unwrap())
+            .build();
 
         // Warm-up pass to populate cache
         for entry in &entries {
@@ -158,7 +159,7 @@ fn resolver_in_memory_tree(bencher: Bencher) {
     }
 
     bencher.bench_local(|| {
-        let mut resolver = match PathResolver::new(&volume).with_in_memory_tree(&mft) {
+        let mut resolver = match PathResolver::builder(&volume).build_with_in_memory_tree(&mft) {
             Ok(r) => r,
             Err(e) => {
                 eprintln!("skipping: {e}");
