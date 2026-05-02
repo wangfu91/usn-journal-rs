@@ -36,7 +36,7 @@ fn create_mock_volume() -> Volume {
 }
 
 #[test]
-fn test_mft_entry_path_resolvable_trait() {
+fn mft_entry_path_resolvable_trait() {
     let entry = MftEntry {
         usn: crate::Usn::new(0x1000),
         fid: Fid::new(0x123456),
@@ -52,7 +52,7 @@ fn test_mft_entry_path_resolvable_trait() {
 }
 
 #[test]
-fn test_usn_entry_path_resolvable_trait() {
+fn usn_entry_path_resolvable_trait() {
     let file_name = "document.txt";
     let file_name_utf16: Vec<u16> = file_name.encode_utf16().collect();
     let file_name_len = file_name_utf16.len() * mem::size_of::<u16>();
@@ -117,7 +117,7 @@ fn utf16(s: &str) -> Vec<u16> {
 }
 
 #[test]
-fn test_in_memory_tree_resolve_four_deep_path() {
+fn in_memory_tree_resolve_four_deep_path() {
     // Layout:
     //   5 (root)  -> "Users" (10) -> "alice" (20) -> "docs" (30) -> "todo.txt" (40)
     let mut tree = InMemoryDirTree::default();
@@ -140,7 +140,7 @@ fn test_in_memory_tree_resolve_four_deep_path() {
 }
 
 #[test]
-fn test_in_memory_tree_cycle_detection() {
+fn in_memory_tree_cycle_detection() {
     let mut tree = InMemoryDirTree::default();
     // 10 -> 11 -> 10 (cycle)
     tree.insert(10, 11, &utf16("a"));
@@ -151,13 +151,13 @@ fn test_in_memory_tree_cycle_detection() {
 }
 
 #[test]
-fn test_in_memory_tree_missing_fid_returns_none() {
+fn in_memory_tree_missing_fid_returns_none() {
     let tree = InMemoryDirTree::default();
     assert!(tree.resolve(Fid::new(0xDEADBEEF)).is_none());
 }
 
 #[test]
-fn test_in_memory_tree_fid_with_sequence_bits_is_masked() {
+fn in_memory_tree_fid_with_sequence_bits_is_masked() {
     let mut tree = InMemoryDirTree::default();
     tree.insert(10, 5, &utf16("hello"));
     // Lookup with the high 16 bits set (sequence number) must
@@ -167,7 +167,7 @@ fn test_in_memory_tree_fid_with_sequence_bits_is_masked() {
 }
 
 #[test]
-fn test_resolve_path_with_cache_hit() {
+fn resolve_path_with_cache_hit() {
     let volume = create_mock_volume();
     let mut resolver = PathResolver::builder(&volume)
         .with_lru_cache(NonZeroUsize::new(4096).unwrap())
@@ -196,7 +196,7 @@ fn test_resolve_path_with_cache_hit() {
 }
 
 #[test]
-fn test_resolve_path_with_cache_miss_parent_hit() {
+fn resolve_path_with_cache_miss_parent_hit() {
     let volume = create_mock_volume();
     let mut resolver = PathResolver::builder(&volume)
         .with_lru_cache(NonZeroUsize::new(4096).unwrap())
@@ -222,7 +222,7 @@ fn test_resolve_path_with_cache_miss_parent_hit() {
 }
 
 #[test]
-fn test_resolve_path_with_cache_directory_caching() {
+fn resolve_path_with_cache_directory_caching() {
     let volume = create_mock_volume();
     let mut resolver = PathResolver::builder(&volume)
         .with_lru_cache(NonZeroUsize::new(4096).unwrap())
@@ -255,7 +255,7 @@ fn test_resolve_path_with_cache_directory_caching() {
 }
 
 #[test]
-fn test_resolve_path_with_cache_name_mismatch() {
+fn resolve_path_with_cache_name_mismatch() {
     let volume = create_mock_volume();
     let mut resolver = PathResolver::builder(&volume)
         .with_lru_cache(NonZeroUsize::new(4096).unwrap())
@@ -293,7 +293,7 @@ fn test_resolve_path_with_cache_name_mismatch() {
 }
 
 #[test]
-fn test_resolve_path_failure() {
+fn resolve_path_failure() {
     let volume = create_mock_volume();
     let mut resolver = PathResolver::builder(&volume).build();
 
@@ -309,7 +309,7 @@ fn test_resolve_path_failure() {
 }
 
 #[test]
-fn test_builder_default_has_no_cache_and_no_tree() {
+fn builder_default_has_no_cache_and_no_tree() {
     let volume = create_mock_volume();
     let resolver = PathResolver::builder(&volume).build();
     assert!(resolver.dir_fid_path_cache.is_none());
@@ -317,7 +317,7 @@ fn test_builder_default_has_no_cache_and_no_tree() {
 }
 
 #[test]
-fn test_builder_with_lru_cache_sets_cache() {
+fn builder_with_lru_cache_sets_cache() {
     let volume = create_mock_volume();
     let cap = NonZeroUsize::new(64).unwrap();
     let resolver = PathResolver::builder(&volume).with_lru_cache(cap).build();
@@ -326,7 +326,7 @@ fn test_builder_with_lru_cache_sets_cache() {
 }
 
 #[test]
-fn test_builder_lru_cache_respects_capacity() {
+fn builder_lru_cache_respects_capacity() {
     let volume = create_mock_volume();
     let cap = NonZeroUsize::new(8).unwrap();
     let resolver = PathResolver::builder(&volume).with_lru_cache(cap).build();
@@ -335,7 +335,7 @@ fn test_builder_lru_cache_respects_capacity() {
 }
 
 #[test]
-fn test_builder_with_lru_cache_twice_keeps_last() {
+fn builder_with_lru_cache_twice_keeps_last() {
     let volume = create_mock_volume();
     let resolver = PathResolver::builder(&volume)
         .with_lru_cache(NonZeroUsize::new(32).unwrap())
@@ -346,7 +346,7 @@ fn test_builder_with_lru_cache_twice_keeps_last() {
 }
 
 #[test]
-fn test_builder_in_memory_tree_empty_tree() {
+fn builder_in_memory_tree_empty_tree() {
     let tree = InMemoryDirTree::default();
     assert!(tree.is_empty());
     assert!(tree.resolve(Fid::new(0xDEADBEEF)).is_none());

@@ -118,12 +118,12 @@ fn create_mock_usn_record_v3(
 }
 
 // Unit tests for MftEntry
-mod mft_entry_tests {
+mod entry {
     use super::*;
     use crate::Fid;
 
     #[test]
-    fn test_mft_entry_new_basic() {
+    fn mft_entry_new_basic() {
         let record_data = create_mock_usn_record(
             100,   // usn
             12345, // file_id
@@ -142,7 +142,7 @@ mod mft_entry_tests {
     }
 
     #[test]
-    fn test_mft_entry_is_dir_true() {
+    fn mft_entry_is_dir_true() {
         let record_data = create_mock_usn_record(
             100, 12345, 67890, "folder", 0x10, // FILE_ATTRIBUTE_DIRECTORY
         );
@@ -155,7 +155,7 @@ mod mft_entry_tests {
     }
 
     #[test]
-    fn test_mft_entry_is_dir_false() {
+    fn mft_entry_is_dir_false() {
         let record_data = create_mock_usn_record(
             100, 12345, 67890, "file.txt", 0x20, // FILE_ATTRIBUTE_ARCHIVE
         );
@@ -168,7 +168,7 @@ mod mft_entry_tests {
     }
 
     #[test]
-    fn test_mft_entry_is_hidden_true() {
+    fn mft_entry_is_hidden_true() {
         let record_data = create_mock_usn_record(
             100, 12345, 67890, ".hidden", 0x02, // FILE_ATTRIBUTE_HIDDEN
         );
@@ -181,7 +181,7 @@ mod mft_entry_tests {
     }
 
     #[test]
-    fn test_mft_entry_combined_attributes() {
+    fn mft_entry_combined_attributes() {
         let record_data = create_mock_usn_record(
             100,
             12345,
@@ -198,14 +198,8 @@ mod mft_entry_tests {
     }
 
     #[test]
-    fn test_mft_entry_unicode_filename() {
-        let record_data = create_mock_usn_record(
-            100,
-            12345,
-            67890,
-            "测试文件.txt",
-            0x20,
-        );
+    fn mft_entry_unicode_filename() {
+        let record_data = create_mock_usn_record(100, 12345, 67890, "测试文件.txt", 0x20);
 
         let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
         let entry = MftEntry::new(usn_record::UsnRecordView::V2(record));
@@ -214,7 +208,7 @@ mod mft_entry_tests {
     }
 
     #[test]
-    fn test_mft_entry_empty_filename() {
+    fn mft_entry_empty_filename() {
         let record_data = create_mock_usn_record(100, 12345, 67890, "", 0x20);
 
         let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
@@ -224,7 +218,7 @@ mod mft_entry_tests {
     }
 
     #[test]
-    fn test_mft_entry_new_v3_extended_ids() {
+    fn mft_entry_new_v3_extended_ids() {
         let file_id = 0x0011_2233_4455_6677_8899_aabb_ccdd_eeffu128;
         let parent_id = 0xffee_ddcc_bbaa_9988_7766_5544_3322_1100u128;
         let record_data = create_mock_usn_record_v3(100, file_id, parent_id, "refs.txt", 0x20);
@@ -241,12 +235,12 @@ mod mft_entry_tests {
 }
 
 // Simplified mocked test using Injectorpp
-mod mocked_tests {
+mod mocked {
     use super::*;
 
     #[allow(clippy::too_many_arguments)]
     #[test]
-    fn test_device_io_control_error_handling() {
+    fn device_io_control_error_handling() {
         let mut injector = InjectorPP::new();
 
         // Mock DeviceIoControl to return an error
@@ -271,7 +265,7 @@ mod mocked_tests {
     }
 
     #[test]
-    fn test_iter_with_invalid_buffer_size() {
+    fn iter_with_invalid_buffer_size() {
         let volume = Volume::mock(
             HANDLE(std::ptr::null_mut()),
             crate::volume::VolumeSource::DriveLetter('T'),

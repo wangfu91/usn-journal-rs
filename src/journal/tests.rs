@@ -139,7 +139,7 @@ fn create_mock_usn_record_v3(
 }
 
 #[test]
-fn test_usn_journal_data_from_conversion() {
+fn usn_journal_data_from_conversion() {
     let raw_data = create_mock_usn_journal_data();
     let journal_data = UsnJournalData::from(raw_data);
 
@@ -153,7 +153,7 @@ fn test_usn_journal_data_from_conversion() {
 }
 
 #[test]
-fn test_usn_entry_creation() {
+fn usn_entry_creation() {
     let record_data = create_mock_usn_record(
         0x2000,
         0x123456,
@@ -179,7 +179,7 @@ fn test_usn_entry_creation() {
 }
 
 #[test]
-fn test_usn_entry_directory_detection() {
+fn usn_entry_directory_detection() {
     let record_data = create_mock_usn_record(
         0x3000,
         0x789ABC,
@@ -197,7 +197,7 @@ fn test_usn_entry_directory_detection() {
 }
 
 #[test]
-fn test_usn_entry_hidden_detection() {
+fn usn_entry_hidden_detection() {
     let record_data = create_mock_usn_record(
         0x4000,
         0xDEF123,
@@ -215,7 +215,7 @@ fn test_usn_entry_hidden_detection() {
 }
 
 #[test]
-fn test_usn_entry_reason_string_conversion() {
+fn usn_entry_reason_string_conversion() {
     let record_data = create_mock_usn_record(
         0x5000,
         0x456789,
@@ -237,7 +237,7 @@ fn test_usn_entry_reason_string_conversion() {
 }
 
 #[test]
-fn test_usn_entry_unknown_reason() {
+fn usn_entry_unknown_reason() {
     let record_data = create_mock_usn_record(
         0x6000, 0x789123, 0x654321, 0, // No known reason flags
         "test.txt", 0,
@@ -251,7 +251,7 @@ fn test_usn_entry_unknown_reason() {
 }
 
 #[test]
-fn test_usn_entry_creation_v3_extended_ids() {
+fn usn_entry_creation_v3_extended_ids() {
     let fid = 0x0011_2233_4455_6677_8899_aabb_ccdd_eeffu128;
     let parent_fid = 0xffee_ddcc_bbaa_9988_7766_5544_3322_1100u128;
     let record_data = create_mock_usn_record_v3(
