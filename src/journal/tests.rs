@@ -165,7 +165,7 @@ fn test_usn_entry_creation() {
 
     let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
 
-    let entry = UsnEntry::new(crate::usn_record::UsnRecordRef::V2(record));
+    let entry = UsnEntry::new(crate::usn_record::UsnRecordView::V2(record));
     assert_eq!(entry.usn, Usn::new(0x2000));
     assert_eq!(entry.fid, Fid::new(0x123456));
     assert_eq!(entry.parent_fid, Fid::new(0x654321));
@@ -191,7 +191,7 @@ fn test_usn_entry_directory_detection() {
 
     let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
 
-    let entry = UsnEntry::new(crate::usn_record::UsnRecordRef::V2(record));
+    let entry = UsnEntry::new(crate::usn_record::UsnRecordView::V2(record));
     assert!(entry.is_dir());
     assert!(!entry.is_hidden());
 }
@@ -209,7 +209,7 @@ fn test_usn_entry_hidden_detection() {
 
     let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
 
-    let entry = UsnEntry::new(crate::usn_record::UsnRecordRef::V2(record));
+    let entry = UsnEntry::new(crate::usn_record::UsnRecordView::V2(record));
     assert!(!entry.is_dir());
     assert!(entry.is_hidden());
 }
@@ -227,7 +227,7 @@ fn test_usn_entry_reason_string_conversion() {
 
     let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
 
-    let entry = UsnEntry::new(crate::usn_record::UsnRecordRef::V2(record));
+    let entry = UsnEntry::new(crate::usn_record::UsnRecordView::V2(record));
     let reason_string = entry.get_reason_string();
 
     assert!(reason_string.contains("FILE_CREATE"));
@@ -245,7 +245,7 @@ fn test_usn_entry_unknown_reason() {
 
     let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
 
-    let entry = UsnEntry::new(crate::usn_record::UsnRecordRef::V2(record));
+    let entry = UsnEntry::new(crate::usn_record::UsnRecordView::V2(record));
     let reason_string = entry.get_reason_string();
     assert_eq!(reason_string, "UNKNOWN");
 }
@@ -263,7 +263,7 @@ fn test_usn_entry_display_smoke() {
 
     let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
 
-    let entry = UsnEntry::new(crate::usn_record::UsnRecordRef::V2(record));
+    let entry = UsnEntry::new(crate::usn_record::UsnRecordView::V2(record));
     let formatted = format!("{entry}");
 
     assert!(formatted.contains("USN 0x7000"));
@@ -287,7 +287,7 @@ fn test_usn_entry_creation_v3_extended_ids() {
     );
 
     let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V3) };
-    let entry = UsnEntry::new(crate::usn_record::UsnRecordRef::V3(record));
+    let entry = UsnEntry::new(crate::usn_record::UsnRecordView::V3(record));
 
     assert_eq!(entry.usn, Usn::new(0x2000));
     assert_eq!(entry.fid, Fid::from_u128(fid));

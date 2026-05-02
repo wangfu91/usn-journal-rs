@@ -1,15 +1,28 @@
+//! Low-level parsing helpers for raw USN journal and MFT buffers.
+//!
+//! This module validates the raw Windows FSCTL output, exposes a borrowed
+//! view over `USN_RECORD_V2` / `USN_RECORD_V3`, and converts the records into
+//! the smaller owned types used by the rest of the crate.
+
 use crate::{Fid, Usn, UsnError, UsnResult};
 use std::mem::size_of;
 use windows::Win32::Storage::FileSystem::FILE_ID_128;
 use windows::Win32::System::Ioctl::{USN_RECORD_COMMON_HEADER, USN_RECORD_V2, USN_RECORD_V3};
 
+/// Borrowed view over a raw USN record.
+///
+/// The enum hides the version-specific Windows layouts so callers can read
+/// common fields without duplicating the parser logic.
 #[derive(Copy, Clone, Debug)]
-pub(crate) enum UsnRecordRef<'a> {
+pub(crate) enum UsnRecordView<'a> {
+    /// Borrowed `USN_RECORD_V2` view.
     V2(&'a USN_RECORD_V2),
+    /// Borrowed `USN_RECORD_V3` view.
     V3(&'a USN_RECORD_V3),
 }
 
-impl<'a> UsnRecordRef<'a> {
+impl<'a> UsnRecordView<'a> {
+    /// Raw Update Sequence Number from the record.
     #[inline]
     pub(crate) const fn usn(self) -> i64 {
         match self {
@@ -18,6 +31,7 @@ impl<'a> UsnRecordRef<'a> {
         }
     }
 
+    /// Raw FILETIME timestamp from the record.
     #[inline]
     pub(crate) const fn timestamp(self) -> i64 {
         match self {
@@ -26,6 +40,7 @@ impl<'a> UsnRecordRef<'a> {
         }
     }
 
+    /// Raw USN reason bitmask from the record.
     #[inline]
     pub(crate) const fn reason(self) -> u32 {
         match self {
@@ -34,6 +49,7 @@ impl<'a> UsnRecordRef<'a> {
         }
     }
 
+    /// Raw source-info bitmask from the record.
     #[inline]
     pub(crate) const fn source_info(self) -> u32 {
         match self {
@@ -42,6 +58,7 @@ impl<'a> UsnRecordRef<'a> {
         }
     }
 
+    /// Raw file-attribute bitmask from the record.
     #[inline]
     pub(crate) const fn file_attributes(self) -> u32 {
         match self {
@@ -50,6 +67,7 @@ impl<'a> UsnRecordRef<'a> {
         }
     }
 
+    /// File identifier stored in the record.
     #[inline]
     pub(crate) fn fid(self) -> Fid {
         match self {
@@ -58,6 +76,7 @@ impl<'a> UsnRecordRef<'a> {
         }
     }
 
+    /// Parent file identifier stored in the record.
     #[inline]
     pub(crate) fn parent_fid(self) -> Fid {
         match self {
@@ -66,6 +85,7 @@ impl<'a> UsnRecordRef<'a> {
         }
     }
 
+    /// File-name length in bytes.
     #[inline]
     pub(crate) const fn file_name_length(self) -> u16 {
         match self {
@@ -74,6 +94,7 @@ impl<'a> UsnRecordRef<'a> {
         }
     }
 
+    /// File-name offset in bytes from the start of the record.
     #[inline]
     pub(crate) const fn file_name_offset(self) -> u16 {
         match self {
@@ -82,6 +103,7 @@ impl<'a> UsnRecordRef<'a> {
         }
     }
 
+    /// Pointer to the first UTF-16 code unit of the file name.
     #[inline]
     pub(crate) fn file_name_ptr(self) -> *const u16 {
         match self {
@@ -91,11 +113,13 @@ impl<'a> UsnRecordRef<'a> {
     }
 }
 
+/// Convert a Windows `FILE_ID_128` to a native `u128`.
 #[inline]
 pub(crate) const fn file_id_128_to_u128(file_id: FILE_ID_128) -> u128 {
     u128::from_le_bytes(file_id.Identifier)
 }
 
+/// Convert an extended [`Fid`] into a Windows `FILE_ID_128`.
 #[inline]
 pub(crate) const fn fid_to_file_id_128(fid: Fid) -> Option<FILE_ID_128> {
     match fid {
@@ -106,6 +130,7 @@ pub(crate) const fn fid_to_file_id_128(fid: Fid) -> Option<FILE_ID_128> {
     }
 }
 
+/// Validate `bytes_read` against `buffer` and convert it to `usize`.
 fn checked_bytes_read(buffer: &[u8], bytes_read: u32) -> UsnResult<usize> {
     let bytes_read = bytes_read as usize;
     if bytes_read > buffer.len() {
@@ -116,6 +141,7 @@ fn checked_bytes_read(buffer: &[u8], bytes_read: u32) -> UsnResult<usize> {
     Ok(bytes_read)
 }
 
+/// Read the next USN cursor from the start of an enumeration buffer.
 pub(crate) fn read_next_start_usn(buffer: &[u8], bytes_read: u32) -> UsnResult<Usn> {
     let bytes_read = checked_bytes_read(buffer, bytes_read)?;
     let cursor_len = size_of::<Usn>();
@@ -134,6 +160,7 @@ pub(crate) fn read_next_start_usn(buffer: &[u8], bytes_read: u32) -> UsnResult<U
     Ok(Usn::new(value))
 }
 
+/// Read the next file-ID cursor from the start of an MFT enumeration buffer.
 pub(crate) fn read_next_start_fid(buffer: &[u8], bytes_read: u32) -> UsnResult<u64> {
     let bytes_read = checked_bytes_read(buffer, bytes_read)?;
     let cursor_len = size_of::<u64>();
@@ -148,11 +175,12 @@ pub(crate) fn read_next_start_fid(buffer: &[u8], bytes_read: u32) -> UsnResult<u
     Ok(u64::from_le_bytes(raw))
 }
 
+/// Parse the next USN record and advance `offset` past it.
 pub(crate) fn find_next_record<'a>(
     buffer: &'a [u8],
     bytes_read: u32,
     offset: &mut u32,
-) -> UsnResult<Option<UsnRecordRef<'a>>> {
+) -> UsnResult<Option<UsnRecordView<'a>>> {
     let bytes_read = checked_bytes_read(buffer, bytes_read)?;
     let offset_usize = *offset as usize;
 
@@ -200,7 +228,7 @@ pub(crate) fn find_next_record<'a>(
             // USN records are quad-aligned, so reinterpreting the record bytes
             // as `USN_RECORD_V2` is sound for the lifetime of `buffer`.
             let record = unsafe { &*(buffer.as_ptr().add(offset_usize) as *const USN_RECORD_V2) };
-            UsnRecordRef::V2(record)
+            UsnRecordView::V2(record)
         }
         3 => {
             if record_len < size_of::<USN_RECORD_V3>() {
@@ -212,7 +240,7 @@ pub(crate) fn find_next_record<'a>(
             // layout requested via `READ_USN_JOURNAL_DATA_V1` /
             // `MFT_ENUM_DATA_V1`.
             let record = unsafe { &*(buffer.as_ptr().add(offset_usize) as *const USN_RECORD_V3) };
-            UsnRecordRef::V3(record)
+            UsnRecordView::V3(record)
         }
         _ => {
             return Err(UsnError::InvalidRecordData(

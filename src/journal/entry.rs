@@ -8,37 +8,44 @@ use windows::Win32::Storage::FileSystem::{
 };
 
 use crate::time::Filetime;
-use crate::usn_record::UsnRecordRef;
+use crate::usn_record::UsnRecordView;
 use crate::{Fid, Usn};
 
 use super::reason::format_reason;
 
-/// Represents a USN entry in the USN journal.
+/// Owned representation of a USN journal entry.
 ///
 /// `fid` / `parent_fid` may be either standard 64-bit NTFS file references
 /// or 128-bit file IDs from `USN_RECORD_V3` on ReFS.
 #[derive(Debug)]
 pub struct UsnEntry {
+    /// Parsed Update Sequence Number.
     pub usn: Usn,
+    /// Parsed FILETIME timestamp.
     pub time: Filetime,
+    /// Parsed file identifier.
     pub fid: Fid,
+    /// Parsed parent file identifier.
     pub parent_fid: Fid,
+    /// Raw USN reason bitmask.
     pub reason: u32,
+    /// Raw source-info bitmask.
     pub source_info: u32,
+    /// Parsed file name.
     pub file_name: OsString,
+    /// Raw file-attribute bitmask.
     pub file_attributes: u32,
 }
 
 impl UsnEntry {
-    /// Create a new `UsnEntry` from a validated raw USN record.
+    /// Create a new `UsnEntry` from a validated raw USN record view.
     ///
     /// # Arguments
-    /// * `record` - Reference to a validated `USN_RECORD_V2` or `USN_RECORD_V3`
-    ///   structure from the Windows API.
+    /// * `record` - Borrowed `USN_RECORD_V2` or `USN_RECORD_V3` view.
     ///
     /// # Returns
     /// A parsed `UsnEntry` with decoded fields and file name.
-    pub(crate) fn new(record: UsnRecordRef<'_>) -> Self {
+    pub(crate) fn new(record: UsnRecordView<'_>) -> Self {
         let file_name_len = record.file_name_length() as usize / std::mem::size_of::<u16>();
 
         // https://learn.microsoft.com/en-us/windows/win32/api/winioctl/ns-winioctl-usn_record_v2

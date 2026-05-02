@@ -462,7 +462,7 @@ fn file_id_to_path(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{mft::MftEntry, usn_record::UsnRecordRef, volume::Volume};
+    use crate::{mft::MftEntry, usn_record::UsnRecordView, volume::Volume};
     use std::{ffi::OsString, mem, ptr};
     use windows::Win32::{Foundation::HANDLE, System::Ioctl::USN_RECORD_V2};
 
@@ -566,7 +566,7 @@ mod tests {
 
         let record_ref = unsafe { &*(buffer.as_ptr() as *const USN_RECORD_V2) };
 
-        let entry = crate::journal::UsnEntry::new(UsnRecordRef::V2(record_ref));
+        let entry = crate::journal::UsnEntry::new(UsnRecordView::V2(record_ref));
 
         assert_eq!(entry.fid(), Fid::new(0x789ABC));
         assert_eq!(entry.parent_fid(), Fid::new(0xDEF123));

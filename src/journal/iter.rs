@@ -9,7 +9,7 @@ use windows::Win32::System::Ioctl::{FSCTL_READ_USN_JOURNAL, READ_USN_JOURNAL_DAT
 
 use crate::{
     UsnResult,
-    usn_record::{self, UsnRecordRef},
+    usn_record::{self, UsnRecordView},
 };
 
 use super::entry::UsnEntry;
@@ -93,7 +93,7 @@ impl UsnJournalIter {
     /// Find the next USN record in the buffer, reading more data if needed.
     ///
     /// Returns `Ok(Some(record))` if a record is found, `Ok(None)` if EOF, or an error.
-    fn find_next_entry(&mut self) -> UsnResult<Option<UsnRecordRef<'_>>> {
+    fn find_next_entry(&mut self) -> UsnResult<Option<UsnRecordView<'_>>> {
         if self.offset < self.bytes_read {
             return usn_record::find_next_record(&self.buffer, self.bytes_read, &mut self.offset);
         }
