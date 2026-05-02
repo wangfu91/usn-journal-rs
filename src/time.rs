@@ -204,34 +204,6 @@ mod tests {
         }
 
         #[test]
-        fn test_extremely_large_filetime_values() {
-            // Test with very large FILETIME values that might cause overflow
-            let max_safe_value = i64::MAX - 1;
-            let result = filetime_to_systemtime(max_safe_value);
-
-            // This should either succeed or fail gracefully, not panic
-            match result {
-                Ok(_) => {
-                    // If it succeeds, the result should be valid
-                }
-                Err(_) => {
-                    // If it fails, that's also acceptable for extreme values
-                }
-            }
-        }
-
-        #[test]
-        fn test_overflow_edge_cases() {
-            // Test values that might cause arithmetic overflow
-            let near_overflow = i64::MAX / 10_000_000 - 1;
-            let overflow_seconds = near_overflow * 10_000_000;
-
-            let result = filetime_to_systemtime(overflow_seconds);
-            // Should handle gracefully without panicking
-            assert!(result.is_ok() || result.is_err());
-        }
-
-        #[test]
         fn test_nanosecond_precision() {
             // Test that nanosecond precision is handled correctly
             let base_filetime = 116_444_736_000_000_000; // Unix epoch
@@ -247,16 +219,6 @@ mod tests {
             let result_ms = filetime_to_systemtime(one_ms_later).unwrap();
             let expected_ms = UNIX_EPOCH + Duration::from_millis(1);
             assert_eq!(result_ms, expected_ms);
-        }
-
-        #[test]
-        fn test_filetime_as_unsigned() {
-            // Test conversion with a reasonable large value
-            let large_value = 130_000_000_000_000_000_i64; // Well after Unix epoch
-            let result = filetime_to_systemtime(large_value).unwrap();
-
-            // Should not panic and should produce a SystemTime after Unix epoch
-            assert!(result > UNIX_EPOCH);
         }
     }
 

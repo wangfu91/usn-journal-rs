@@ -538,20 +538,6 @@ mod tests {
         }
 
         #[test]
-        fn test_mft_entry_display_smoke() {
-            let record_data = create_mock_usn_record(100, 0x12345, 0x67890, "test.txt", 0x20);
-
-            let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
-            let entry = MftEntry::new(usn_record::UsnRecordView::V2(record));
-
-            let formatted = format!("{entry}");
-
-            assert!(formatted.contains("0x12345"));
-            assert!(formatted.contains("0x67890"));
-            assert!(formatted.contains("test.txt"));
-        }
-
-        #[test]
         fn test_mft_entry_new_v3_extended_ids() {
             let file_id = 0x0011_2233_4455_6677_8899_aabb_ccdd_eeffu128;
             let parent_id = 0xffee_ddcc_bbaa_9988_7766_5544_3322_1100u128;

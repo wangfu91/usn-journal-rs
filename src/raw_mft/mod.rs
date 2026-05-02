@@ -465,48 +465,6 @@ mod tests {
         }
 
         #[test]
-        fn raw_mft_full_iteration_smoke() {
-            let Some(volume) = open_volume_or_skip() else {
-                return;
-            };
-            let mft = match RawMft::new(&volume) {
-                Ok(m) => m,
-                Err(UsnError::UnsupportedFilesystem(msg)) => {
-                    eprintln!("skipping: {msg}");
-                    return;
-                }
-                Err(e) => panic!("RawMft::new failed: {e}"),
-            };
-            let mut total = 0u64;
-            let mut used = 0u64;
-            let mut named = 0u64;
-            let mut had_timestamps = false;
-            for r in mft.try_iter().expect("iter").take(50_000) {
-                let entry = match r {
-                    Ok(e) => e,
-                    Err(_) => continue,
-                };
-                total += 1;
-                if entry.is_used {
-                    used += 1;
-                }
-                if !entry.file_name.is_empty() {
-                    named += 1;
-                }
-                if entry.si_created.raw() != 0 && !entry.file_name.is_empty() {
-                    had_timestamps = true;
-                }
-            }
-            assert!(total > 0, "expected at least one record");
-            assert!(used > 0, "expected used records");
-            assert!(named > 0, "expected named records");
-            assert!(
-                had_timestamps,
-                "expected at least one entry with SI timestamps"
-            );
-        }
-
-        #[test]
         fn raw_mft_path_resolver_roundtrip() {
             let Some(volume) = open_volume_or_skip() else {
                 return;

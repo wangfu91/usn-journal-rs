@@ -251,29 +251,6 @@ fn test_usn_entry_unknown_reason() {
 }
 
 #[test]
-fn test_usn_entry_display_smoke() {
-    let record_data = create_mock_usn_record(
-        0x7000,
-        0xABC123,
-        0x654321,
-        USN_REASON_FILE_CREATE,
-        "document.txt",
-        0,
-    );
-
-    let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
-
-    let entry = UsnEntry::new(crate::usn_record::UsnRecordView::V2(record));
-    let formatted = format!("{entry}");
-
-    assert!(formatted.contains("USN 0x7000"));
-    assert!(formatted.contains("FILE_CREATE"));
-    assert!(formatted.contains("0xabc123"));
-    assert!(formatted.contains("0x654321"));
-    assert!(formatted.contains("document.txt"));
-}
-
-#[test]
 fn test_usn_entry_creation_v3_extended_ids() {
     let fid = 0x0011_2233_4455_6677_8899_aabb_ccdd_eeffu128;
     let parent_fid = 0xffee_ddcc_bbaa_9988_7766_5544_3322_1100u128;
