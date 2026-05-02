@@ -86,6 +86,73 @@ impl FileNameNamespace {
             _ => Self::Win32AndDos,
         }
     }
+
+    /// Ordering score for choosing the best file-name attribute when a
+    /// record carries multiple.  Higher is preferred.
+    ///
+    /// `Win32AndDos` > `Win32` > `Posix` > `Dos`
+    #[inline]
+    pub(crate) fn score(self) -> i32 {
+        match self {
+            FileNameNamespace::Win32AndDos => 4,
+            FileNameNamespace::Win32 => 3,
+            FileNameNamespace::Posix => 2,
+            FileNameNamespace::Dos => 1,
+        }
+    }
+}
+
+/// On-disk header of a single entry in an `$ATTRIBUTE_LIST` attribute.
+///
+/// Each entry describes one attribute of the file and tells the kernel
+/// which FILE record on disk holds that attribute.  When the entry's
+/// `file_reference` refers to a different record than the base record,
+/// the attribute lives in an extension record.
+#[repr(C, packed)]
+pub(crate) struct AttributeListEntryHeader {
+    /// Attribute type code (same values as [`NtfsAttributeType`]).
+    pub type_id: u32,
+    /// Total byte length of this entry (including name, rounded to 8 bytes).
+    pub record_length: u16,
+    /// Length of the optional attribute name in UTF-16 units.
+    pub attribute_name_length: u8,
+    /// Byte offset to the name from the start of this entry.
+    pub attribute_name_offset: u8,
+    /// Lowest VCN covered by this attribute instance (0 for resident attrs).
+    pub lowest_vcn: i64,
+    /// MFT file reference: 48-bit record number + 16-bit sequence number.
+    pub file_reference: u64,
+    /// Attribute instance identifier.
+    pub attribute_id: u16,
+}
+
+/// Minimum byte length of an `$ATTRIBUTE_LIST` entry (no attribute name).
+const ATTR_LIST_ENTRY_MIN_SIZE: usize = size_of::<AttributeListEntryHeader>();
+
+/// Call `f(type_id, file_reference)` for each valid entry in a raw
+/// `$ATTRIBUTE_LIST` data slice.
+///
+/// Stops at the first malformed entry (zero-length or out of bounds).
+pub(crate) fn for_each_attr_list_entry<F>(data: &[u8], mut f: F)
+where
+    F: FnMut(u32, u64),
+{
+    let mut offset = 0usize;
+    while offset + ATTR_LIST_ENTRY_MIN_SIZE <= data.len() {
+        // SAFETY: We just verified at least `ATTR_LIST_ENTRY_MIN_SIZE` bytes
+        // remain at `offset`.  `AttributeListEntryHeader` is `#[repr(C, packed)]`
+        // (alignment 1), so any byte pointer is suitably aligned.
+        let h = unsafe { &*(data[offset..].as_ptr() as *const AttributeListEntryHeader) };
+        let len = h.record_length as usize;
+        if len < ATTR_LIST_ENTRY_MIN_SIZE {
+            break;
+        }
+        f(h.type_id, h.file_reference);
+        offset = match offset.checked_add(len) {
+            Some(o) => o,
+            None => break,
+        };
+    }
 }
 
 /// File-name attribute fixed header.

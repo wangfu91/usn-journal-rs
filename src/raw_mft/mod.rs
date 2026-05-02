@@ -51,9 +51,10 @@ use log::{debug, warn};
 use crate::{
     errors::UsnError,
     raw_mft::{
-        attribute::{NtfsAttributeType, for_each_attribute},
+        attribute::{NtfsAttributeType, for_each_attr_list_entry, for_each_attribute},
         boot::BootSector,
         data_run::{DataRun, decode_runs},
+        entry::AttributeListInfo,
         extent::ExtentMap,
         io::VolumeReader,
         record::{FileRecord, MFT_RECORD_NUMBER},
@@ -274,9 +275,23 @@ impl<'a> Iterator for RawMftIter<'a> {
             if !FileRecord::is_valid(buf) {
                 continue;
             }
-            match FileRecord::parse(n, buf) {
+                    match FileRecord::parse(n, buf) {
                 Ok(rec) => {
-                    let entry = RawMftEntry::from_record(&rec);
+                    let (mut entry, attr_list) =
+                        RawMftEntry::from_record_with_attr_list(&rec);
+                    // `rec` is last used above; NLL ends the borrow on
+                    // the reader's internal buffer here, so self.reader
+                    // is free for the extension-record reads below.
+                    if let Some(al) = attr_list {
+                        enrich_from_attr_list(
+                            &mut entry,
+                            al,
+                            n,
+                            &mut self.reader,
+                            &self.mft.boot,
+                            &self.mft.extent_map,
+                        );
+                    }
                     return Some(Ok(entry));
                 }
                 Err(e) => {
@@ -289,12 +304,12 @@ impl<'a> Iterator for RawMftIter<'a> {
     }
 }
 
-fn read_record_at(
+fn read_record_raw(
     reader: &mut VolumeReader,
     boot: &BootSector,
     extent_map: &ExtentMap,
     record_number: u64,
-) -> Result<Option<RawMftEntry>, UsnError> {
+) -> Result<Option<(RawMftEntry, Option<AttributeListInfo>)>, UsnError> {
     let offset = match extent_map.record_offset(record_number)? {
         Some(o) => o,
         None => return Ok(None),
@@ -306,7 +321,107 @@ fn read_record_at(
         return Ok(None);
     }
     let rec = FileRecord::parse(record_number, &mut buf)?;
-    Ok(Some(RawMftEntry::from_record(&rec)))
+    Ok(Some(RawMftEntry::from_record_with_attr_list(&rec)))
+}
+
+fn read_record_at(
+    reader: &mut VolumeReader,
+    boot: &BootSector,
+    extent_map: &ExtentMap,
+    record_number: u64,
+) -> Result<Option<RawMftEntry>, UsnError> {
+    let (mut entry, attr_list) = match read_record_raw(reader, boot, extent_map, record_number)? {
+        Some(t) => t,
+        None => return Ok(None),
+    };
+    if let Some(al) = attr_list {
+        enrich_from_attr_list(&mut entry, al, record_number, reader, boot, extent_map);
+    }
+    Ok(Some(entry))
+}
+
+/// Enrich a base-record entry by reading the extension records named in
+/// its `$ATTRIBUTE_LIST` and adopting any `$FILE_NAME` attribute with a
+/// higher namespace score (e.g. Win32 over Dos).
+///
+/// This fixes the case where a file with many hard links has its Win32
+/// long name stored in an extension record while the base record only
+/// holds the DOS 8.3 short name.
+fn enrich_from_attr_list(
+    entry: &mut RawMftEntry,
+    attr_list: AttributeListInfo,
+    base_record_number: u64,
+    reader: &mut VolumeReader,
+    boot: &BootSector,
+    extent_map: &ExtentMap,
+) {
+    // 1. Materialise the flat $ATTRIBUTE_LIST byte slice.
+    let data: Vec<u8> = match attr_list {
+        AttributeListInfo::Resident(bytes) => bytes,
+        AttributeListInfo::NonResident { runs_data, data_size } => {
+            let runs = match decode_runs(&runs_data) {
+                Ok((r, _)) => r,
+                Err(e) => {
+                    warn!(
+                        "raw_mft: record {base_record_number}: \
+                         failed to decode $ATTRIBUTE_LIST data runs: {e}"
+                    );
+                    return;
+                }
+            };
+            match read_nonresident(reader, &runs, boot.cluster_size, data_size) {
+                Ok(b) => b,
+                Err(e) => {
+                    warn!(
+                        "raw_mft: record {base_record_number}: \
+                         failed to read non-resident $ATTRIBUTE_LIST: {e}"
+                    );
+                    return;
+                }
+            }
+        }
+    };
+
+    // 2. Collect unique extension record numbers that hold a $FILE_NAME attr.
+    let mut ext_records: Vec<u64> = Vec::new();
+    for_each_attr_list_entry(&data, |type_id, file_ref| {
+        if type_id == NtfsAttributeType::FileName as u32 {
+            let rec_num = file_ref & 0x0000_FFFF_FFFF_FFFF;
+            if rec_num != base_record_number && !ext_records.contains(&rec_num) {
+                ext_records.push(rec_num);
+            }
+        }
+    });
+
+    // 3. For each extension record, look for a $FILE_NAME with a better
+    //    namespace score than what the base record already carries.
+    let mut best_score = entry.namespace.score();
+    for ext_num in ext_records {
+        // Use read_record_raw (no recursive enrichment) to avoid unbounded
+        // depth in pathological MFTs.
+        let ext_entry = match read_record_raw(reader, boot, extent_map, ext_num) {
+            Ok(Some((e, _))) => e,
+            Ok(None) => continue,
+            Err(e) => {
+                warn!(
+                    "raw_mft: record {base_record_number}: \
+                     failed to load extension record {ext_num}: {e}"
+                );
+                continue;
+            }
+        };
+        let score = ext_entry.namespace.score();
+        if score > best_score {
+            best_score = score;
+            entry.namespace = ext_entry.namespace;
+            entry.file_name = ext_entry.file_name;
+            entry.parent_reference = ext_entry.parent_reference;
+            entry.fn_created = ext_entry.fn_created;
+            entry.fn_modified = ext_entry.fn_modified;
+            entry.fn_mft_modified = ext_entry.fn_mft_modified;
+            entry.fn_accessed = ext_entry.fn_accessed;
+        }
+    }
 }
 
 fn read_nonresident(

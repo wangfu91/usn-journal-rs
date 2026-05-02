@@ -19,6 +19,23 @@ use crate::{
     },
 };
 
+/// Raw `$ATTRIBUTE_LIST` data captured from a FILE record, used by
+/// `from_record_with_attr_list` so the caller can load extension records
+/// and enrich the entry with the best-namespace `$FILE_NAME`.
+///
+/// Extension records exist when a file's attribute set overflows a single
+/// 1 KiB FILE record (e.g. a file with many hard links).
+#[derive(Debug)]
+pub(crate) enum AttributeListInfo {
+    /// The attribute list fits inside the FILE record (resident).
+    /// Contains the raw value bytes.
+    Resident(Vec<u8>),
+    /// The attribute list is stored in data runs on disk (non-resident).
+    /// `runs_data` is the raw run-length encoded bytes starting at
+    /// `data_runs_offset`; `data_size` is the total logical size.
+    NonResident { runs_data: Vec<u8>, data_size: u64 },
+}
+
 /// Information about a single named alternate data stream (`$DATA`
 /// attribute with a non-empty attribute name).
 #[derive(Debug, Clone)]
@@ -71,7 +88,26 @@ pub struct RawMftEntry {
 
 impl RawMftEntry {
     /// Build a `RawMftEntry` from a parsed FILE record.
+    ///
+    /// Any `$ATTRIBUTE_LIST` encountered is silently dropped; use
+    /// [`from_record_with_attr_list`] when you need to load extension
+    /// records to get the best-namespace `$FILE_NAME`.
+    #[allow(dead_code)] // used only in unit tests; non-test code uses from_record_with_attr_list
     pub(crate) fn from_record(record: &FileRecord<'_>) -> Self {
+        let (entry, _) = Self::from_record_with_attr_list(record);
+        entry
+    }
+
+    /// Build a `RawMftEntry` and also return any `$ATTRIBUTE_LIST` data
+    /// found in the record.
+    ///
+    /// When `Some(AttributeListInfo)` is returned the caller should parse
+    /// the list, find `$FILE_NAME` attribute entries that live in
+    /// extension records, load those records, and update the entry with
+    /// the highest-scoring file-name namespace.
+    pub(crate) fn from_record_with_attr_list(
+        record: &FileRecord<'_>,
+    ) -> (Self, Option<AttributeListInfo>) {
         let mut builder = RawMftEntryBuilder::new(record);
 
         let (attrs_off, used) = record.attrs_range();
@@ -96,6 +132,8 @@ struct RawMftEntryBuilder {
     entry: RawMftEntry,
     best_namespace_score: i32,
     have_unnamed_data: bool,
+    /// Captured `$ATTRIBUTE_LIST` data, if any.
+    attr_list: Option<AttributeListInfo>,
 }
 
 impl RawMftEntryBuilder {
@@ -135,6 +173,7 @@ impl RawMftEntryBuilder {
             },
             best_namespace_score: -1,
             have_unnamed_data: false,
+            attr_list: None,
         }
     }
 
@@ -146,11 +185,24 @@ impl RawMftEntryBuilder {
             self.apply_file_name(attr);
         } else if type_id == NtfsAttributeType::Data as u32 {
             self.apply_data_attribute(attr);
-        } else if type_id == NtfsAttributeType::AttributeList as u32 && attr.is_non_resident() {
-            warn!(
-                "non-resident $ATTRIBUTE_LIST in record {} is not fully supported",
-                self.entry.record_number
-            );
+        } else if type_id == NtfsAttributeType::AttributeList as u32 {
+            if attr.is_non_resident() {
+                // Store the data-run bytes so the caller can load the
+                // list from disk and enrich this entry with the
+                // best-namespace $FILE_NAME from extension records.
+                if let Some(h) = attr.nonresident_header() {
+                    let runs_off = h.data_runs_offset as usize;
+                    let attr_bytes = attr.data();
+                    if runs_off <= attr_bytes.len() {
+                        self.attr_list = Some(AttributeListInfo::NonResident {
+                            runs_data: attr_bytes[runs_off..].to_vec(),
+                            data_size: h.data_size,
+                        });
+                    }
+                }
+            } else if let Some(value) = attr.resident_value() {
+                self.attr_list = Some(AttributeListInfo::Resident(value.to_vec()));
+            }
         }
     }
 
@@ -277,9 +329,9 @@ impl RawMftEntryBuilder {
         }
     }
 
-    fn build(mut self) -> RawMftEntry {
+    fn build(mut self) -> (RawMftEntry, Option<AttributeListInfo>) {
         self.fold_si_flags();
-        self.entry
+        (self.entry, self.attr_list)
     }
 
     fn fold_si_flags(&mut self) {
@@ -302,12 +354,7 @@ impl RawMftEntryBuilder {
 
 #[inline]
 fn file_name_namespace_score(namespace: FileNameNamespace) -> i32 {
-    match namespace {
-        FileNameNamespace::Win32AndDos => 4,
-        FileNameNamespace::Win32 => 3,
-        FileNameNamespace::Posix => 2,
-        FileNameNamespace::Dos => 1,
-    }
+    namespace.score()
 }
 
 impl FileAttributeView for RawMftEntry {

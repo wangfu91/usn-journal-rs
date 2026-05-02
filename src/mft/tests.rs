@@ -276,6 +276,7 @@ mod mocked {
             low_usn: Usn::new(0),
             high_usn: Usn::new(i64::MAX),
             buffer_size: 0,
+            max_usn_record_version: 3,
         });
 
         assert!(matches!(
