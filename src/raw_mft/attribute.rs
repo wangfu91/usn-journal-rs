@@ -7,6 +7,8 @@
 
 use std::mem::size_of;
 
+use crate::unaligned::read_unaligned_at;
+
 /// Attribute type identifiers used by NTFS.
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -311,7 +313,7 @@ impl<'a> NtfsAttribute<'a> {
         if v.len() < size_of::<NtfsFileNameHeader>() {
             return None;
         }
-        let header = unsafe { std::ptr::read_unaligned(v.as_ptr() as *const NtfsFileNameHeader) };
+        let header = read_unaligned_at::<NtfsFileNameHeader>(v, 0)?;
         let n = header.name_length as usize;
         let needed = size_of::<NtfsFileNameHeader>().checked_add(n.checked_mul(2)?)?;
         if needed > v.len() || n > 255 {

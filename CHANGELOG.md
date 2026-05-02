@@ -30,7 +30,8 @@ and idiomatic Rust refactoring. **Breaking changes throughout** — see the
 - Path resolver: `Arc<Path>` cache values for cheap clones; reusable scratch
   buffer; in-memory directory tree.
 - USN reason-string formatting via static lookup table.
-- `read_unaligned` for unaligned `i64`/`u64` reads in record parsers.
+- Checked unaligned-read helper for byte-oriented record parsers.
+- Shared data-run decoder used by both full decode and summary-only paths.
 
 ### Added
 
@@ -48,8 +49,8 @@ and idiomatic Rust refactoring. **Breaking changes throughout** — see the
   syscalls.
 - USN v3 / 128-bit file ID support for `UsnJournal`, `Mft`, and `PathResolver`.
 - `UsnError::NotElevated`, `UsnError::UnsupportedFilesystem(String)`,
-  `UsnError::BufferTooSmall { needed, got }`, and
-  `UsnError::InvalidRecord { offset, reason }` variants.
+  `UsnError::BufferTooSmall { needed, got }`, precise USN parser error
+  variants, and offset-aware raw-MFT parse diagnostics.
 - `Display` impl on `UsnEntry` and `MftEntry` (compact one-line format).
 - Benchmarks: `benches/journal.rs`, `benches/path_resolver.rs`.
 - Integration tests: `tests/in_memory_tree.rs`,

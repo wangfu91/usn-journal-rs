@@ -15,6 +15,32 @@ pub enum UsnError {
     #[error("Invalid record data: {0}")]
     InvalidRecordData(&'static str),
 
+    #[error("bytes_read exceeds buffer size: bytes_read={bytes_read}, buffer_len={buffer_len}")]
+    InvalidBytesRead {
+        bytes_read: usize,
+        buffer_len: usize,
+    },
+
+    #[error("Truncated record at offset {offset}: needed {needed} bytes, got {got}")]
+    TruncatedRecord {
+        offset: u64,
+        needed: usize,
+        got: usize,
+    },
+
+    #[error("Invalid USN record length at offset {offset}: {length} bytes ({reason})")]
+    InvalidRecordLength {
+        offset: u64,
+        length: u32,
+        reason: &'static str,
+    },
+
+    #[error("Unsupported USN record version {major_version} at offset {offset}")]
+    UnsupportedRecordVersion { offset: u64, major_version: u16 },
+
+    #[error("Misaligned record at offset {offset}: {reason}")]
+    MisalignedRecord { offset: u64, reason: &'static str },
+
     #[error("Invalid mount point: {0}")]
     InvalidMountPointError(String),
 
@@ -33,6 +59,13 @@ pub enum UsnError {
     #[error("Invalid MFT record {number}: {reason}")]
     InvalidMftRecord { number: u64, reason: &'static str },
 
+    #[error("Invalid MFT record {number} at volume offset 0x{volume_offset:x}: {reason}")]
+    InvalidMftRecordAt {
+        number: u64,
+        volume_offset: u64,
+        reason: &'static str,
+    },
+
     #[error("Update sequence array mismatch in MFT record {number}")]
     FixupMismatch { number: u64 },
 
@@ -50,6 +83,23 @@ pub enum UsnError {
 
     #[error("Invalid record at offset {offset}: {reason}")]
     InvalidRecord { offset: u64, reason: &'static str },
+}
+
+impl UsnError {
+    pub(crate) fn invalid_mft_record(
+        number: u64,
+        volume_offset: Option<u64>,
+        reason: &'static str,
+    ) -> Self {
+        match volume_offset {
+            Some(volume_offset) => Self::InvalidMftRecordAt {
+                number,
+                volume_offset,
+                reason,
+            },
+            None => Self::InvalidMftRecord { number, reason },
+        }
+    }
 }
 
 #[cfg(test)]
@@ -113,6 +163,44 @@ mod tests {
             assert_eq!(
                 error.to_string(),
                 "Invalid record at offset 4096: bad magic"
+            );
+        }
+
+        #[test]
+        fn test_precise_record_errors_display() {
+            assert_eq!(
+                UsnError::InvalidBytesRead {
+                    bytes_read: 16,
+                    buffer_len: 8
+                }
+                .to_string(),
+                "bytes_read exceeds buffer size: bytes_read=16, buffer_len=8"
+            );
+            assert_eq!(
+                UsnError::TruncatedRecord {
+                    offset: 8,
+                    needed: 60,
+                    got: 12
+                }
+                .to_string(),
+                "Truncated record at offset 8: needed 60 bytes, got 12"
+            );
+            assert_eq!(
+                UsnError::UnsupportedRecordVersion {
+                    offset: 24,
+                    major_version: 4
+                }
+                .to_string(),
+                "Unsupported USN record version 4 at offset 24"
+            );
+        }
+
+        #[test]
+        fn test_invalid_mft_record_at_display() {
+            let error = UsnError::invalid_mft_record(42, Some(0x1234), "bad header");
+            assert_eq!(
+                error.to_string(),
+                "Invalid MFT record 42 at volume offset 0x1234: bad header"
             );
         }
 

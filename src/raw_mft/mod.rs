@@ -109,7 +109,8 @@ impl<'a> RawMft<'a> {
             .map_err(io_err)?;
         reader.read_exact(&mut record0).map_err(io_err)?;
         let (data_runs, bitmap_runs, bitmap_size) = {
-            let parsed = FileRecord::parse(MFT_RECORD_NUMBER, &mut record0)?;
+            let parsed =
+                FileRecord::parse(MFT_RECORD_NUMBER, Some(boot.mft_byte_offset), &mut record0)?;
 
             // Walk attributes for unnamed $DATA (extent map) and $BITMAP.
             let mut data_runs: Option<Vec<DataRun>> = None;
@@ -275,7 +276,7 @@ impl<'a> Iterator for RawMftIter<'a> {
             if !FileRecord::is_valid(buf) {
                 continue;
             }
-            match FileRecord::parse(n, buf) {
+            match FileRecord::parse(n, Some(offset), buf) {
                 Ok(rec) => {
                     let (mut entry, attr_list) = RawMftEntry::from_record_with_attr_list(&rec);
                     // `rec` is last used above; NLL ends the borrow on
@@ -319,7 +320,7 @@ fn read_record_raw(
     if !FileRecord::is_valid(&buf) {
         return Ok(None);
     }
-    let rec = FileRecord::parse(record_number, &mut buf)?;
+    let rec = FileRecord::parse(record_number, Some(offset), &mut buf)?;
     Ok(Some(RawMftEntry::from_record_with_attr_list(&rec)))
 }
 

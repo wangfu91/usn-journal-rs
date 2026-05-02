@@ -554,7 +554,7 @@ mod tests {
     #[test]
     fn builds_entry_from_synthetic_record() {
         let mut buf = build_test_record(42);
-        let rec = FileRecord::parse(42, &mut buf).expect("parse");
+        let rec = FileRecord::parse(42, None, &mut buf).expect("parse");
         let entry = RawMftEntry::from_record(&rec);
         assert_eq!(entry.record_number, 42);
         assert_eq!(entry.file_name.to_string_lossy(), "hello.txt");
@@ -576,7 +576,7 @@ mod tests {
     #[test]
     fn path_resolvable_returns_unmasked_fids() {
         let mut buf = build_test_record(42);
-        let rec = FileRecord::parse(42, &mut buf).expect("parse");
+        let rec = FileRecord::parse(42, None, &mut buf).expect("parse");
         let entry = RawMftEntry::from_record(&rec);
         // file_reference = (seq << 48) | record_number; with seq=1, record=42
         assert_eq!(entry.fid(), Fid::new((1u64 << 48) | 42));

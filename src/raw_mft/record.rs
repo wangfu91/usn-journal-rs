@@ -79,12 +79,17 @@ impl<'a> FileRecord<'a> {
     }
 
     /// Apply the USA fixup to `data` in place and return a borrowing view.
-    pub fn parse(number: u64, data: &'a mut [u8]) -> Result<FileRecord<'a>, UsnError> {
+    pub fn parse(
+        number: u64,
+        volume_offset: Option<u64>,
+        data: &'a mut [u8],
+    ) -> Result<FileRecord<'a>, UsnError> {
         if !Self::is_valid(data) {
-            return Err(UsnError::InvalidMftRecord {
+            return Err(UsnError::invalid_mft_record(
                 number,
-                reason: "FILE signature or header invalid",
-            });
+                volume_offset,
+                "FILE signature or header invalid",
+            ));
         }
         let (usa_offset, usa_count) = {
             // SAFETY: `is_valid(data)` returned true, so the buffer is at
@@ -204,7 +209,7 @@ mod tests {
     fn parse_applies_fixup() {
         let mut buf = build_minimal_record();
         {
-            let rec = FileRecord::parse(123, &mut buf).expect("parse ok");
+            let rec = FileRecord::parse(123, None, &mut buf).expect("parse ok");
             assert!(rec.is_used());
             assert_eq!(rec.link_count(), 1);
             let seq = rec.sequence_value() as u64;
@@ -221,7 +226,7 @@ mod tests {
     fn parse_detects_corruption() {
         let mut buf = build_minimal_record();
         buf[510] = 0xFF;
-        match FileRecord::parse(7, &mut buf) {
+        match FileRecord::parse(7, None, &mut buf) {
             Err(UsnError::FixupMismatch { number: 7 }) => {}
             Err(other) => panic!("expected FixupMismatch, got {other:?}"),
             Ok(_) => panic!("expected FixupMismatch, got Ok"),
