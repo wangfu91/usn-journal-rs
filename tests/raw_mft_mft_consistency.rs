@@ -13,7 +13,11 @@
 use std::collections::HashSet;
 
 use usn_journal_rs::{
-    errors::UsnError, mft::Mft, path::PathResolver, raw_mft::RawMft, volume::Volume,
+    errors::UsnError,
+    mft::{Mft, MftIterOptions},
+    path::PathResolver,
+    raw_mft::RawMft,
+    volume::Volume,
 };
 
 struct SampledMftEntry {
@@ -78,10 +82,11 @@ fn raw_mft_and_mft_api_agree_on_sampled_entries() {
         match item {
             Ok(entry) => {
                 mft_ok += 1;
-                if !entry.file_name.is_empty() && mft_paths.len() < PATH_TARGET {
-                    if let Some(path) = mft_path_resolver.resolve_path(&entry) {
-                        mft_paths.insert(path.to_string_lossy().to_ascii_lowercase());
-                    }
+                if !entry.file_name.is_empty()
+                    && mft_paths.len() < PATH_TARGET
+                    && let Some(path) = mft_path_resolver.resolve_path(&entry)
+                {
+                    mft_paths.insert(path.to_string_lossy().to_ascii_lowercase());
                 }
                 if entry.fid.is_standard() && !entry.file_name.is_empty() {
                     samples.push(SampledMftEntry {
@@ -235,17 +240,18 @@ fn raw_mft_and_mft_api_agree_on_sampled_entries() {
 
 /// Strict record-by-record parity check using standard NTFS file IDs.
 ///
-/// For each `Mft` entry that carries a standard 64-bit `Fid`, the matching
-/// raw FILE record is fetched by record number with [`RawMft::get_record`] and
-/// compared field-by-field.  Because the filesystem is live (log files are
-/// created and deleted continuously), a few mismatches between the two reads
-/// are normal and tolerated.
+/// Pins `max_usn_record_version` to `2` so `FSCTL_ENUM_USN_DATA` always
+/// returns `USN_RECORD_V2` (standard 64-bit NTFS file IDs), even on Windows 11
+/// builds that otherwise prefer V3.
+///
+/// For each entry the matching raw FILE record is fetched by record number
+/// with [`RawMft::get_record`] and compared field-by-field.  Because the
+/// filesystem is live (log files are created and deleted continuously),
+/// a few mismatches between the two reads are normal and tolerated.
 ///
 /// Skips automatically when:
-///  - the process is not elevated,
-///  - `C:` (or the drive set by `USN_TEST_DRIVE`) is not NTFS, or
-///  - the `Mft` iterator yields only extended IDs (e.g. on ReFS or certain
-///    Windows 11 builds with ReFS-style IDs on NTFS).
+///  - the process is not elevated, or
+///  - `C:` (or the drive set by `USN_TEST_DRIVE`) is not NTFS.
 #[test]
 fn raw_mft_and_mft_api_record_parity_standard_ids() {
     let drive = pick_drive();
@@ -261,46 +267,39 @@ fn raw_mft_and_mft_api_record_parity_standard_ids() {
         }
     };
 
-    // Collect up to SAMPLE_LIMIT Mft entries that carry a standard (64-bit) FID.
-    // Scan at most MAX_SCAN records before giving up so the test stays bounded.
     const SAMPLE_LIMIT: usize = 500;
-    const MAX_SCAN: usize = 500_000;
+
+    // Pin MaxMajorVersion=2: forces USN_RECORD_V2 (64-bit standard IDs) even
+    // on Windows 11 builds that would otherwise return USN_RECORD_V3.
+    let options = MftIterOptions {
+        max_usn_record_version: 2,
+        ..MftIterOptions::default()
+    };
 
     let mft = Mft::new(&volume);
-    let mut iter = match mft.try_iter() {
+    let iter = match mft.try_iter_with_options(options) {
         Ok(it) => it,
         Err(e) => {
-            eprintln!("raw_mft_record_parity: skipping (Mft::try_iter failed: {e})");
+            eprintln!("raw_mft_record_parity: skipping (Mft::try_iter_with_options failed: {e})");
             return;
         }
     };
 
-    let mut samples: Vec<SampledMftEntry> = Vec::with_capacity(SAMPLE_LIMIT);
-    let mut scanned = 0usize;
-
-    while samples.len() < SAMPLE_LIMIT && scanned < MAX_SCAN {
-        let Some(item) = iter.next() else {
-            break;
-        };
-        scanned += 1;
-        if let Ok(entry) = item {
-            if entry.fid.is_standard() && !entry.file_name.is_empty() {
-                samples.push(SampledMftEntry {
-                    fid: entry.fid,
-                    parent_fid: entry.parent_fid,
-                    is_dir: entry.is_dir(),
-                    file_name: entry.file_name,
-                });
-            }
-        }
-    }
+    // V2 records always carry standard 64-bit IDs; no need to filter.
+    let samples: Vec<SampledMftEntry> = iter
+        .flatten()
+        .filter(|e| !e.file_name.is_empty())
+        .take(SAMPLE_LIMIT)
+        .map(|e| SampledMftEntry {
+            fid: e.fid,
+            parent_fid: e.parent_fid,
+            is_dir: e.is_dir(),
+            file_name: e.file_name,
+        })
+        .collect();
 
     if samples.is_empty() {
-        eprintln!(
-            "raw_mft_record_parity: skipping \
-             (no standard-ID entries found after scanning {scanned} records — \
-             likely an extended-IDs-only environment)"
-        );
+        eprintln!("raw_mft_record_parity: skipping (no Mft entries found)");
         return;
     }
 
@@ -346,12 +345,12 @@ fn raw_mft_and_mft_api_record_parity_standard_ids() {
 
         compared += 1;
 
-        let same_fid    = raw_entry.file_reference == entry.fid;
+        let same_fid = raw_entry.file_reference == entry.fid;
         let same_parent = raw_entry.parent_reference == entry.parent_fid;
-        let same_dir    = raw_entry.is_directory == entry.is_dir;
+        let same_dir = raw_entry.is_directory == entry.is_dir;
         // Case-insensitive: NTFS is case-insensitive and the two APIs may
         // normalise differently for short names vs long names.
-        let same_name   = raw_entry
+        let same_name = raw_entry
             .file_name
             .to_string_lossy()
             .eq_ignore_ascii_case(&entry.file_name.to_string_lossy());
@@ -380,8 +379,9 @@ fn raw_mft_and_mft_api_record_parity_standard_ids() {
     if compared == 0 {
         eprintln!(
             "raw_mft_record_parity: skipping assertion \
-             (all {scanned} scanned records were transient misses — \
-             filesystem churn too high to compare)"
+             (all {} sampled records were transient misses — \
+             filesystem churn too high to compare)",
+            samples.len()
         );
         return;
     }

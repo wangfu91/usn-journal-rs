@@ -40,6 +40,7 @@ impl<'a> Mft<'a> {
             self.volume.handle,
             options.low_usn.get(),
             options.high_usn.get(),
+            options.max_usn_record_version,
             vec![0u8; options.buffer_size],
             options.low_usn.get() as u64,
         ))

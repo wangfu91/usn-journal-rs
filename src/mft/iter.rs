@@ -27,6 +27,7 @@ pub struct MftIter {
     volume_handle: HANDLE,
     low_usn: i64,
     high_usn: i64,
+    max_usn_record_version: u16,
     buffer: Vec<u8>,
     bytes_read: u32,
     offset: u32,
@@ -38,6 +39,7 @@ impl MftIter {
         volume_handle: HANDLE,
         low_usn: i64,
         high_usn: i64,
+        max_usn_record_version: u16,
         buffer: Vec<u8>,
         next_start_fid: u64,
     ) -> Self {
@@ -45,6 +47,7 @@ impl MftIter {
             volume_handle,
             low_usn,
             high_usn,
+            max_usn_record_version,
             buffer,
             bytes_read: 0,
             offset: 0,
@@ -77,7 +80,7 @@ impl MftIter {
             LowUsn: self.low_usn,
             HighUsn: self.high_usn,
             MinMajorVersion: 2,
-            MaxMajorVersion: 3,
+            MaxMajorVersion: self.max_usn_record_version,
         };
 
         // SAFETY: `self.volume_handle` is a live volume handle. Input
