@@ -17,14 +17,6 @@ pub(crate) const WINDOWS_TO_UNIX_OFFSET_100NS: u64 = 116_444_736_000_000_000u64;
 pub struct Filetime(pub u64);
 
 impl Filetime {
-    /// Build a `Filetime` from a Win32 `FILETIME` struct.
-    #[must_use]
-    #[inline]
-    pub fn from_filetime_struct(ft: windows::Win32::Foundation::FILETIME) -> Self {
-        let value = ((ft.dwHighDateTime as u64) << 32) | (ft.dwLowDateTime as u64);
-        Filetime(value)
-    }
-
     /// Build a `Filetime` from the signed 64-bit representation used by
     /// USN journal records. Negative inputs are clamped to zero.
     #[must_use]
@@ -321,18 +313,6 @@ mod tests {
 
     mod filetime_newtype_tests {
         use super::*;
-        use windows::Win32::Foundation::FILETIME;
-
-        #[test]
-        fn round_trip_from_filetime_struct() {
-            let value: u64 = 132_000_000_000_000_000;
-            let ft = FILETIME {
-                dwLowDateTime: (value & 0xFFFF_FFFF) as u32,
-                dwHighDateTime: (value >> 32) as u32,
-            };
-            let f = Filetime::from_filetime_struct(ft);
-            assert_eq!(f.as_u64(), value);
-        }
 
         #[test]
         fn unix_epoch_boundary() {
