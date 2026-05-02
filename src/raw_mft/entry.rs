@@ -10,7 +10,10 @@ use crate::{
     file_attributes::FileAttributeView,
     path::PathResolvableEntry,
     raw_mft::{
-        attribute::{FileNameNamespace, NtfsAttributeType, file_attr_flags, for_each_attribute},
+        attribute::{
+            FileNameNamespace, NtfsAttribute, NtfsAttributeType, file_attr_flags,
+            for_each_attribute,
+        },
         data_run::{DataRunSummary, summarize_runs},
         record::FileRecord,
     },
@@ -69,171 +72,14 @@ pub struct RawMftEntry {
 impl RawMftEntry {
     /// Build a `RawMftEntry` from a parsed FILE record.
     pub(crate) fn from_record(record: &FileRecord<'_>) -> Self {
-        let mut entry = RawMftEntry {
-            record_number: record.number,
-            sequence_number: record.sequence_value(),
-            file_reference: Fid::new(record.file_reference()),
-            parent_reference: Fid::new(0),
-            base_record_reference: record.base_reference() & 0x0000_FFFF_FFFF_FFFF,
-            hard_link_count: record.link_count(),
-            flags: record.header.flags,
-            is_used: record.is_used(),
-            is_directory: record.is_directory(),
-            is_reparse_point: false,
-            reparse_tag: None,
-            namespace: FileNameNamespace::Posix,
-            file_name: OsString::new(),
-            si_created: Filetime::new(0),
-            si_modified: Filetime::new(0),
-            si_mft_modified: Filetime::new(0),
-            si_accessed: Filetime::new(0),
-            si_file_attributes: 0,
-            fn_created: Filetime::new(0),
-            fn_modified: Filetime::new(0),
-            fn_mft_modified: Filetime::new(0),
-            fn_accessed: Filetime::new(0),
-            real_size: 0,
-            allocated_size: 0,
-            is_resident: true,
-            is_sparse: false,
-            is_compressed: false,
-            is_encrypted: false,
-            data_run_summary: None,
-            alternate_data_streams: Vec::new(),
-        };
-
-        let mut best_namespace_score: i32 = -1;
-        let mut have_unnamed_data = false;
+        let mut builder = RawMftEntryBuilder::new(record);
 
         let (attrs_off, used) = record.attrs_range();
         for_each_attribute(record.data, attrs_off, used, |attr| {
-            let type_id = attr.type_id();
-            if type_id == NtfsAttributeType::StandardInformation as u32 {
-                if let Some(si) = attr.as_standard_info() {
-                    entry.si_created = Filetime::new(si.creation_time);
-                    entry.si_modified = Filetime::new(si.modification_time);
-                    entry.si_mft_modified = Filetime::new(si.mft_record_modification_time);
-                    entry.si_accessed = Filetime::new(si.access_time);
-                    entry.si_file_attributes = si.file_attributes;
-                }
-            } else if type_id == NtfsAttributeType::FileName as u32 {
-                if let Some((header, name_units)) = attr.as_file_name() {
-                    let ns = FileNameNamespace::from_u8(header.namespace);
-                    let score = match ns {
-                        FileNameNamespace::Win32AndDos => 4,
-                        FileNameNamespace::Win32 => 3,
-                        FileNameNamespace::Posix => 2,
-                        FileNameNamespace::Dos => 1,
-                    };
-                    if score > best_namespace_score {
-                        best_namespace_score = score;
-                        entry.namespace = ns;
-                        entry.file_name = OsString::from_wide(name_units);
-                        entry.parent_reference = Fid::new(header.parent_directory_reference);
-                        entry.fn_created = Filetime::new(header.creation_time);
-                        entry.fn_modified = Filetime::new(header.modification_time);
-                        entry.fn_mft_modified = Filetime::new(header.mft_record_modification_time);
-                        entry.fn_accessed = Filetime::new(header.access_time);
-                        let fa = header.file_attributes;
-                        if fa & file_attr_flags::REPARSE_POINT != 0 {
-                            entry.is_reparse_point = true;
-                            let tag = header.reparse_point_tag;
-                            entry.reparse_tag = Some(tag);
-                        }
-                    }
-                }
-            } else if type_id == NtfsAttributeType::Data as u32 {
-                let stream_name_slice = attr.name_slice();
-                if attr.is_non_resident() {
-                    if let Some(h) = attr.nonresident_header() {
-                        let allocated = h.allocated_size;
-                        let data_size = h.data_size;
-                        let runs_off = h.data_runs_offset as usize;
-                        let attr_data = attr.data();
-                        let runs_slice = if runs_off <= attr_data.len() {
-                            &attr_data[runs_off..]
-                        } else {
-                            &[][..]
-                        };
-                        let summary = match summarize_runs(runs_slice) {
-                            Ok(s) => Some(s),
-                            Err(e) => {
-                                warn!("summarize_runs failed for record {}: {e}", record.number);
-                                None
-                            }
-                        };
-                        let attr_flags = attr.flags();
-                        let is_compressed = attr_flags & 0x0001 != 0;
-                        let is_encrypted = attr_flags & 0x4000 != 0;
-                        let is_sparse = attr_flags & 0x8000 != 0;
-                        match stream_name_slice {
-                            None => {
-                                if !have_unnamed_data {
-                                    have_unnamed_data = true;
-                                    entry.real_size = data_size;
-                                    entry.allocated_size = allocated;
-                                    entry.is_resident = false;
-                                    entry.is_compressed |= is_compressed;
-                                    entry.is_encrypted |= is_encrypted;
-                                    entry.is_sparse |= is_sparse;
-                                    entry.data_run_summary = summary;
-                                }
-                            }
-                            Some(name_units) => {
-                                entry.alternate_data_streams.push(AdsInfo {
-                                    name: OsString::from_wide(name_units),
-                                    real_size: data_size,
-                                    allocated_size: allocated,
-                                    is_resident: false,
-                                });
-                            }
-                        }
-                    }
-                } else if let Some(h) = attr.resident_header() {
-                    let value_length = h.value_length as u64;
-                    match stream_name_slice {
-                        None => {
-                            if !have_unnamed_data {
-                                have_unnamed_data = true;
-                                entry.real_size = value_length;
-                                entry.allocated_size = value_length;
-                                entry.is_resident = true;
-                            }
-                        }
-                        Some(name_units) => {
-                            entry.alternate_data_streams.push(AdsInfo {
-                                name: OsString::from_wide(name_units),
-                                real_size: value_length,
-                                allocated_size: value_length,
-                                is_resident: true,
-                            });
-                        }
-                    }
-                }
-            } else if type_id == NtfsAttributeType::AttributeList as u32 && attr.is_non_resident() {
-                warn!(
-                    "non-resident $ATTRIBUTE_LIST in record {} is not fully supported",
-                    record.number
-                );
-            }
+            builder.consume_attribute(attr);
         });
 
-        // SI flags fold-in for sparse/compressed/encrypted (covers some
-        // edge cases where the unnamed $DATA flags weren't set).
-        if entry.si_file_attributes & file_attr_flags::SPARSE_FILE != 0 {
-            entry.is_sparse = true;
-        }
-        if entry.si_file_attributes & file_attr_flags::COMPRESSED != 0 {
-            entry.is_compressed = true;
-        }
-        if entry.si_file_attributes & file_attr_flags::ENCRYPTED != 0 {
-            entry.is_encrypted = true;
-        }
-        if entry.si_file_attributes & file_attr_flags::REPARSE_POINT != 0 {
-            entry.is_reparse_point = true;
-        }
-
-        entry
+        builder.build()
     }
 
     /// Strongly-typed view of [`RawMftEntry::si_file_attributes`].
@@ -243,6 +89,224 @@ impl RawMftEntry {
     #[inline]
     pub fn si_file_attributes_flags(&self) -> crate::FileAttributes {
         <Self as FileAttributeView>::file_attribute_flags(self)
+    }
+}
+
+struct RawMftEntryBuilder {
+    entry: RawMftEntry,
+    best_namespace_score: i32,
+    have_unnamed_data: bool,
+}
+
+impl RawMftEntryBuilder {
+    fn new(record: &FileRecord<'_>) -> Self {
+        Self {
+            entry: RawMftEntry {
+                record_number: record.number,
+                sequence_number: record.sequence_value(),
+                file_reference: Fid::new(record.file_reference()),
+                parent_reference: Fid::new(0),
+                base_record_reference: record.base_reference() & 0x0000_FFFF_FFFF_FFFF,
+                hard_link_count: record.link_count(),
+                flags: record.header.flags,
+                is_used: record.is_used(),
+                is_directory: record.is_directory(),
+                is_reparse_point: false,
+                reparse_tag: None,
+                namespace: FileNameNamespace::Posix,
+                file_name: OsString::new(),
+                si_created: Filetime::new(0),
+                si_modified: Filetime::new(0),
+                si_mft_modified: Filetime::new(0),
+                si_accessed: Filetime::new(0),
+                si_file_attributes: 0,
+                fn_created: Filetime::new(0),
+                fn_modified: Filetime::new(0),
+                fn_mft_modified: Filetime::new(0),
+                fn_accessed: Filetime::new(0),
+                real_size: 0,
+                allocated_size: 0,
+                is_resident: true,
+                is_sparse: false,
+                is_compressed: false,
+                is_encrypted: false,
+                data_run_summary: None,
+                alternate_data_streams: Vec::new(),
+            },
+            best_namespace_score: -1,
+            have_unnamed_data: false,
+        }
+    }
+
+    fn consume_attribute(&mut self, attr: &NtfsAttribute<'_>) {
+        let type_id = attr.type_id();
+        if type_id == NtfsAttributeType::StandardInformation as u32 {
+            self.apply_standard_information(attr);
+        } else if type_id == NtfsAttributeType::FileName as u32 {
+            self.apply_file_name(attr);
+        } else if type_id == NtfsAttributeType::Data as u32 {
+            self.apply_data_attribute(attr);
+        } else if type_id == NtfsAttributeType::AttributeList as u32 && attr.is_non_resident() {
+            warn!(
+                "non-resident $ATTRIBUTE_LIST in record {} is not fully supported",
+                self.entry.record_number
+            );
+        }
+    }
+
+    fn apply_standard_information(&mut self, attr: &NtfsAttribute<'_>) {
+        if let Some(si) = attr.as_standard_info() {
+            self.entry.si_created = Filetime::new(si.creation_time);
+            self.entry.si_modified = Filetime::new(si.modification_time);
+            self.entry.si_mft_modified = Filetime::new(si.mft_record_modification_time);
+            self.entry.si_accessed = Filetime::new(si.access_time);
+            self.entry.si_file_attributes = si.file_attributes;
+        }
+    }
+
+    fn apply_file_name(&mut self, attr: &NtfsAttribute<'_>) {
+        if let Some((header, name_units)) = attr.as_file_name() {
+            let ns = FileNameNamespace::from_u8(header.namespace);
+            let score = file_name_namespace_score(ns);
+            if score > self.best_namespace_score {
+                self.best_namespace_score = score;
+                self.entry.namespace = ns;
+                self.entry.file_name = OsString::from_wide(name_units);
+                self.entry.parent_reference = Fid::new(header.parent_directory_reference);
+                self.entry.fn_created = Filetime::new(header.creation_time);
+                self.entry.fn_modified = Filetime::new(header.modification_time);
+                self.entry.fn_mft_modified = Filetime::new(header.mft_record_modification_time);
+                self.entry.fn_accessed = Filetime::new(header.access_time);
+                let fa = header.file_attributes;
+                if fa & file_attr_flags::REPARSE_POINT != 0 {
+                    self.entry.is_reparse_point = true;
+                    self.entry.reparse_tag = Some(header.reparse_point_tag);
+                }
+            }
+        }
+    }
+
+    fn apply_data_attribute(&mut self, attr: &NtfsAttribute<'_>) {
+        let stream_name = attr.name_slice();
+        if attr.is_non_resident() {
+            if let Some(h) = attr.nonresident_header() {
+                self.apply_nonresident_data(stream_name, h.allocated_size, h.data_size, attr);
+            }
+            return;
+        }
+        if let Some(h) = attr.resident_header() {
+            self.apply_resident_data(stream_name, h.value_length as u64);
+        }
+    }
+
+    fn apply_nonresident_data(
+        &mut self,
+        stream_name: Option<&[u16]>,
+        allocated_size: u64,
+        data_size: u64,
+        attr: &NtfsAttribute<'_>,
+    ) {
+        let summary = self.nonresident_data_run_summary(attr);
+        let attr_flags = attr.flags();
+        let is_compressed = attr_flags & 0x0001 != 0;
+        let is_encrypted = attr_flags & 0x4000 != 0;
+        let is_sparse = attr_flags & 0x8000 != 0;
+        match stream_name {
+            None => {
+                if !self.have_unnamed_data {
+                    self.have_unnamed_data = true;
+                    self.entry.real_size = data_size;
+                    self.entry.allocated_size = allocated_size;
+                    self.entry.is_resident = false;
+                    self.entry.is_compressed |= is_compressed;
+                    self.entry.is_encrypted |= is_encrypted;
+                    self.entry.is_sparse |= is_sparse;
+                    self.entry.data_run_summary = summary;
+                }
+            }
+            Some(name_units) => {
+                self.entry.alternate_data_streams.push(AdsInfo {
+                    name: OsString::from_wide(name_units),
+                    real_size: data_size,
+                    allocated_size,
+                    is_resident: false,
+                });
+            }
+        }
+    }
+
+    fn apply_resident_data(&mut self, stream_name: Option<&[u16]>, value_length: u64) {
+        match stream_name {
+            None => {
+                if !self.have_unnamed_data {
+                    self.have_unnamed_data = true;
+                    self.entry.real_size = value_length;
+                    self.entry.allocated_size = value_length;
+                    self.entry.is_resident = true;
+                }
+            }
+            Some(name_units) => {
+                self.entry.alternate_data_streams.push(AdsInfo {
+                    name: OsString::from_wide(name_units),
+                    real_size: value_length,
+                    allocated_size: value_length,
+                    is_resident: true,
+                });
+            }
+        }
+    }
+
+    fn nonresident_data_run_summary(&self, attr: &NtfsAttribute<'_>) -> Option<DataRunSummary> {
+        let h = attr.nonresident_header()?;
+        let runs_off = h.data_runs_offset as usize;
+        let attr_data = attr.data();
+        let runs_slice = if runs_off <= attr_data.len() {
+            &attr_data[runs_off..]
+        } else {
+            &[][..]
+        };
+        match summarize_runs(runs_slice) {
+            Ok(s) => Some(s),
+            Err(e) => {
+                warn!(
+                    "summarize_runs failed for record {}: {e}",
+                    self.entry.record_number
+                );
+                None
+            }
+        }
+    }
+
+    fn build(mut self) -> RawMftEntry {
+        self.fold_si_flags();
+        self.entry
+    }
+
+    fn fold_si_flags(&mut self) {
+        // SI flags fold-in for sparse/compressed/encrypted (covers some
+        // edge cases where the unnamed $DATA flags weren't set).
+        if self.entry.si_file_attributes & file_attr_flags::SPARSE_FILE != 0 {
+            self.entry.is_sparse = true;
+        }
+        if self.entry.si_file_attributes & file_attr_flags::COMPRESSED != 0 {
+            self.entry.is_compressed = true;
+        }
+        if self.entry.si_file_attributes & file_attr_flags::ENCRYPTED != 0 {
+            self.entry.is_encrypted = true;
+        }
+        if self.entry.si_file_attributes & file_attr_flags::REPARSE_POINT != 0 {
+            self.entry.is_reparse_point = true;
+        }
+    }
+}
+
+#[inline]
+fn file_name_namespace_score(namespace: FileNameNamespace) -> i32 {
+    match namespace {
+        FileNameNamespace::Win32AndDos => 4,
+        FileNameNamespace::Win32 => 3,
+        FileNameNamespace::Posix => 2,
+        FileNameNamespace::Dos => 1,
     }
 }
 

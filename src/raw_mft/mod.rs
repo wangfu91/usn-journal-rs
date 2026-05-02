@@ -38,6 +38,7 @@ mod entry;
 mod extent;
 mod fixup;
 mod io;
+mod options;
 mod record;
 
 use std::io::{Read, Seek, SeekFrom};
@@ -53,7 +54,7 @@ use crate::{
         data_run::{DataRun, decode_runs},
         extent::ExtentMap,
         io::VolumeReader,
-        record::{FIRST_NORMAL_RECORD, FileRecord, MFT_RECORD_NUMBER},
+        record::{FileRecord, MFT_RECORD_NUMBER},
     },
     volume::Volume,
 };
@@ -61,86 +62,13 @@ use crate::{
 pub use attribute::FileNameNamespace;
 pub use data_run::{DataRun as DataRunInfo, DataRunSummary};
 pub use entry::{AdsInfo, RawMftEntry};
+pub use options::{RawMftIterOptions, RawMftIterOptionsBuilder};
 
 /// Default I/O buffer size for raw `$MFT` iteration.
 pub const DEFAULT_BUFFER_BYTES: NonZeroUsize = match NonZeroUsize::new(256 * 1024) {
     Some(v) => v,
     None => unreachable!(),
 };
-
-/// Options controlling iteration behaviour.
-///
-/// Use [`RawMftIterOptions::builder`] for the fluent builder API, or construct
-/// directly via struct-literal syntax. [`Default`] is also implemented.
-#[derive(Debug, Clone)]
-pub struct RawMftIterOptions {
-    /// Size of the I/O buffer in bytes used for batched reads of FILE records.
-    pub buffer_bytes: NonZeroUsize,
-    /// Honour the `$MFT` `$BITMAP` to skip unused records.
-    pub skip_unused: bool,
-    /// First record number to yield.
-    pub start_record: u64,
-    /// Last record number to yield (exclusive); `None` means up to the
-    /// total number of MFT records.
-    pub end_record: Option<u64>,
-}
-
-impl Default for RawMftIterOptions {
-    fn default() -> Self {
-        Self {
-            buffer_bytes: DEFAULT_BUFFER_BYTES,
-            skip_unused: true,
-            start_record: FIRST_NORMAL_RECORD,
-            end_record: None,
-        }
-    }
-}
-
-impl RawMftIterOptions {
-    /// Returns a fluent builder for [`RawMftIterOptions`].
-    pub fn builder() -> RawMftIterOptionsBuilder {
-        RawMftIterOptionsBuilder::default()
-    }
-}
-
-/// Fluent builder for [`RawMftIterOptions`].
-#[derive(Debug, Default, Clone)]
-#[must_use]
-pub struct RawMftIterOptionsBuilder {
-    inner: RawMftIterOptions,
-}
-
-impl RawMftIterOptionsBuilder {
-    /// Set the I/O buffer size in bytes.
-    pub fn buffer_bytes(mut self, v: NonZeroUsize) -> Self {
-        self.inner.buffer_bytes = v;
-        self
-    }
-
-    /// Whether to honour the `$MFT` `$BITMAP` and skip unused records.
-    pub fn skip_unused(mut self, v: bool) -> Self {
-        self.inner.skip_unused = v;
-        self
-    }
-
-    /// Set the inclusive starting record number.
-    pub fn start_record(mut self, v: u64) -> Self {
-        self.inner.start_record = v;
-        self
-    }
-
-    /// Set the exclusive end record number, or `None` to iterate the full MFT.
-    pub fn end_record(mut self, v: Option<u64>) -> Self {
-        self.inner.end_record = v;
-        self
-    }
-
-    /// Finalize the builder.
-    #[must_use]
-    pub fn build(self) -> RawMftIterOptions {
-        self.inner
-    }
-}
 
 /// Raw `$MFT` reader bound to an open [`Volume`].
 pub struct RawMft<'a> {
@@ -432,7 +360,7 @@ mod tests {
         let o = RawMftIterOptions::default();
         assert_eq!(o.buffer_bytes, DEFAULT_BUFFER_BYTES);
         assert!(o.skip_unused);
-        assert_eq!(o.start_record, FIRST_NORMAL_RECORD);
+        assert_eq!(o.start_record, super::record::FIRST_NORMAL_RECORD);
         assert!(o.end_record.is_none());
     }
 
