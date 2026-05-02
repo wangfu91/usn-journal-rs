@@ -3,9 +3,9 @@
 //! Builds a `RawMft` for C:, collects every 1 000th entry (up to 50),
 //! then resolves each entry with three independent resolvers:
 //!
-//!  1. Syscall-based, no cache (`PathResolver::builder(...).build()`).
+//!  1. Syscall-based, no cache (`PathResolver::new(...).without_lru_cache()`).
 //!  2. LRU-cached resolver (warm-cache path on second call).
-//!  3. In-memory directory-tree (`PathResolver::builder(...).build_with_in_memory_tree`).
+//!  3. In-memory directory-tree (`PathResolver::new(...).with_in_memory_tree`).
 //!
 //! Asserts that ≥ 90 % of entries produce identical paths across all three
 //! strategies (case-insensitive, to accommodate Windows path normalisation).
@@ -62,13 +62,12 @@ fn all_three_resolvers_agree() {
     }
 
     // Build the three resolvers.
-    let mut resolver1 = PathResolver::builder(&volume).build();
+    let mut resolver1 = PathResolver::new(&volume).without_lru_cache();
 
-    let mut resolver2 = PathResolver::builder(&volume)
-        .with_lru_cache(NonZeroUsize::new(1024).expect("1024 is non-zero"))
-        .build();
+    let mut resolver2 = PathResolver::new(&volume)
+        .with_lru_cache(NonZeroUsize::new(1024).expect("1024 is non-zero"));
 
-    let mut resolver3 = match PathResolver::builder(&volume).build_with_in_memory_tree(&raw_mft) {
+    let mut resolver3 = match PathResolver::new(&volume).with_in_memory_tree(&raw_mft) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("path_resolver_consistency: with_in_memory_tree failed: {e}");

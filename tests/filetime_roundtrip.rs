@@ -61,10 +61,10 @@ fn test_raw_roundtrip_many_values() {
     }
 }
 
-// ─── try_to_system_time ───────────────────────────────────────────────────
+// ─── to_system_time ───────────────────────────────────────────────────────
 
 #[test]
-fn test_try_to_system_time_known_values() {
+fn test_to_system_time_known_values() {
     let Some(_) = get_seed_entry() else {
         eprintln!("filetime_roundtrip: skipping (requires admin)");
         return;
@@ -91,7 +91,7 @@ fn test_try_to_system_time_known_values() {
 }
 
 #[test]
-fn test_try_to_system_time_current_roundtrip() {
+fn test_to_system_time_current_roundtrip() {
     let Some(_) = get_seed_entry() else {
         eprintln!("filetime_roundtrip: skipping (requires admin)");
         return;
@@ -116,7 +116,7 @@ fn test_try_to_system_time_current_roundtrip() {
         .as_nanos();
     assert!(
         diff_ns < 200,
-        "try_to_system_time round-trip should be within 200 ns, got {diff_ns} ns"
+        "to_system_time round-trip should be within 200 ns, got {diff_ns} ns"
     );
 }
 

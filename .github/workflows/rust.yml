@@ -22,5 +22,3 @@ jobs:
       run: cargo test --verbose
     - name: Build without default features
       run: cargo build --no-default-features --verbose
-    - name: Build with chrono feature
-      run: cargo build --features chrono --verbose

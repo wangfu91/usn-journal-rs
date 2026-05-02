@@ -25,7 +25,7 @@ fn run() -> Result<(), UsnError> {
         ..Default::default()
     };
 
-    let mut path_resolver = PathResolver::builder(&volume).build();
+    let mut path_resolver = PathResolver::new(&volume);
 
     for result in usn_journal.try_iter_with_options(enum_options)? {
         match result {

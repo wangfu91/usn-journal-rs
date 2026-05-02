@@ -12,8 +12,7 @@ pub(crate) const WINDOWS_TO_UNIX_OFFSET_100NS: u64 = 116_444_736_000_000_000u64;
 /// This is the raw timestamp representation used by the NTFS USN journal
 /// and MFT records. It is exposed in this crate's public API in place of
 /// any specific date/time type so that callers can pick whichever
-/// downstream conversion (e.g. `SystemTime`, `chrono::DateTime<Utc>`,
-/// `time::OffsetDateTime`) suits their use case.
+/// downstream conversion suits their use case.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[repr(transparent)]
 pub struct Filetime(u64);

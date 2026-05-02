@@ -97,7 +97,7 @@ fn days_to_ymd(days: i64) -> (i64, u32, u32) {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let volume = Volume::from_drive_letter('C')?;
     let usn_journal = UsnJournal::new(&volume);
-    let mut path_resolver = PathResolver::builder(&volume).build();
+    let mut path_resolver = PathResolver::new(&volume);
 
     for result in usn_journal.try_iter()?.take(10) {
         match result {
