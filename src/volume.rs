@@ -14,9 +14,9 @@ use windows::{
     core::HSTRING,
 };
 
-/// The source used to open a [`Volume`].
+/// Internal source used to open a [`Volume`].
 #[derive(Debug)]
-pub enum VolumeSource {
+pub(crate) enum VolumeSource {
     /// Volume was opened via a drive letter (e.g. `'C'`).
     DriveLetter(char),
     /// Volume was opened via a mount point path.
@@ -48,13 +48,6 @@ impl Volume {
             handle,
             source: VolumeSource::MountPoint(path.to_path_buf()),
         })
-    }
-
-    /// Returns the source used to open this volume.
-    #[must_use]
-    #[inline]
-    pub fn source(&self) -> &VolumeSource {
-        &self.source
     }
 
     /// Returns the drive letter if this volume was opened via a drive letter.
