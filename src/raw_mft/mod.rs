@@ -444,13 +444,13 @@ fn read_nonresident(
                     .checked_mul(cluster_size)
                     .ok_or(UsnError::InvalidDataRun("run byte length overflow"))?;
                 let to_read = bytes.min(remaining);
-                let mut buf = vec![0u8; to_read as usize];
                 let off = lcn
                     .checked_mul(cluster_size)
                     .ok_or(UsnError::InvalidDataRun("run offset overflow"))?;
+                let start = out.len();
+                out.resize(start + to_read as usize, 0);
                 reader.seek(SeekFrom::Start(off)).map_err(io_err)?;
-                reader.read_exact(&mut buf).map_err(io_err)?;
-                out.extend_from_slice(&buf);
+                reader.read_exact(&mut out[start..]).map_err(io_err)?;
                 remaining -= to_read;
             }
             DataRun::Sparse { clusters } => {

@@ -83,7 +83,7 @@ pub struct RawMftEntry {
     pub is_encrypted: bool,
     pub data_run_summary: Option<DataRunSummary>,
 
-    pub alternate_data_streams: Vec<AdsInfo>,
+    pub alternate_data_streams: Box<[AdsInfo]>,
 }
 
 impl RawMftEntry {
@@ -137,6 +137,7 @@ impl RawMftEntry {
 
 struct RawMftEntryBuilder {
     entry: RawMftEntry,
+    alternate_data_streams: Vec<AdsInfo>,
     best_namespace_score: i32,
     have_unnamed_data: bool,
     /// Captured `$ATTRIBUTE_LIST` data, if any.
@@ -176,8 +177,9 @@ impl RawMftEntryBuilder {
                 is_compressed: false,
                 is_encrypted: false,
                 data_run_summary: None,
-                alternate_data_streams: Vec::new(),
+                alternate_data_streams: Box::default(),
             },
+            alternate_data_streams: Vec::new(),
             best_namespace_score: -1,
             have_unnamed_data: false,
             attr_list: None,
@@ -284,7 +286,7 @@ impl RawMftEntryBuilder {
                 }
             }
             Some(name_units) => {
-                self.entry.alternate_data_streams.push(AdsInfo {
+                self.alternate_data_streams.push(AdsInfo {
                     name: OsString::from_wide(name_units),
                     real_size: data_size,
                     allocated_size,
@@ -305,7 +307,7 @@ impl RawMftEntryBuilder {
                 }
             }
             Some(name_units) => {
-                self.entry.alternate_data_streams.push(AdsInfo {
+                self.alternate_data_streams.push(AdsInfo {
                     name: OsString::from_wide(name_units),
                     real_size: value_length,
                     allocated_size: value_length,
@@ -338,6 +340,7 @@ impl RawMftEntryBuilder {
 
     fn build(mut self) -> (RawMftEntry, Option<AttributeListInfo>) {
         self.fold_si_flags();
+        self.entry.alternate_data_streams = self.alternate_data_streams.into_boxed_slice();
         (self.entry, self.attr_list)
     }
 

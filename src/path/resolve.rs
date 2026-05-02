@@ -126,11 +126,12 @@ fn file_id_to_path(
         )?
     };
 
-    let init_len = size_of::<u32>() + (Foundation::MAX_PATH as usize) * size_of::<u16>();
     // Reuse the per-resolver buffer to avoid reallocating per call.
     let mut info_buffer = buffer.borrow_mut();
-    info_buffer.clear();
-    info_buffer.resize(init_len, 0);
+    let min_len = size_of::<FileSystem::FILE_NAME_INFO>() + 128 * size_of::<u16>();
+    if info_buffer.len() < min_len {
+        info_buffer.resize(min_len, 0);
+    }
 
     loop {
         // SAFETY: `file_handle` is a live, owned handle from the
