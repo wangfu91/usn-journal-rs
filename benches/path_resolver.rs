@@ -71,7 +71,7 @@ fn collect_test_entries(volume: &Volume) -> Vec<MftEntry> {
                 fid: entry.file_reference,
                 parent_fid: entry.parent_reference,
                 file_name: entry.file_name.clone(),
-                file_attributes: 0,
+                file_attributes: usn_journal_rs::FileAttributes::empty(),
             };
             entries.push(mft_entry);
             if entries.len() >= NUM_TEST_ENTRIES {

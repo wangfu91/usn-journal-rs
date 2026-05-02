@@ -1,29 +1,73 @@
 //! Internal helpers for decoding Windows file-attribute bitmasks.
 
-use windows::Win32::Storage::FileSystem::{
-    FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_HIDDEN, FILE_FLAGS_AND_ATTRIBUTES,
-};
+use std::fmt;
 
 /// Shared view over a raw Windows file-attribute bitmask.
 pub(crate) trait FileAttributeView {
-    /// Returns the underlying Windows file-attribute bitmask.
-    fn raw_file_attributes(&self) -> u32;
+    /// Returns the underlying Windows file-attribute flags.
+    fn file_attributes(&self) -> crate::FileAttributes;
 
     /// Returns true if the bitmask marks a directory.
     #[inline]
     fn has_directory_attribute(&self) -> bool {
-        FILE_FLAGS_AND_ATTRIBUTES(self.raw_file_attributes()).contains(FILE_ATTRIBUTE_DIRECTORY)
+        self.file_attributes()
+            .contains(crate::FileAttributes::DIRECTORY)
     }
 
     /// Returns true if the bitmask marks a hidden item.
     #[inline]
     fn has_hidden_attribute(&self) -> bool {
-        FILE_FLAGS_AND_ATTRIBUTES(self.raw_file_attributes()).contains(FILE_ATTRIBUTE_HIDDEN)
+        self.file_attributes()
+            .contains(crate::FileAttributes::HIDDEN)
     }
 
     /// Strongly typed wrapper around the raw bitmask.
     #[inline]
     fn file_attribute_flags(&self) -> crate::FileAttributes {
-        crate::FileAttributes::from_bits_retain(self.raw_file_attributes())
+        self.file_attributes()
+    }
+}
+
+const FILE_ATTRIBUTE_NAMES: &[(crate::FileAttributes, &str)] = &[
+    (crate::FileAttributes::READ_ONLY, "READ_ONLY"),
+    (crate::FileAttributes::HIDDEN, "HIDDEN"),
+    (crate::FileAttributes::SYSTEM, "SYSTEM"),
+    (crate::FileAttributes::DIRECTORY, "DIRECTORY"),
+    (crate::FileAttributes::ARCHIVE, "ARCHIVE"),
+    (crate::FileAttributes::DEVICE, "DEVICE"),
+    (crate::FileAttributes::NORMAL, "NORMAL"),
+    (crate::FileAttributes::TEMPORARY, "TEMPORARY"),
+    (crate::FileAttributes::SPARSE_FILE, "SPARSE_FILE"),
+    (crate::FileAttributes::REPARSE_POINT, "REPARSE_POINT"),
+    (crate::FileAttributes::COMPRESSED, "COMPRESSED"),
+    (crate::FileAttributes::OFFLINE, "OFFLINE"),
+    (
+        crate::FileAttributes::NOT_CONTENT_INDEXED,
+        "NOT_CONTENT_INDEXED",
+    ),
+    (crate::FileAttributes::ENCRYPTED, "ENCRYPTED"),
+    (crate::FileAttributes::INTEGRITY_STREAM, "INTEGRITY_STREAM"),
+    (crate::FileAttributes::VIRTUAL, "VIRTUAL"),
+    (crate::FileAttributes::NO_SCRUB_DATA, "NO_SCRUB_DATA"),
+    (crate::FileAttributes::RECALL_ON_OPEN, "RECALL_ON_OPEN"),
+    (
+        crate::FileAttributes::RECALL_ON_DATA_ACCESS,
+        "RECALL_ON_DATA_ACCESS",
+    ),
+];
+
+impl fmt::Display for crate::FileAttributes {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut wrote = false;
+        for (flag, name) in FILE_ATTRIBUTE_NAMES {
+            if self.contains(*flag) {
+                if wrote {
+                    f.write_str(" | ")?;
+                }
+                f.write_str(name)?;
+                wrote = true;
+            }
+        }
+        if wrote { Ok(()) } else { f.write_str("NONE") }
     }
 }

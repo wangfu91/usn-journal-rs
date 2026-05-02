@@ -5,7 +5,7 @@ use std::{ffi::OsString, os::windows::ffi::OsStringExt};
 
 use crate::file_attributes::FileAttributeView;
 use crate::usn_record::UsnRecordView;
-use crate::{Fid, Usn};
+use crate::{Fid, FileAttributes, Usn};
 
 /// Owned representation of a single entry returned by `FSCTL_ENUM_USN_DATA`.
 ///
@@ -21,8 +21,8 @@ pub struct MftEntry {
     pub parent_fid: Fid,
     /// Parsed file name.
     pub file_name: OsString,
-    /// Raw file-attribute bitmask.
-    pub file_attributes: u32,
+    /// File-attribute flags.
+    pub file_attributes: FileAttributes,
 }
 
 impl MftEntry {
@@ -35,7 +35,7 @@ impl MftEntry {
             fid: record.fid(),
             parent_fid: record.parent_fid(),
             file_name,
-            file_attributes: record.file_attributes(),
+            file_attributes: FileAttributes::from_bits_retain(record.file_attributes()),
         }
     }
 
@@ -61,10 +61,17 @@ impl MftEntry {
     pub fn file_attributes_flags(&self) -> crate::FileAttributes {
         <Self as FileAttributeView>::file_attribute_flags(self)
     }
+
+    /// Raw file-attribute bitmask.
+    #[must_use]
+    #[inline]
+    pub fn raw_file_attributes(&self) -> u32 {
+        self.file_attributes.bits()
+    }
 }
 
 impl FileAttributeView for MftEntry {
-    fn raw_file_attributes(&self) -> u32 {
+    fn file_attributes(&self) -> FileAttributes {
         self.file_attributes
     }
 }
@@ -78,7 +85,7 @@ impl fmt::Display for MftEntry {
             "MFT fid={} parent={} attrs=0x{:x} \"{}\"",
             self.fid,
             self.parent_fid,
-            self.file_attributes,
+            self.file_attributes.bits(),
             self.file_name.to_string_lossy(),
         )
     }

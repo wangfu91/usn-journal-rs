@@ -170,7 +170,7 @@ fn usn_entry_creation() {
     assert_eq!(entry.fid, Fid::new(0x123456));
     assert_eq!(entry.parent_fid, Fid::new(0x654321));
     assert_eq!(
-        entry.reason,
+        entry.reason.bits(),
         windows::Win32::System::Ioctl::USN_REASON_FILE_CREATE
     );
     assert_eq!(entry.file_name, OsString::from("test.txt"));

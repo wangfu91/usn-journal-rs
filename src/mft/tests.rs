@@ -138,7 +138,7 @@ mod entry {
         assert_eq!(entry.fid, Fid::new(12345));
         assert_eq!(entry.parent_fid, Fid::new(67890));
         assert_eq!(entry.file_name.to_string_lossy(), "test.txt");
-        assert_eq!(entry.file_attributes, 0x20);
+        assert_eq!(entry.file_attributes.bits(), 0x20);
     }
 
     #[test]
@@ -230,7 +230,7 @@ mod entry {
         assert_eq!(entry.fid, Fid::from_u128(file_id));
         assert_eq!(entry.parent_fid, Fid::from_u128(parent_id));
         assert_eq!(entry.file_name.to_string_lossy(), "refs.txt");
-        assert_eq!(entry.file_attributes, 0x20);
+        assert_eq!(entry.file_attributes.bits(), 0x20);
     }
 }
 

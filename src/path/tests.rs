@@ -42,7 +42,7 @@ fn mft_entry_path_resolvable_trait() {
         fid: Fid::new(0x123456),
         parent_fid: Fid::new(0x654321),
         file_name: OsString::from("test.txt"),
-        file_attributes: 0,
+        file_attributes: crate::FileAttributes::empty(),
     };
 
     assert_eq!(entry.fid(), Fid::new(0x123456));

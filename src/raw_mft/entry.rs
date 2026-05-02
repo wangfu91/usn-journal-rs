@@ -6,7 +6,7 @@ use std::os::windows::ffi::OsStringExt;
 use log::warn;
 
 use crate::{
-    Fid, Filetime,
+    Fid, FileAttributes, Filetime,
     file_attributes::FileAttributeView,
     path::PathResolvableEntry,
     raw_mft::{
@@ -68,7 +68,7 @@ pub struct RawMftEntry {
     pub si_modified: Filetime,
     pub si_mft_modified: Filetime,
     pub si_accessed: Filetime,
-    pub si_file_attributes: u32,
+    pub si_file_attributes: FileAttributes,
 
     pub fn_created: Filetime,
     pub fn_modified: Filetime,
@@ -126,6 +126,13 @@ impl RawMftEntry {
     pub fn si_file_attributes_flags(&self) -> crate::FileAttributes {
         <Self as FileAttributeView>::file_attribute_flags(self)
     }
+
+    /// Raw `$STANDARD_INFORMATION` file-attribute bitmask.
+    #[must_use]
+    #[inline]
+    pub fn raw_si_file_attributes(&self) -> u32 {
+        self.si_file_attributes.bits()
+    }
 }
 
 struct RawMftEntryBuilder {
@@ -157,7 +164,7 @@ impl RawMftEntryBuilder {
                 si_modified: Filetime::new(0),
                 si_mft_modified: Filetime::new(0),
                 si_accessed: Filetime::new(0),
-                si_file_attributes: 0,
+                si_file_attributes: FileAttributes::empty(),
                 fn_created: Filetime::new(0),
                 fn_modified: Filetime::new(0),
                 fn_mft_modified: Filetime::new(0),
@@ -212,7 +219,7 @@ impl RawMftEntryBuilder {
             self.entry.si_modified = Filetime::new(si.modification_time);
             self.entry.si_mft_modified = Filetime::new(si.mft_record_modification_time);
             self.entry.si_accessed = Filetime::new(si.access_time);
-            self.entry.si_file_attributes = si.file_attributes;
+            self.entry.si_file_attributes = FileAttributes::from_bits_retain(si.file_attributes);
         }
     }
 
@@ -337,16 +344,17 @@ impl RawMftEntryBuilder {
     fn fold_si_flags(&mut self) {
         // SI flags fold-in for sparse/compressed/encrypted (covers some
         // edge cases where the unnamed $DATA flags weren't set).
-        if self.entry.si_file_attributes & file_attr_flags::SPARSE_FILE != 0 {
+        let si_bits = self.entry.si_file_attributes.bits();
+        if si_bits & file_attr_flags::SPARSE_FILE != 0 {
             self.entry.is_sparse = true;
         }
-        if self.entry.si_file_attributes & file_attr_flags::COMPRESSED != 0 {
+        if si_bits & file_attr_flags::COMPRESSED != 0 {
             self.entry.is_compressed = true;
         }
-        if self.entry.si_file_attributes & file_attr_flags::ENCRYPTED != 0 {
+        if si_bits & file_attr_flags::ENCRYPTED != 0 {
             self.entry.is_encrypted = true;
         }
-        if self.entry.si_file_attributes & file_attr_flags::REPARSE_POINT != 0 {
+        if si_bits & file_attr_flags::REPARSE_POINT != 0 {
             self.entry.is_reparse_point = true;
         }
     }
@@ -358,7 +366,7 @@ fn file_name_namespace_score(namespace: FileNameNamespace) -> i32 {
 }
 
 impl FileAttributeView for RawMftEntry {
-    fn raw_file_attributes(&self) -> u32 {
+    fn file_attributes(&self) -> FileAttributes {
         self.si_file_attributes
     }
 }

@@ -61,7 +61,7 @@ mod usn_record;
 
 // Re-export commonly used types
 pub use errors::UsnError;
-pub use types::{Fid, FileAttributes, Usn, UsnReason};
+pub use types::{Fid, FileAttributes, Usn, UsnReason, UsnSourceInfo};
 
 /// A convenient type alias for Results with UsnError.
 pub type UsnResult<T> = std::result::Result<T, UsnError>;

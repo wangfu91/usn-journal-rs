@@ -19,7 +19,7 @@ and idiomatic Rust refactoring. **Breaking changes throughout** — see the
   to <500 ms (~40× faster).
 - Timestamps now use a lightweight `Filetime(u64)` newtype instead of an
   external date/time dependency.
-- Strong typing via `Usn(i64)` and `Fid` typed file IDs (64-bit NTFS + 128-bit ReFS).
+- Strong typing via `Usn`, `Fid`, `UsnReason`, `UsnSourceInfo`, and `FileAttributes`.
 - Builder patterns for all iterator option structs.
 - Concrete `UsnError` variants — no more `OtherError(String)`.
 

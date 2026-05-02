@@ -1,57 +1,72 @@
 //! Helpers for formatting USN reason bitfields.
 
-use windows::Win32::System::Ioctl::{
-    USN_REASON_BASIC_INFO_CHANGE, USN_REASON_CLOSE, USN_REASON_COMPRESSION_CHANGE,
-    USN_REASON_DATA_EXTEND, USN_REASON_DATA_OVERWRITE, USN_REASON_DATA_TRUNCATION,
-    USN_REASON_DESIRED_STORAGE_CLASS_CHANGE, USN_REASON_EA_CHANGE, USN_REASON_ENCRYPTION_CHANGE,
-    USN_REASON_FILE_CREATE, USN_REASON_FILE_DELETE, USN_REASON_HARD_LINK_CHANGE,
-    USN_REASON_INDEXABLE_CHANGE, USN_REASON_INTEGRITY_CHANGE, USN_REASON_NAMED_DATA_EXTEND,
-    USN_REASON_NAMED_DATA_OVERWRITE, USN_REASON_NAMED_DATA_TRUNCATION, USN_REASON_OBJECT_ID_CHANGE,
-    USN_REASON_RENAME_NEW_NAME, USN_REASON_RENAME_OLD_NAME, USN_REASON_REPARSE_POINT_CHANGE,
-    USN_REASON_SECURITY_CHANGE, USN_REASON_STREAM_CHANGE, USN_REASON_TRANSACTED_CHANGE,
-};
+use std::fmt;
 
-const REASON_FLAGS: &[(u32, &str)] = &[
-    (USN_REASON_DATA_OVERWRITE, "DATA_OVERWRITE"),
-    (USN_REASON_DATA_EXTEND, "DATA_EXTEND"),
-    (USN_REASON_DATA_TRUNCATION, "DATA_TRUNCATION"),
-    (USN_REASON_NAMED_DATA_OVERWRITE, "NAMED_DATA_OVERWRITE"),
-    (USN_REASON_NAMED_DATA_EXTEND, "NAMED_DATA_EXTEND"),
-    (USN_REASON_NAMED_DATA_TRUNCATION, "NAMED_DATA_TRUNCATION"),
-    (USN_REASON_FILE_CREATE, "FILE_CREATE"),
-    (USN_REASON_FILE_DELETE, "FILE_DELETE"),
-    (USN_REASON_EA_CHANGE, "EA_CHANGE"),
-    (USN_REASON_SECURITY_CHANGE, "SECURITY_CHANGE"),
-    (USN_REASON_RENAME_OLD_NAME, "RENAME_OLD_NAME"),
-    (USN_REASON_RENAME_NEW_NAME, "RENAME_NEW_NAME"),
-    (USN_REASON_INDEXABLE_CHANGE, "INDEXABLE_CHANGE"),
-    (USN_REASON_BASIC_INFO_CHANGE, "BASIC_INFO_CHANGE"),
-    (USN_REASON_HARD_LINK_CHANGE, "HARD_LINK_CHANGE"),
-    (USN_REASON_COMPRESSION_CHANGE, "COMPRESSION_CHANGE"),
-    (USN_REASON_ENCRYPTION_CHANGE, "ENCRYPTION_CHANGE"),
-    (USN_REASON_OBJECT_ID_CHANGE, "OBJECT_ID_CHANGE"),
-    (USN_REASON_REPARSE_POINT_CHANGE, "REPARSE_POINT_CHANGE"),
-    (USN_REASON_STREAM_CHANGE, "STREAM_CHANGE"),
-    (USN_REASON_TRANSACTED_CHANGE, "TRANSACTED_CHANGE"),
-    (USN_REASON_INTEGRITY_CHANGE, "INTEGRITY_CHANGE"),
+use crate::UsnReason;
+
+const REASON_FLAGS: &[(UsnReason, &str)] = &[
+    (UsnReason::DATA_OVERWRITE, "DATA_OVERWRITE"),
+    (UsnReason::DATA_EXTEND, "DATA_EXTEND"),
+    (UsnReason::DATA_TRUNCATION, "DATA_TRUNCATION"),
+    (UsnReason::NAMED_DATA_OVERWRITE, "NAMED_DATA_OVERWRITE"),
+    (UsnReason::NAMED_DATA_EXTEND, "NAMED_DATA_EXTEND"),
+    (UsnReason::NAMED_DATA_TRUNCATION, "NAMED_DATA_TRUNCATION"),
+    (UsnReason::FILE_CREATE, "FILE_CREATE"),
+    (UsnReason::FILE_DELETE, "FILE_DELETE"),
+    (UsnReason::EA_CHANGE, "EA_CHANGE"),
+    (UsnReason::SECURITY_CHANGE, "SECURITY_CHANGE"),
+    (UsnReason::RENAME_OLD_NAME, "RENAME_OLD_NAME"),
+    (UsnReason::RENAME_NEW_NAME, "RENAME_NEW_NAME"),
+    (UsnReason::INDEXABLE_CHANGE, "INDEXABLE_CHANGE"),
+    (UsnReason::BASIC_INFO_CHANGE, "BASIC_INFO_CHANGE"),
+    (UsnReason::HARD_LINK_CHANGE, "HARD_LINK_CHANGE"),
+    (UsnReason::COMPRESSION_CHANGE, "COMPRESSION_CHANGE"),
+    (UsnReason::ENCRYPTION_CHANGE, "ENCRYPTION_CHANGE"),
+    (UsnReason::OBJECT_ID_CHANGE, "OBJECT_ID_CHANGE"),
+    (UsnReason::REPARSE_POINT_CHANGE, "REPARSE_POINT_CHANGE"),
+    (UsnReason::STREAM_CHANGE, "STREAM_CHANGE"),
+    (UsnReason::TRANSACTED_CHANGE, "TRANSACTED_CHANGE"),
+    (UsnReason::INTEGRITY_CHANGE, "INTEGRITY_CHANGE"),
     (
-        USN_REASON_DESIRED_STORAGE_CLASS_CHANGE,
+        UsnReason::DESIRED_STORAGE_CLASS_CHANGE,
         "DESIRED_STORAGE_CLASS_CHANGE",
     ),
-    (USN_REASON_CLOSE, "CLOSE"),
+    (UsnReason::CLOSE, "CLOSE"),
 ];
 
 /// Convert a USN reason bitfield to a human-readable string.
-pub(super) fn format_reason(reason: u32) -> String {
-    let matched: Vec<&'static str> = REASON_FLAGS
-        .iter()
-        .filter(|(bit, _)| reason & *bit != 0)
-        .map(|(_, name)| *name)
-        .collect();
+pub(super) fn format_reason(reason: UsnReason) -> String {
+    reason.to_string()
+}
 
-    if matched.is_empty() {
-        "UNKNOWN".to_string()
+pub(super) struct CompactReason(pub(super) UsnReason);
+
+impl fmt::Display for CompactReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt_reason(self.0, f, "|")
+    }
+}
+
+impl fmt::Display for UsnReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt_reason(*self, f, " | ")
+    }
+}
+
+fn fmt_reason(reason: UsnReason, f: &mut fmt::Formatter<'_>, separator: &str) -> fmt::Result {
+    let mut wrote = false;
+    for (flag, name) in REASON_FLAGS {
+        if reason.contains(*flag) {
+            if wrote {
+                f.write_str(separator)?;
+            }
+            f.write_str(name)?;
+            wrote = true;
+        }
+    }
+    if wrote {
+        Ok(())
     } else {
-        matched.join(" | ")
+        f.write_str("UNKNOWN")
     }
 }

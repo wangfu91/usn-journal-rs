@@ -264,6 +264,50 @@ bitflags::bitflags! {
     }
 }
 
+bitflags::bitflags! {
+    /// Strongly-typed view over a USN source-info bitmask.
+    ///
+    /// Mirrors the Win32 `USN_SOURCE_*` constants. Unknown bits are preserved
+    /// on round-trip via [`bitflags`]'s `from_bits_retain`.
+    #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
+    #[repr(transparent)]
+    pub struct UsnSourceInfo: u32 {
+        const DATA_MANAGEMENT = 0x0000_0001;
+        const AUXILIARY_DATA = 0x0000_0002;
+        const REPLICATION_MANAGEMENT = 0x0000_0004;
+        const CLIENT_REPLICATION_MANAGEMENT = 0x0000_0008;
+    }
+}
+
+const SOURCE_INFO_NAMES: &[(UsnSourceInfo, &str)] = &[
+    (UsnSourceInfo::DATA_MANAGEMENT, "DATA_MANAGEMENT"),
+    (UsnSourceInfo::AUXILIARY_DATA, "AUXILIARY_DATA"),
+    (
+        UsnSourceInfo::REPLICATION_MANAGEMENT,
+        "REPLICATION_MANAGEMENT",
+    ),
+    (
+        UsnSourceInfo::CLIENT_REPLICATION_MANAGEMENT,
+        "CLIENT_REPLICATION_MANAGEMENT",
+    ),
+];
+
+impl fmt::Display for UsnSourceInfo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut wrote = false;
+        for (flag, name) in SOURCE_INFO_NAMES {
+            if self.contains(*flag) {
+                if wrote {
+                    f.write_str(" | ")?;
+                }
+                f.write_str(name)?;
+                wrote = true;
+            }
+        }
+        if wrote { Ok(()) } else { f.write_str("NONE") }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
