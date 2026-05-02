@@ -35,8 +35,8 @@ and idiomatic Rust refactoring. **Breaking changes throughout** — see the
 ### Added
 
 - `usn_journal_rs::types` module with `Usn` and `Fid` newtypes.
-- `usn_journal_rs::time::Filetime` with `to_system_time`, `to_unix_seconds`,
-  and `to_unix_nanos`.
+- `usn_journal_rs::time::Filetime` with `to_system_time`, `from_system_time`,
+  `TryFrom` conversions, `to_unix_seconds`, and `to_unix_nanos`.
 - `Volume::from_drive_letter(c: char)` and `Volume::from_mount_point(p)` —
   replaces the previous single constructor.
 - `VolumeSource` enum (`DriveLetter` vs `MountPoint`).
@@ -144,6 +144,7 @@ Or via mount point:
 + use usn_journal_rs::time::Filetime;
 + let ft: Filetime = entry.time;
 + let st: Option<std::time::SystemTime> = ft.to_system_time();
++ let ft2 = Filetime::from_system_time(std::time::SystemTime::now());
 + let unix: i64 = ft.to_unix_seconds();
 ```
 

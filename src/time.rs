@@ -51,6 +51,15 @@ impl Filetime {
         }
     }
 
+    /// Convert from `SystemTime`.
+    ///
+    /// Returns `None` when the input is before the Windows FILETIME epoch or
+    /// when the 100-nanosecond interval count would overflow `u64`.
+    #[must_use]
+    pub fn from_system_time(value: SystemTime) -> Option<Self> {
+        system_time_to_filetime_raw(value).map(Self)
+    }
+
     /// Number of seconds since the Unix epoch (may be negative).
     #[must_use]
     #[inline]
@@ -81,6 +90,45 @@ impl From<Filetime> for FILETIME {
         Self {
             dwLowDateTime: value.raw() as u32,
             dwHighDateTime: (value.raw() >> 32) as u32,
+        }
+    }
+}
+
+impl TryFrom<SystemTime> for Filetime {
+    type Error = UsnError;
+
+    fn try_from(value: SystemTime) -> Result<Self, Self::Error> {
+        Self::from_system_time(value).ok_or(UsnError::InvalidTimestamp(
+            "SystemTime is outside the Windows FILETIME range",
+        ))
+    }
+}
+
+impl TryFrom<Filetime> for SystemTime {
+    type Error = UsnError;
+
+    fn try_from(value: Filetime) -> Result<Self, Self::Error> {
+        value.to_system_time().ok_or(UsnError::InvalidTimestamp(
+            "FILETIME is outside the SystemTime range",
+        ))
+    }
+}
+
+fn system_time_to_filetime_raw(value: SystemTime) -> Option<u64> {
+    match value.duration_since(UNIX_EPOCH) {
+        Ok(duration) => {
+            let intervals = duration.as_nanos() / 100;
+            (WINDOWS_TO_UNIX_OFFSET_100NS as u128)
+                .checked_add(intervals)
+                .and_then(|raw| u64::try_from(raw).ok())
+        }
+        Err(err) => {
+            let intervals = err.duration().as_nanos() / 100;
+            if intervals > WINDOWS_TO_UNIX_OFFSET_100NS as u128 {
+                None
+            } else {
+                Some(WINDOWS_TO_UNIX_OFFSET_100NS - intervals as u64)
+            }
         }
     }
 }
@@ -306,6 +354,24 @@ mod tests {
             let round_trip_win32: FILETIME = filetime_from_win32.into();
             assert_eq!(round_trip_win32.dwLowDateTime, win32.dwLowDateTime);
             assert_eq!(round_trip_win32.dwHighDateTime, win32.dwHighDateTime);
+        }
+
+        #[test]
+        fn from_system_time_round_trips_unix_epoch() {
+            let filetime = Filetime::from_system_time(UNIX_EPOCH).expect("unix epoch");
+            assert_eq!(filetime.raw(), WINDOWS_TO_UNIX_OFFSET_100NS);
+            let system_time: SystemTime = filetime.try_into().expect("system time");
+            assert_eq!(system_time, UNIX_EPOCH);
+        }
+
+        #[test]
+        fn try_from_system_time_preserves_subsecond_ticks() {
+            let st = UNIX_EPOCH + Duration::new(1, 123_456_700);
+            let filetime = Filetime::try_from(st).expect("system time");
+            assert_eq!(
+                filetime.raw(),
+                WINDOWS_TO_UNIX_OFFSET_100NS + 10_000_000 + 1_234_567
+            );
         }
     }
 

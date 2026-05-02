@@ -18,6 +18,9 @@ pub enum UsnError {
     #[error("Invalid mount point: {0}")]
     InvalidMountPointError(String),
 
+    #[error("Invalid timestamp: {0}")]
+    InvalidTimestamp(&'static str),
+
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 

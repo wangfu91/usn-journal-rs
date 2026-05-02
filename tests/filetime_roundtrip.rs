@@ -98,11 +98,7 @@ fn test_to_system_time_current_roundtrip() {
     };
 
     let now = SystemTime::now();
-    let dur = now.duration_since(UNIX_EPOCH).unwrap();
-    // Convert "now" to a FILETIME u64 value (100-ns intervals since 1601-01-01).
-    let now_filetime_val = WIN_EPOCH_OFFSET + (dur.as_nanos() / 100) as u64;
-
-    let ft = Filetime::new(now_filetime_val);
+    let ft = Filetime::from_system_time(now).expect("current SystemTime must convert");
 
     let converted = ft
         .to_system_time()
@@ -118,6 +114,21 @@ fn test_to_system_time_current_roundtrip() {
         diff_ns < 200,
         "to_system_time round-trip should be within 200 ns, got {diff_ns} ns"
     );
+}
+
+#[test]
+fn test_system_time_try_from_filetime_roundtrip() {
+    let Some(_) = get_seed_entry() else {
+        eprintln!("filetime_roundtrip: skipping (requires admin)");
+        return;
+    };
+
+    let ft = Filetime::new(WIN_EPOCH_OFFSET + 10_000_000);
+    let st = SystemTime::try_from(ft).expect("filetime should convert");
+    assert_eq!(st, UNIX_EPOCH + std::time::Duration::from_secs(1));
+
+    let back = Filetime::try_from(st).expect("system time should convert");
+    assert_eq!(back, ft);
 }
 
 // ─── to_unix_seconds ─────────────────────────────────────────────────────
