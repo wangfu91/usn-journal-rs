@@ -89,7 +89,7 @@ Benchmarks are run with [Divan](https://github.com/nvzqz/divan) on a 200 k-recor
   behavior unless you explicitly opt out with `.without_lru_cache()`.
 - **In-memory directory-tree path resolution** — ~40× faster than the syscall-based resolver
   for full-volume scans (<500 ms vs ~21 s). Use `PathResolver::new(v).with_in_memory_tree(&raw_mft)?`.
-- **Buffer size** — tune with `RawMftOptions::builder().buffer_bytes(NonZeroUsize::new(256 * 1024).unwrap()).build()`.
+- **Buffer size** — tune with `RawMftIterOptions::builder().buffer_bytes(NonZeroUsize::new(256 * 1024).unwrap()).build()`.
 
 Run benchmarks:
 

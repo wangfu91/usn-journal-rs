@@ -41,7 +41,7 @@ and idiomatic Rust refactoring. **Breaking changes throughout** — see the
   replaces the previous single constructor.
 - `VolumeSource` enum (`DriveLetter` vs `MountPoint`).
 - `JournalIterOptions::builder()`, `MftIterOptions::builder()`,
-  `RawMftOptions::builder()`.
+  `RawMftIterOptions::builder()`.
 - `PathResolver::new(v).with_lru_cache(n).with_in_memory_tree(&raw_mft)?`
   fluent builder API.
 - `InMemoryDirTree::from_raw_mft` for O(1) path resolution without per-lookup
@@ -64,8 +64,8 @@ and idiomatic Rust refactoring. **Breaking changes throughout** — see the
   call `.without_lru_cache()` for fully uncached syscall resolution.
 - `RawMftEntry` timestamps are `Filetime` instead of `chrono::DateTime<Utc>`.
 - `UsnEntry::time` is `Filetime` instead of `std::time::SystemTime`.
-- `RawMftOptions::batch_records: usize` →
-  `RawMftOptions::buffer_bytes: NonZeroUsize`.
+- `RawMftIterOptions::batch_records: usize` →
+  `RawMftIterOptions::buffer_bytes: NonZeroUsize`.
 - `journal::EnumOptions` renamed to `JournalIterOptions`;
   `mft::EnumOptions` renamed to `MftIterOptions`.
 - Fallible iteration entry points renamed to `try_iter` / `try_iter_with_options`.

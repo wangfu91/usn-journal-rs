@@ -70,10 +70,10 @@ pub const DEFAULT_BUFFER_BYTES: NonZeroUsize = match NonZeroUsize::new(256 * 102
 
 /// Options controlling iteration behaviour.
 ///
-/// Use [`RawMftOptions::builder`] for the fluent builder API, or construct
+/// Use [`RawMftIterOptions::builder`] for the fluent builder API, or construct
 /// directly via struct-literal syntax. [`Default`] is also implemented.
 #[derive(Debug, Clone)]
-pub struct RawMftOptions {
+pub struct RawMftIterOptions {
     /// Size of the I/O buffer in bytes used for batched reads of FILE records.
     pub buffer_bytes: NonZeroUsize,
     /// Honour the `$MFT` `$BITMAP` to skip unused records.
@@ -85,7 +85,7 @@ pub struct RawMftOptions {
     pub end_record: Option<u64>,
 }
 
-impl Default for RawMftOptions {
+impl Default for RawMftIterOptions {
     fn default() -> Self {
         Self {
             buffer_bytes: DEFAULT_BUFFER_BYTES,
@@ -96,21 +96,21 @@ impl Default for RawMftOptions {
     }
 }
 
-impl RawMftOptions {
-    /// Returns a fluent builder for [`RawMftOptions`].
-    pub fn builder() -> RawMftOptionsBuilder {
-        RawMftOptionsBuilder::default()
+impl RawMftIterOptions {
+    /// Returns a fluent builder for [`RawMftIterOptions`].
+    pub fn builder() -> RawMftIterOptionsBuilder {
+        RawMftIterOptionsBuilder::default()
     }
 }
 
-/// Fluent builder for [`RawMftOptions`].
+/// Fluent builder for [`RawMftIterOptions`].
 #[derive(Debug, Default, Clone)]
 #[must_use]
-pub struct RawMftOptionsBuilder {
-    inner: RawMftOptions,
+pub struct RawMftIterOptionsBuilder {
+    inner: RawMftIterOptions,
 }
 
-impl RawMftOptionsBuilder {
+impl RawMftIterOptionsBuilder {
     /// Set the I/O buffer size in bytes.
     pub fn buffer_bytes(mut self, v: NonZeroUsize) -> Self {
         self.inner.buffer_bytes = v;
@@ -137,7 +137,7 @@ impl RawMftOptionsBuilder {
 
     /// Finalize the builder.
     #[must_use]
-    pub fn build(self) -> RawMftOptions {
+    pub fn build(self) -> RawMftIterOptions {
         self.inner
     }
 }
@@ -258,13 +258,13 @@ impl<'a> RawMft<'a> {
 
     /// Begin iteration with default options.
     pub fn try_iter(&self) -> Result<RawMftIter<'_>, UsnError> {
-        self.try_iter_with_options(RawMftOptions::default())
+        self.try_iter_with_options(RawMftIterOptions::default())
     }
 
     /// Begin iteration with custom options.
     pub fn try_iter_with_options(
         &self,
-        options: RawMftOptions,
+        options: RawMftIterOptions,
     ) -> Result<RawMftIter<'_>, UsnError> {
         let reader = VolumeReader::with_buffer_bytes(
             self.volume.handle,
@@ -311,7 +311,7 @@ pub struct RawMftIter<'a> {
     reader: VolumeReader,
     next_record: u64,
     end: u64,
-    options: RawMftOptions,
+    options: RawMftIterOptions,
 }
 
 impl<'a> Iterator for RawMftIter<'a> {
@@ -429,7 +429,7 @@ mod tests {
 
     #[test]
     fn options_defaults_are_sensible() {
-        let o = RawMftOptions::default();
+        let o = RawMftIterOptions::default();
         assert_eq!(o.buffer_bytes, DEFAULT_BUFFER_BYTES);
         assert!(o.skip_unused);
         assert_eq!(o.start_record, FIRST_NORMAL_RECORD);

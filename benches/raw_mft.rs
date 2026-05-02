@@ -150,7 +150,7 @@ fn raw_mft_buffer_size(bencher: Bencher, buffer_bytes: usize) {
         }
     };
     bencher.bench_local(|| {
-        let opts = usn_journal_rs::raw_mft::RawMftOptions {
+        let opts = usn_journal_rs::raw_mft::RawMftIterOptions {
             buffer_bytes: std::num::NonZeroUsize::new(buffer_bytes).unwrap(),
             ..Default::default()
         };
