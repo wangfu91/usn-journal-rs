@@ -10,7 +10,6 @@ use std::mem::size_of;
 use crate::unaligned::read_unaligned_at;
 
 /// Attribute type identifiers used by NTFS.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
 pub(crate) enum NtfsAttributeType {
@@ -19,6 +18,7 @@ pub(crate) enum NtfsAttributeType {
     FileName = 0x30,
     Data = 0x80,
     Bitmap = 0xB0,
+    #[allow(dead_code)]
     ReparsePoint = 0xC0,
     End = 0xFFFF_FFFF,
 }
@@ -69,7 +69,6 @@ pub(crate) struct NtfsStandardInformation {
 }
 
 /// File-name attribute namespace.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum FileNameNamespace {

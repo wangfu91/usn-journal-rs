@@ -87,17 +87,6 @@ pub struct RawMftEntry {
 }
 
 impl RawMftEntry {
-    /// Build a `RawMftEntry` from a parsed FILE record.
-    ///
-    /// Any `$ATTRIBUTE_LIST` encountered is silently dropped; use
-    /// [`from_record_with_attr_list`] when you need to load extension
-    /// records to get the best-namespace `$FILE_NAME`.
-    #[allow(dead_code)] // used only in unit tests; non-test code uses from_record_with_attr_list
-    pub(crate) fn from_record(record: &FileRecord<'_>) -> Self {
-        let (entry, _) = Self::from_record_with_attr_list(record);
-        entry
-    }
-
     /// Build a `RawMftEntry` and also return any `$ATTRIBUTE_LIST` data
     /// found in the record.
     ///
@@ -555,7 +544,7 @@ mod tests {
     fn builds_entry_from_synthetic_record() {
         let mut buf = build_test_record(42);
         let rec = FileRecord::parse(42, None, &mut buf).expect("parse");
-        let entry = RawMftEntry::from_record(&rec);
+        let (entry, _) = RawMftEntry::from_record_with_attr_list(&rec);
         assert_eq!(entry.record_number, 42);
         assert_eq!(entry.file_name.to_string_lossy(), "hello.txt");
         assert_eq!(entry.namespace, FileNameNamespace::Win32);
@@ -577,7 +566,7 @@ mod tests {
     fn path_resolvable_returns_unmasked_fids() {
         let mut buf = build_test_record(42);
         let rec = FileRecord::parse(42, None, &mut buf).expect("parse");
-        let entry = RawMftEntry::from_record(&rec);
+        let (entry, _) = RawMftEntry::from_record_with_attr_list(&rec);
         // file_reference = (seq << 48) | record_number; with seq=1, record=42
         assert_eq!(entry.fid(), Fid::new((1u64 << 48) | 42));
         // parent_directory_reference was built as (5 << 48) | 5
