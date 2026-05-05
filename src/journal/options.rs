@@ -3,7 +3,7 @@
 use crate::{Usn, UsnReason};
 use std::num::NonZeroUsize;
 
-use super::defaults::{DEFAULT_BUFFER_BYTES, USN_REASON_MASK_ALL};
+use super::defaults::{DEFAULT_BUFFER_BYTES_NONZERO, USN_REASON_MASK_ALL};
 
 #[derive(Debug, Clone)]
 /// Options for enumerating the USN journal.
@@ -34,8 +34,7 @@ impl Default for JournalIterOptions {
             only_on_close: false,
             timeout: 0,
             wait_for_more: false,
-            buffer_bytes: NonZeroUsize::new(DEFAULT_BUFFER_BYTES)
-                .expect("default journal buffer size is non-zero"),
+            buffer_bytes: DEFAULT_BUFFER_BYTES_NONZERO,
         }
     }
 }

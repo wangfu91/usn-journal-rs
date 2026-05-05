@@ -121,8 +121,10 @@ fn resolver_syscall_lru_cache(bencher: Bencher) {
     }
 
     bencher.bench_local(|| {
-        let mut resolver =
-            PathResolver::new(&volume).with_lru_cache(NonZeroUsize::new(8192).unwrap());
+        let Some(cache_capacity) = NonZeroUsize::new(8192) else {
+            return divan::black_box(0u64);
+        };
+        let mut resolver = PathResolver::new(&volume).with_lru_cache(cache_capacity);
 
         // Warm-up pass to populate cache
         for entry in &entries {

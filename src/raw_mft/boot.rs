@@ -48,7 +48,9 @@ impl BootSector {
 
         let bytes_per_sector = u16::from_le_bytes([buf[11], buf[12]]) as u32;
         let sectors_per_cluster_raw = buf[13] as i8;
-        let mft_lcn = u64::from_le_bytes(buf[48..56].try_into().unwrap());
+        let mut mft_lcn_bytes = [0u8; 8];
+        mft_lcn_bytes.copy_from_slice(&buf[48..56]);
+        let mft_lcn = u64::from_le_bytes(mft_lcn_bytes);
         let file_record_size_info = buf[64] as i8;
 
         if bytes_per_sector == 0 || !bytes_per_sector.is_power_of_two() {

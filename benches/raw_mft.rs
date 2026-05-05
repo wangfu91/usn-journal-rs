@@ -11,7 +11,6 @@
 //! not elevated.
 
 use std::env;
-use std::num::NonZeroUsize;
 
 use divan::Bencher;
 use usn_journal_rs::{
@@ -129,8 +128,7 @@ fn raw_mft_iter_with_cached_resolver(bencher: Bencher) {
         }
     };
     bencher.bench_local(|| {
-        let mut resolver = PathResolver::new(&volume)
-            .with_lru_cache(NonZeroUsize::new(4096).expect("cache capacity must be non-zero"));
+        let mut resolver = PathResolver::new(&volume);
         let mut count = 0u64;
         if let Ok(it) = mft.try_iter() {
             for r in it.flatten().take(BENCH_RECORD_LIMIT) {
@@ -156,8 +154,11 @@ fn raw_mft_buffer_size(bencher: Bencher, buffer_bytes: usize) {
         }
     };
     bencher.bench_local(|| {
+        let Some(buffer_bytes) = std::num::NonZeroUsize::new(buffer_bytes) else {
+            return divan::black_box(0u64);
+        };
         let opts = usn_journal_rs::raw_mft::RawMftIterOptions::builder()
-            .buffer_bytes(std::num::NonZeroUsize::new(buffer_bytes).unwrap())
+            .buffer_bytes(buffer_bytes)
             .build();
         let mut count = 0u64;
         if let Ok(it) = mft.try_iter_with_options(opts) {

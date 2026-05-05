@@ -2,7 +2,7 @@
 
 use std::num::NonZeroUsize;
 
-use crate::{Usn, journal::DEFAULT_BUFFER_BYTES};
+use crate::{Usn, journal::DEFAULT_BUFFER_BYTES_NONZERO};
 
 /// Maximum `USN_RECORD` major version the kernel is allowed to return.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
@@ -45,8 +45,7 @@ impl Default for MftIterOptions {
         MftIterOptions {
             low_usn: Usn::new(0),
             high_usn: Usn::new(i64::MAX),
-            buffer_bytes: NonZeroUsize::new(DEFAULT_BUFFER_BYTES)
-                .expect("default MFT buffer size is non-zero"),
+            buffer_bytes: DEFAULT_BUFFER_BYTES_NONZERO,
             max_usn_record_version: UsnRecordVersion::V3,
         }
     }

@@ -68,9 +68,10 @@ pub use entry::{AdsInfo, RawMftEntry};
 pub use options::{RawMftIterOptions, RawMftIterOptionsBuilder};
 
 /// Default I/O buffer size for raw `$MFT` iteration.
-pub const DEFAULT_BUFFER_BYTES: NonZeroUsize = match NonZeroUsize::new(256 * 1024) {
-    Some(v) => v,
-    None => unreachable!(),
+#[allow(clippy::useless_nonzero_new_unchecked)]
+pub const DEFAULT_BUFFER_BYTES: NonZeroUsize = unsafe {
+    // SAFETY: `256 * 1024` is a non-zero constant.
+    NonZeroUsize::new_unchecked(256 * 1024)
 };
 
 /// Raw `$MFT` reader bound to an open [`Volume`].

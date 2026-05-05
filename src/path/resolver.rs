@@ -11,11 +11,15 @@ use super::{
 };
 
 /// Default number of cached directory entries kept by `PathResolver`.
-const DEFAULT_LRU_CACHE_CAPACITY: usize = 4096;
+#[allow(clippy::useless_nonzero_new_unchecked)]
+const DEFAULT_LRU_CACHE_CAPACITY: NonZeroUsize = unsafe {
+    // SAFETY: `4096` is a non-zero constant.
+    NonZeroUsize::new_unchecked(4096)
+};
 
 /// Return the default LRU cache capacity as a `NonZeroUsize`.
 fn default_lru_cache_capacity() -> NonZeroUsize {
-    NonZeroUsize::new(DEFAULT_LRU_CACHE_CAPACITY).expect("default cache capacity is non-zero")
+    DEFAULT_LRU_CACHE_CAPACITY
 }
 
 /// Resolves file paths from file IDs on an NTFS/ReFS volume.

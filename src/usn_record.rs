@@ -129,17 +129,6 @@ pub(crate) const fn file_id_128_to_u128(file_id: FILE_ID_128) -> u128 {
     u128::from_le_bytes(file_id.Identifier)
 }
 
-/// Convert an extended [`Fid`] into a Windows `FILE_ID_128`.
-#[inline]
-pub(crate) const fn fid_to_file_id_128(fid: Fid) -> Option<FILE_ID_128> {
-    match fid {
-        Fid::Extended(value) => Some(FILE_ID_128 {
-            Identifier: value.to_le_bytes(),
-        }),
-        Fid::Standard(_) => None,
-    }
-}
-
 /// Validate `bytes_read` against `buffer` and convert it to `usize`.
 fn checked_bytes_read(buffer: &[u8], bytes_read: u32) -> UsnResult<usize> {
     let bytes_read = bytes_read as usize;
@@ -164,8 +153,14 @@ pub(crate) fn read_next_start_usn(buffer: &[u8], bytes_read: u32) -> UsnResult<U
         });
     }
 
-    let value = i64::from_le(read_unaligned_at::<i64>(buffer, 0).expect("cursor length validated"));
-    Ok(Usn::new(value))
+    let Some(raw_value) = read_unaligned_at::<i64>(buffer, 0) else {
+        return Err(UsnError::TruncatedRecord {
+            offset: 0,
+            needed: cursor_len,
+            got: bytes_read,
+        });
+    };
+    Ok(Usn::new(i64::from_le(raw_value)))
 }
 
 /// Read the next file-ID cursor from the start of an MFT enumeration buffer.
@@ -180,8 +175,14 @@ pub(crate) fn read_next_start_fid(buffer: &[u8], bytes_read: u32) -> UsnResult<u
         });
     }
 
-    let value = u64::from_le(read_unaligned_at::<u64>(buffer, 0).expect("cursor length validated"));
-    Ok(value)
+    let Some(raw_value) = read_unaligned_at::<u64>(buffer, 0) else {
+        return Err(UsnError::TruncatedRecord {
+            offset: 0,
+            needed: cursor_len,
+            got: bytes_read,
+        });
+    };
+    Ok(u64::from_le(raw_value))
 }
 
 /// Parse the next USN record and advance `offset` past it.
@@ -206,8 +207,13 @@ pub(crate) fn find_next_record<'a>(
         });
     }
 
-    let header = read_unaligned_at::<USN_RECORD_COMMON_HEADER>(buffer, offset_usize)
-        .expect("header length validated");
+    let Some(header) = read_unaligned_at::<USN_RECORD_COMMON_HEADER>(buffer, offset_usize) else {
+        return Err(UsnError::TruncatedRecord {
+            offset: offset_usize as u64,
+            needed: min_record_len,
+            got: bytes_read - offset_usize,
+        });
+    };
 
     let record_len = header.RecordLength as usize;
     if record_len < min_record_len {

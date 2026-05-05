@@ -96,10 +96,11 @@ fn file_id_to_path(
             },
             FileSystem::FileIdType,
         ),
-        Fid::Extended(_) => (
+        Fid::Extended(id) => (
             FileSystem::FILE_ID_DESCRIPTOR_0 {
-                ExtendedFileId: crate::usn_record::fid_to_file_id_128(file_id)
-                    .expect("extended fid branch must produce FILE_ID_128"),
+                ExtendedFileId: FileSystem::FILE_ID_128 {
+                    Identifier: id.to_le_bytes(),
+                },
             },
             FileSystem::ExtendedFileIdType,
         ),
