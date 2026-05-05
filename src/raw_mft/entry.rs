@@ -106,22 +106,6 @@ impl RawMftEntry {
 
         builder.build()
     }
-
-    /// Strongly-typed view of [`RawMftEntry::si_file_attributes`].
-    ///
-    /// Unknown bits are preserved.
-    #[must_use]
-    #[inline]
-    pub fn si_file_attributes_flags(&self) -> crate::FileAttributes {
-        <Self as FileAttributeView>::file_attribute_flags(self)
-    }
-
-    /// Raw `$STANDARD_INFORMATION` file-attribute bitmask.
-    #[must_use]
-    #[inline]
-    pub fn raw_si_file_attributes(&self) -> u32 {
-        self.si_file_attributes.bits()
-    }
 }
 
 struct RawMftEntryBuilder {
@@ -217,7 +201,7 @@ impl RawMftEntryBuilder {
     fn apply_file_name(&mut self, attr: &NtfsAttribute<'_>) {
         if let Some((header, name_units)) = attr.as_file_name() {
             let ns = FileNameNamespace::from_u8(header.namespace);
-            let score = file_name_namespace_score(ns);
+            let score = ns.score();
             if score > self.best_namespace_score {
                 self.best_namespace_score = score;
                 self.entry.namespace = ns;
@@ -350,11 +334,6 @@ impl RawMftEntryBuilder {
             self.entry.is_reparse_point = true;
         }
     }
-}
-
-#[inline]
-fn file_name_namespace_score(namespace: FileNameNamespace) -> i32 {
-    namespace.score()
 }
 
 impl FileAttributeView for RawMftEntry {

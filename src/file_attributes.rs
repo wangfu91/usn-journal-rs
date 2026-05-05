@@ -20,12 +20,6 @@ pub(crate) trait FileAttributeView {
         self.file_attributes()
             .contains(crate::FileAttributes::HIDDEN)
     }
-
-    /// Strongly typed wrapper around the raw bitmask.
-    #[inline]
-    fn file_attribute_flags(&self) -> crate::FileAttributes {
-        self.file_attributes()
-    }
 }
 
 const FILE_ATTRIBUTE_NAMES: &[(crate::FileAttributes, &str)] = &[

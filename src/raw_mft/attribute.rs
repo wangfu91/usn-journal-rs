@@ -18,8 +18,6 @@ pub(crate) enum NtfsAttributeType {
     FileName = 0x30,
     Data = 0x80,
     Bitmap = 0xB0,
-    #[allow(dead_code)]
-    ReparsePoint = 0xC0,
     End = 0xFFFF_FFFF,
 }
 

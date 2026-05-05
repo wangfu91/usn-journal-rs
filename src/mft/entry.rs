@@ -52,22 +52,6 @@ impl MftEntry {
     pub fn is_hidden(&self) -> bool {
         <Self as FileAttributeView>::has_hidden_attribute(self)
     }
-
-    /// Strongly-typed view of [`MftEntry::file_attributes`].
-    ///
-    /// Unknown bits are preserved.
-    #[must_use]
-    #[inline]
-    pub fn file_attributes_flags(&self) -> crate::FileAttributes {
-        <Self as FileAttributeView>::file_attribute_flags(self)
-    }
-
-    /// Raw file-attribute bitmask.
-    #[must_use]
-    #[inline]
-    pub fn raw_file_attributes(&self) -> u32 {
-        self.file_attributes.bits()
-    }
 }
 
 impl FileAttributeView for MftEntry {

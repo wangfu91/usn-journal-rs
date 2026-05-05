@@ -74,45 +74,6 @@ impl UsnEntry {
         <Self as FileAttributeView>::has_hidden_attribute(self)
     }
 
-    /// Strongly-typed view of [`UsnEntry::reason`].
-    ///
-    /// Unknown bits are preserved.
-    #[must_use]
-    #[inline]
-    pub fn reason_flags(&self) -> crate::UsnReason {
-        self.reason
-    }
-
-    /// Raw USN reason bitmask.
-    #[must_use]
-    #[inline]
-    pub fn raw_reason(&self) -> u32 {
-        self.reason.bits()
-    }
-
-    /// Raw source-info bitmask.
-    #[must_use]
-    #[inline]
-    pub fn raw_source_info(&self) -> u32 {
-        self.source_info.bits()
-    }
-
-    /// Strongly-typed view of [`UsnEntry::file_attributes`].
-    ///
-    /// Unknown bits are preserved.
-    #[must_use]
-    #[inline]
-    pub fn file_attributes_flags(&self) -> crate::FileAttributes {
-        <Self as FileAttributeView>::file_attribute_flags(self)
-    }
-
-    /// Raw file-attribute bitmask.
-    #[must_use]
-    #[inline]
-    pub fn raw_file_attributes(&self) -> u32 {
-        self.file_attributes.bits()
-    }
-
     /// Converts a USN reason bitfield to a human-readable string using Windows constants.
     #[must_use]
     pub fn get_reason_string(&self) -> String {

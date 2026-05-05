@@ -87,8 +87,9 @@ impl InMemoryDirTree {
     }
 
     /// Insert a directory entry (testing / advanced use).
+    #[cfg(test)]
     #[doc(hidden)]
-    pub fn insert(&mut self, fid: u64, parent: u64, name: &[u16]) {
+    pub(crate) fn insert(&mut self, fid: u64, parent: u64, name: &[u16]) {
         self.entries.insert(
             Fid::new(fid)
                 .record_number()

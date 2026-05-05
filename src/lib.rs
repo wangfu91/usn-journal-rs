@@ -71,11 +71,7 @@ pub type UsnResult<T> = std::result::Result<T, UsnError>;
 pub mod prelude {
     pub use crate::{
         Fid, FileAttributes, Filetime, Usn, UsnError, UsnReason, UsnResult, UsnSourceInfo,
-        journal::UsnJournal,
-        mft::Mft,
-        path::PathResolver,
-        raw_mft::RawMft,
-        volume::{Volume, VolumeSource},
+        journal::UsnJournal, mft::Mft, path::PathResolver, raw_mft::RawMft, volume::Volume,
     };
 }
 
@@ -109,7 +105,6 @@ mod tests {
         accepts::<prelude::UsnReason>();
         accepts::<prelude::FileAttributes>();
         accepts::<prelude::UsnSourceInfo>();
-        accepts::<prelude::VolumeSource>();
 
         let result: prelude::UsnResult<()> = Ok(());
         assert!(result.is_ok());
