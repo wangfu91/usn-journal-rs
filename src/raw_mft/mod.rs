@@ -54,7 +54,7 @@ use crate::{
         attribute::{NtfsAttributeType, for_each_attr_list_entry, for_each_attribute},
         boot::BootSector,
         data_run::{DataRun, decode_runs},
-        entry::AttributeListInfo,
+        entry::{AttributeListInfo, EntryBuildOptions},
         extent::ExtentMap,
         io::VolumeReader,
         record::{FileRecord, MFT_RECORD_NUMBER},
@@ -64,7 +64,7 @@ use crate::{
 
 pub use attribute::FileNameNamespace;
 pub use data_run::{DataRun as DataRunInfo, DataRunSummary};
-pub use entry::{AdsInfo, RawMftEntry};
+pub use entry::{AdsInfo, RawMftEntry, RawMftLink};
 pub use options::{RawMftIterOptions, RawMftIterOptionsBuilder};
 
 /// Default I/O buffer size for raw `$MFT` iteration.
@@ -73,6 +73,7 @@ pub const DEFAULT_BUFFER_BYTES: NonZeroUsize = unsafe {
     // SAFETY: `256 * 1024` is a non-zero constant.
     NonZeroUsize::new_unchecked(256 * 1024)
 };
+const ATTR_READER_BUFFER_BYTES: usize = 64 * 1024;
 
 /// Raw `$MFT` reader bound to an open [`Volume`].
 pub struct RawMft<'a> {
@@ -208,11 +209,17 @@ impl<'a> RawMft<'a> {
             self.boot.bytes_per_sector as u64,
             options.buffer_bytes.get(),
         )?;
+        let attr_reader = VolumeReader::with_buffer_bytes(
+            self.volume.handle,
+            self.boot.bytes_per_sector as u64,
+            options.buffer_bytes.get().min(ATTR_READER_BUFFER_BYTES),
+        )?;
         let total = self.record_count();
         let end = options.end_record.unwrap_or(total).min(total);
         Ok(RawMftIter {
             mft: self,
             reader,
+            attr_reader,
             next_record: options.start_record,
             end,
             options,
@@ -224,7 +231,13 @@ impl<'a> RawMft<'a> {
     /// implied here).
     pub fn get_record(&self, number: u64) -> Result<Option<RawMftEntry>, UsnError> {
         let mut reader = VolumeReader::new(self.volume.handle, self.boot.bytes_per_sector as u64)?;
-        read_record_at(&mut reader, &self.boot, &self.extent_map, number)
+        read_record_at(
+            &mut reader,
+            &self.boot,
+            &self.extent_map,
+            number,
+            EntryBuildOptions::full(),
+        )
     }
 
     /// True if `record_number` is marked as in-use in the `$BITMAP`.
@@ -248,6 +261,9 @@ pub struct RawMftIter<'a> {
     mft: &'a RawMft<'a>,
     /// Sector-aligned volume reader reused across iteration.
     reader: VolumeReader,
+    /// Separate reader for random extension-record lookups so attr-list
+    /// fixups do not mutate the iterator's sequential buffer window.
+    attr_reader: VolumeReader,
     /// Next record number to examine.
     next_record: u64,
     /// Exclusive end record number.
@@ -288,18 +304,29 @@ impl<'a> Iterator for RawMftIter<'a> {
             }
             match FileRecord::parse(n, Some(offset), buf) {
                 Ok(rec) => {
-                    let (mut entry, attr_list) = RawMftEntry::from_record_with_attr_list(&rec);
+                    let build_options = EntryBuildOptions {
+                        collect_alternate_data_streams: self.options.collect_alternate_data_streams,
+                        collect_data_run_summary: self.options.collect_data_run_summary,
+                    };
+                    let (mut entry, attr_list) =
+                        RawMftEntry::from_record_with_attr_list(&rec, build_options);
+                    if self.options.skip_extension_records && entry.base_record_reference != 0 {
+                        continue;
+                    }
                     // `rec` is last used above; NLL ends the borrow on
                     // the reader's internal buffer here, so self.reader
                     // is free for the extension-record reads below.
-                    if let Some(al) = attr_list {
+                    if let Some(al) = attr_list
+                        && should_enrich_from_attr_list(&entry)
+                    {
                         enrich_from_attr_list(
                             &mut entry,
                             al,
                             n,
-                            &mut self.reader,
+                            &mut self.attr_reader,
                             &self.mft.boot,
                             &self.mft.extent_map,
+                            build_options,
                         );
                     }
                     return Some(Ok(entry));
@@ -320,19 +347,23 @@ fn read_record_raw(
     boot: &BootSector,
     extent_map: &ExtentMap,
     record_number: u64,
+    build_options: EntryBuildOptions,
 ) -> Result<Option<(RawMftEntry, Option<AttributeListInfo>)>, UsnError> {
     let offset = match extent_map.record_offset(record_number)? {
         Some(o) => o,
         None => return Ok(None),
     };
-    let mut buf = vec![0u8; boot.file_record_size as usize];
-    reader.seek(SeekFrom::Start(offset)).map_err(io_err)?;
-    reader.read_exact(&mut buf).map_err(io_err)?;
-    if !FileRecord::is_valid(&buf) {
+    let buf = reader
+        .borrow_at(offset, boot.file_record_size as usize)
+        .map_err(io_err)?;
+    if !FileRecord::is_valid(buf) {
         return Ok(None);
     }
-    let rec = FileRecord::parse(record_number, Some(offset), &mut buf)?;
-    Ok(Some(RawMftEntry::from_record_with_attr_list(&rec)))
+    let rec = FileRecord::parse(record_number, Some(offset), buf)?;
+    Ok(Some(RawMftEntry::from_record_with_attr_list(
+        &rec,
+        build_options,
+    )))
 }
 
 /// Read a record and perform one level of `$ATTRIBUTE_LIST` enrichment.
@@ -341,13 +372,25 @@ fn read_record_at(
     boot: &BootSector,
     extent_map: &ExtentMap,
     record_number: u64,
+    build_options: EntryBuildOptions,
 ) -> Result<Option<RawMftEntry>, UsnError> {
-    let (mut entry, attr_list) = match read_record_raw(reader, boot, extent_map, record_number)? {
-        Some(t) => t,
-        None => return Ok(None),
-    };
-    if let Some(al) = attr_list {
-        enrich_from_attr_list(&mut entry, al, record_number, reader, boot, extent_map);
+    let (mut entry, attr_list) =
+        match read_record_raw(reader, boot, extent_map, record_number, build_options)? {
+            Some(t) => t,
+            None => return Ok(None),
+        };
+    if let Some(al) = attr_list
+        && should_enrich_from_attr_list(&entry)
+    {
+        enrich_from_attr_list(
+            &mut entry,
+            al,
+            record_number,
+            reader,
+            boot,
+            extent_map,
+            build_options,
+        );
     }
     Ok(Some(entry))
 }
@@ -366,6 +409,7 @@ fn enrich_from_attr_list(
     reader: &mut VolumeReader,
     boot: &BootSector,
     extent_map: &ExtentMap,
+    build_options: EntryBuildOptions,
 ) {
     // 1. Materialise the flat $ATTRIBUTE_LIST byte slice.
     let data: Vec<u8> = match attr_list {
@@ -397,10 +441,16 @@ fn enrich_from_attr_list(
         }
     };
 
-    // 2. Collect unique extension record numbers that hold a $FILE_NAME attr.
+    // 2. Collect unique extension record numbers that hold data we may need to
+    //    merge back into the base record.
     let mut ext_records: Vec<u64> = Vec::new();
     for_each_attr_list_entry(&data, |type_id, file_ref| {
-        if type_id == NtfsAttributeType::FileName as u32 {
+        if matches!(
+            type_id,
+            x if x == NtfsAttributeType::FileName as u32
+                || x == NtfsAttributeType::Data as u32
+                || x == NtfsAttributeType::ReparsePoint as u32
+        ) {
             let rec_num = file_ref & 0x0000_FFFF_FFFF_FFFF;
             if rec_num != base_record_number && !ext_records.contains(&rec_num) {
                 ext_records.push(rec_num);
@@ -410,15 +460,19 @@ fn enrich_from_attr_list(
 
     // 3. For each extension record, look for a $FILE_NAME with a better
     //    namespace score than what the base record already carries.
-    let mut best_score = entry.namespace.score();
+    let mut best_score = if entry.file_name.is_empty() {
+        -1
+    } else {
+        entry.namespace.score()
+    };
     for ext_num in ext_records {
         // Use read_record_raw (no recursive enrichment) to avoid unbounded
         // depth in pathological MFTs.
-        let ext_entry = match read_record_raw(reader, boot, extent_map, ext_num) {
+        let ext_entry = match read_record_raw(reader, boot, extent_map, ext_num, build_options) {
             Ok(Some((e, _))) => e,
             Ok(None) => continue,
             Err(e) => {
-                warn!(
+                debug!(
                     "raw_mft: record {base_record_number}: \
                      failed to load extension record {ext_num}: {e}"
                 );
@@ -426,6 +480,29 @@ fn enrich_from_attr_list(
             }
         };
         let score = ext_entry.namespace.score();
+        let ext_links: Vec<RawMftLink> =
+            if ext_entry.links.is_empty() && !ext_entry.file_name.is_empty() {
+                vec![RawMftLink {
+                    parent_reference: ext_entry.parent_reference,
+                    namespace: ext_entry.namespace,
+                    file_name: ext_entry.file_name.clone(),
+                }]
+            } else {
+                ext_entry.links.to_vec()
+            };
+        if !ext_links.is_empty() {
+            let mut links = entry.links.to_vec();
+            if links.is_empty() && !entry.file_name.is_empty() {
+                links.push(RawMftLink {
+                    parent_reference: entry.parent_reference,
+                    namespace: entry.namespace,
+                    file_name: entry.file_name.clone(),
+                });
+            }
+            links.extend(ext_links);
+            entry.links = links.into_boxed_slice();
+        }
+        merge_extension_data(entry, &ext_entry);
         if score > best_score {
             best_score = score;
             entry.namespace = ext_entry.namespace;
@@ -437,6 +514,41 @@ fn enrich_from_attr_list(
             entry.fn_accessed = ext_entry.fn_accessed;
         }
     }
+}
+
+/// Merge relevant metadata from an extension record into the base record.
+fn merge_extension_data(entry: &mut RawMftEntry, ext_entry: &RawMftEntry) {
+    if ext_entry.real_size > entry.real_size || ext_entry.allocated_size > entry.allocated_size {
+        entry.real_size = ext_entry.real_size;
+        entry.allocated_size = ext_entry.allocated_size;
+        entry.has_unnamed_data = ext_entry.has_unnamed_data;
+        entry.is_resident = ext_entry.is_resident;
+        entry.data_run_summary = ext_entry.data_run_summary.clone();
+    }
+    entry.is_sparse |= ext_entry.is_sparse;
+    entry.is_compressed |= ext_entry.is_compressed;
+    entry.is_encrypted |= ext_entry.is_encrypted;
+    entry.is_reparse_point |= ext_entry.is_reparse_point;
+    if entry.reparse_tag.is_none() {
+        entry.reparse_tag = ext_entry.reparse_tag;
+    }
+    if !ext_entry.alternate_data_streams.is_empty() {
+        let mut ads = entry.alternate_data_streams.to_vec();
+        ads.extend_from_slice(&ext_entry.alternate_data_streams);
+        entry.alternate_data_streams = ads.into_boxed_slice();
+    }
+}
+
+/// Heuristic to decide whether to enrich a base record from its `$ATTRIBUTE_LIST` or not.
+fn should_enrich_from_attr_list(entry: &RawMftEntry) -> bool {
+    entry.file_name.is_empty()
+        || !matches!(
+            entry.namespace,
+            FileNameNamespace::Win32 | FileNameNamespace::Win32AndDos
+        )
+        || entry.hard_link_count > 1
+        || (!entry.is_directory && !entry.has_unnamed_data)
+        || (entry.is_reparse_point && entry.reparse_tag.is_none())
 }
 
 /// Materialize the bytes of a non-resident attribute from its decoded runs.

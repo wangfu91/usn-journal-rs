@@ -13,6 +13,12 @@ pub struct RawMftIterOptions {
     pub(crate) buffer_bytes: NonZeroUsize,
     /// Honour the `$MFT` `$BITMAP` to skip unused records.
     pub(crate) skip_unused: bool,
+    /// When true, omit extension records from the yielded stream.
+    pub(crate) skip_extension_records: bool,
+    /// When false, skip collecting named alternate data streams.
+    pub(crate) collect_alternate_data_streams: bool,
+    /// When false, skip summarizing non-resident data runs.
+    pub(crate) collect_data_run_summary: bool,
     /// First record number to yield.
     pub(crate) start_record: u64,
     /// Last record number to yield (exclusive); `None` means up to the
@@ -25,6 +31,9 @@ impl Default for RawMftIterOptions {
         Self {
             buffer_bytes: DEFAULT_BUFFER_BYTES,
             skip_unused: true,
+            skip_extension_records: false,
+            collect_alternate_data_streams: true,
+            collect_data_run_summary: true,
             start_record: FIRST_NORMAL_RECORD,
             end_record: None,
         }
@@ -56,6 +65,24 @@ impl RawMftIterOptionsBuilder {
     /// Whether to honour the `$MFT` `$BITMAP` and skip unused records.
     pub fn skip_unused(mut self, v: bool) -> Self {
         self.inner.skip_unused = v;
+        self
+    }
+
+    /// Whether extension records should be omitted from the yielded stream.
+    pub fn skip_extension_records(mut self, v: bool) -> Self {
+        self.inner.skip_extension_records = v;
+        self
+    }
+
+    /// Whether named alternate data streams should be collected.
+    pub fn collect_alternate_data_streams(mut self, v: bool) -> Self {
+        self.inner.collect_alternate_data_streams = v;
+        self
+    }
+
+    /// Whether non-resident unnamed data should compute a run summary.
+    pub fn collect_data_run_summary(mut self, v: bool) -> Self {
+        self.inner.collect_data_run_summary = v;
         self
     }
 

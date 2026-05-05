@@ -21,6 +21,8 @@ pub(crate) enum NtfsAttributeType {
     FileName = 0x30,
     /// `$DATA`
     Data = 0x80,
+    /// `$REPARSE_POINT`
+    ReparsePoint = 0xC0,
     /// `$BITMAP`
     Bitmap = 0xB0,
     /// End-of-attributes marker.

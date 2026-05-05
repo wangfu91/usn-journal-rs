@@ -5,6 +5,9 @@ fn options_defaults_are_sensible() {
     let o = RawMftIterOptions::default();
     assert_eq!(o.buffer_bytes, DEFAULT_BUFFER_BYTES);
     assert!(o.skip_unused);
+    assert!(!o.skip_extension_records);
+    assert!(o.collect_alternate_data_streams);
+    assert!(o.collect_data_run_summary);
     assert_eq!(o.start_record, super::record::FIRST_NORMAL_RECORD);
     assert!(o.end_record.is_none());
 }
