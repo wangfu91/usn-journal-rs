@@ -4,6 +4,7 @@ use std::fmt;
 
 use crate::UsnReason;
 
+/// Display names for known `USN_REASON_*` bits.
 const REASON_FLAGS: &[(UsnReason, &str)] = &[
     (UsnReason::DATA_OVERWRITE, "DATA_OVERWRITE"),
     (UsnReason::DATA_EXTEND, "DATA_EXTEND"),
@@ -39,6 +40,7 @@ pub(super) fn format_reason(reason: UsnReason) -> String {
     reason.to_string()
 }
 
+/// Compact formatter for `UsnReason` that omits spaces around separators.
 pub(super) struct CompactReason(pub(super) UsnReason);
 
 impl fmt::Display for CompactReason {
@@ -53,6 +55,7 @@ impl fmt::Display for UsnReason {
     }
 }
 
+/// Write a human-readable list of reason names separated by the provided delimiter.
 fn fmt_reason(reason: UsnReason, f: &mut fmt::Formatter<'_>, separator: &str) -> fmt::Result {
     let mut wrote = false;
     for (flag, name) in REASON_FLAGS {

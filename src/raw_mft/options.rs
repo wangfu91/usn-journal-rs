@@ -1,3 +1,5 @@
+//! Builder-configurable options for raw `$MFT` iteration.
+
 use std::num::NonZeroUsize;
 
 use crate::raw_mft::{DEFAULT_BUFFER_BYTES, record::FIRST_NORMAL_RECORD};
@@ -40,6 +42,7 @@ impl RawMftIterOptions {
 #[derive(Debug, Default, Clone)]
 #[must_use]
 pub struct RawMftIterOptionsBuilder {
+    /// Mutable options value being configured by the builder.
     inner: RawMftIterOptions,
 }
 

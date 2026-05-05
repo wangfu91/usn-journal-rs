@@ -1,11 +1,15 @@
+//! Iterate the USN journal and print each entry with its resolved path when available.
+
 use usn_journal_rs::{errors::UsnError, journal::UsnJournal, path::PathResolver, volume::Volume};
 
+/// Run the example and print any top-level error.
 fn main() {
     if let Err(e) = run() {
         eprintln!("Error: {e}");
     }
 }
 
+/// Open a volume, stream the USN journal, and resolve each entry to a path.
 fn run() -> Result<(), UsnError> {
     let drive_letter = 'D';
     let volume = Volume::from_drive_letter(drive_letter)?;

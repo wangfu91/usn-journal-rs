@@ -10,8 +10,10 @@ use super::{
     resolve::{DirLruCache, resolve_path, resolve_path_with_cache},
 };
 
+/// Default number of cached directory entries kept by `PathResolver`.
 const DEFAULT_LRU_CACHE_CAPACITY: usize = 4096;
 
+/// Return the default LRU cache capacity as a `NonZeroUsize`.
 fn default_lru_cache_capacity() -> NonZeroUsize {
     NonZeroUsize::new(DEFAULT_LRU_CACHE_CAPACITY).expect("default cache capacity is non-zero")
 }
@@ -39,10 +41,13 @@ fn default_lru_cache_capacity() -> NonZeroUsize {
 /// mutability to keep the public `resolve_path` signature ergonomic.
 #[derive(Debug)]
 pub struct PathResolver<'a> {
+    /// Volume on which file IDs will be resolved.
     pub(super) volume: &'a Volume,
+    /// Optional cache of previously resolved directory paths.
     pub(super) dir_fid_path_cache: Option<DirLruCache>,
     /// Reusable heap buffer for `GetFileInformationByHandleEx` calls.
     pub(super) buffer: RefCell<Vec<u8>>,
+    /// Optional fully in-memory NTFS directory tree.
     pub(super) in_memory_tree: Option<InMemoryDirTree>,
 }
 
@@ -154,12 +159,16 @@ impl<'a> PathResolver<'a> {
 /// ```
 #[derive(Debug)]
 pub struct PathResolverBuilder<'a> {
+    /// Volume on which the eventual resolver will operate.
     volume: &'a Volume,
+    /// Desired LRU cache capacity, or `None` to disable caching.
     lru_cache_capacity: Option<NonZeroUsize>,
+    /// Optional prebuilt directory tree to embed in the resolver.
     in_memory_tree: Option<InMemoryDirTree>,
 }
 
 impl<'a> PathResolverBuilder<'a> {
+    /// Construct a builder with the crate's default caching strategy.
     pub(super) fn new(volume: &'a Volume) -> Self {
         PathResolverBuilder {
             volume,

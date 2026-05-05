@@ -13,17 +13,30 @@ use crate::errors::UsnError;
 /// One decoded data run.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum DataRun {
-    Data { lcn: u64, clusters: u64 },
-    Sparse { clusters: u64 },
+    /// Allocated clusters starting at `lcn`.
+    Data {
+        /// Starting logical cluster number on disk.
+        lcn: u64,
+        /// Number of clusters in the run.
+        clusters: u64,
+    },
+    /// Sparse hole occupying `clusters` logical clusters.
+    Sparse {
+        /// Number of logical clusters represented by the hole.
+        clusters: u64,
+    },
 }
 
 /// Aggregated information about an attribute's runs.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub struct DataRunSummary {
+    /// Number of runs present in the attribute.
     pub run_count: u32,
+    /// Total number of logical clusters covered by all runs.
     pub total_clusters: u64,
 }
 
+/// Maximum byte width of an NTFS run length or offset field.
 const MAX_FIELD_BYTES: usize = 8;
 
 /// Decode a sequence of data-run records starting at `runs`.
@@ -46,6 +59,7 @@ pub(crate) fn summarize_runs(runs: &[u8]) -> Result<DataRunSummary, UsnError> {
     visit_runs(runs, |_| Ok(()))
 }
 
+/// Visit each decoded run in sequence and accumulate a summary.
 fn visit_runs<F>(runs: &[u8], mut visitor: F) -> Result<DataRunSummary, UsnError>
 where
     F: FnMut(DataRun) -> Result<(), UsnError>,

@@ -18,6 +18,7 @@ use usn_journal_rs::{
     errors::UsnError, mft::Mft, path::PathResolver, raw_mft::RawMft, volume::Volume,
 };
 
+/// Run the Divan benchmark harness.
 fn main() {
     divan::main();
 }
@@ -26,6 +27,7 @@ fn main() {
 /// even on multi-million-record system drives.
 const BENCH_RECORD_LIMIT: usize = 200_000;
 
+/// Read the drive letter to benchmark from `USN_TEST_DRIVE`.
 fn pick_drive() -> char {
     env::var("USN_TEST_DRIVE")
         .ok()
@@ -34,6 +36,7 @@ fn pick_drive() -> char {
         .unwrap_or('C')
 }
 
+/// Open the benchmark target volume or skip when the environment is unsuitable.
 fn open_volume() -> Option<Volume> {
     match Volume::from_drive_letter(pick_drive()) {
         Ok(v) => Some(v),
@@ -48,6 +51,7 @@ fn open_volume() -> Option<Volume> {
     }
 }
 
+/// Benchmark raw `$MFT` iteration.
 #[divan::bench]
 fn raw_mft_iter(bencher: Bencher) {
     let Some(volume) = open_volume() else { return };
@@ -71,6 +75,7 @@ fn raw_mft_iter(bencher: Bencher) {
     });
 }
 
+/// Benchmark `FSCTL_ENUM_USN_DATA`-based MFT iteration.
 #[divan::bench]
 fn usn_mft_iter(bencher: Bencher) {
     let Some(volume) = open_volume() else { return };
@@ -88,6 +93,7 @@ fn usn_mft_iter(bencher: Bencher) {
     });
 }
 
+/// Benchmark raw `$MFT` iteration with uncached path resolution.
 #[divan::bench]
 fn raw_mft_iter_with_path_resolver(bencher: Bencher) {
     let Some(volume) = open_volume() else { return };
@@ -111,6 +117,7 @@ fn raw_mft_iter_with_path_resolver(bencher: Bencher) {
     });
 }
 
+/// Benchmark raw `$MFT` iteration with the default cached resolver.
 #[divan::bench]
 fn raw_mft_iter_with_cached_resolver(bencher: Bencher) {
     let Some(volume) = open_volume() else { return };

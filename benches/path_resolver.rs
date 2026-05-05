@@ -23,6 +23,7 @@ use usn_journal_rs::{
     errors::UsnError, mft::MftEntry, path::PathResolver, raw_mft::RawMft, volume::Volume,
 };
 
+/// Run the Divan benchmark harness.
 fn main() {
     divan::main();
 }
@@ -30,6 +31,7 @@ fn main() {
 /// Number of random entries to collect and resolve.
 const NUM_TEST_ENTRIES: usize = 1000;
 
+/// Read the drive letter to benchmark from `USN_TEST_DRIVE`.
 fn pick_drive() -> char {
     env::var("USN_TEST_DRIVE")
         .ok()
@@ -38,6 +40,7 @@ fn pick_drive() -> char {
         .unwrap_or('C')
 }
 
+/// Open the benchmark target volume or skip when the environment is unsuitable.
 fn open_volume() -> Option<Volume> {
     match Volume::from_drive_letter(pick_drive()) {
         Ok(v) => Some(v),

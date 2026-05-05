@@ -14,6 +14,7 @@ pub enum UsnRecordVersion {
 }
 
 impl UsnRecordVersion {
+    /// Return the raw major-version value expected by the Windows API.
     pub(crate) const fn as_u16(self) -> u16 {
         match self {
             Self::V2 => 2,
@@ -29,9 +30,13 @@ impl UsnRecordVersion {
 /// Use [`MftIterOptions::builder`] for the fluent builder API.
 #[derive(Debug, Clone)]
 pub struct MftIterOptions {
+    /// Inclusive lower USN bound for returned records.
     pub(crate) low_usn: Usn,
+    /// Inclusive upper USN bound for returned records.
     pub(crate) high_usn: Usn,
+    /// Size of the kernel output buffer.
     pub(crate) buffer_bytes: NonZeroUsize,
+    /// Highest `USN_RECORD` major version the kernel may return.
     pub(crate) max_usn_record_version: UsnRecordVersion,
 }
 
@@ -58,6 +63,7 @@ impl MftIterOptions {
 #[derive(Debug, Default, Clone)]
 #[must_use]
 pub struct MftIterOptionsBuilder {
+    /// Mutable options value being configured by the builder.
     inner: MftIterOptions,
 }
 

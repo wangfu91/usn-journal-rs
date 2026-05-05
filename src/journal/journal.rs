@@ -28,6 +28,7 @@ use super::options::JournalIterOptions;
 /// This iterator yields `Result<UsnEntry, UsnError>` items, allowing applications
 /// to handle individual entry errors without stopping the entire iteration process.
 pub struct UsnJournal<'a> {
+    /// Volume whose USN journal will be queried.
     pub(crate) volume: &'a Volume,
 }
 

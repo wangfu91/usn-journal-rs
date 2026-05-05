@@ -19,30 +19,47 @@ pub const FIRST_NORMAL_RECORD: u64 = 24;
 
 /// FILE record header flags.
 pub mod flags {
+    /// Record is currently marked in use.
     pub const IN_USE: u16 = 0x0001;
+    /// Record describes a directory.
     pub const IS_DIRECTORY: u16 = 0x0002;
 }
 
 #[repr(C, packed)]
 pub(crate) struct FileRecordHeader {
+    /// Four-byte `FILE` signature.
     pub signature: [u8; 4],
+    /// Byte offset of the update sequence array.
     pub update_sequence_offset: u16,
+    /// Number of update sequence array entries.
     pub update_sequence_length: u16,
+    /// Log file sequence number.
     pub logfile_sequence_number: u64,
+    /// Record sequence number.
     pub sequence_value: u16,
+    /// Hard-link count.
     pub link_count: u16,
+    /// Byte offset of the first attribute record.
     pub attributes_offset: u16,
+    /// Raw FILE-record flags.
     pub flags: u16,
+    /// Number of used bytes in the record.
     pub used_size: u32,
+    /// Total allocated size of the record.
     pub allocated_size: u32,
+    /// Base-record reference for extension records.
     pub base_reference: u64,
+    /// Next attribute instance identifier.
     pub next_attribute_id: u16,
 }
 
 /// View into a parsed FILE record.
 pub(crate) struct FileRecord<'a> {
+    /// Fixed-up FILE-record bytes.
     pub data: &'a [u8],
+    /// Borrowed FILE-record header.
     pub header: &'a FileRecordHeader,
+    /// Record number in the `$MFT`.
     pub number: u64,
 }
 
@@ -112,31 +129,38 @@ impl<'a> FileRecord<'a> {
         })
     }
 
+    /// Return whether the record is marked in use.
     pub fn is_used(&self) -> bool {
         self.header.flags & flags::IN_USE != 0
     }
 
+    /// Return whether the record is marked as a directory.
     pub fn is_directory(&self) -> bool {
         self.header.flags & flags::IS_DIRECTORY != 0
     }
 
+    /// Return the hard-link count stored in the header.
     pub fn link_count(&self) -> u16 {
         self.header.link_count
     }
 
+    /// Return the record sequence number.
     pub fn sequence_value(&self) -> u16 {
         self.header.sequence_value
     }
 
+    /// Return the base-record reference for extension records.
     pub fn base_reference(&self) -> u64 {
         self.header.base_reference
     }
 
+    /// Reconstruct the full file reference for this record.
     pub fn file_reference(&self) -> u64 {
         let seq = self.sequence_value() as u64;
         (seq << 48) | (self.number & 0x0000_FFFF_FFFF_FFFF)
     }
 
+    /// Return the `(attributes_offset, used_size)` bounds for attribute walking.
     pub fn attrs_range(&self) -> (usize, usize) {
         let attrs_off = self.header.attributes_offset as usize;
         let used = (self.header.used_size as usize).min(self.data.len());

@@ -14,10 +14,15 @@ pub const NTFS_OEM_ID: &[u8; 8] = b"NTFS    ";
 /// Parsed NTFS boot sector geometry.
 #[derive(Debug, Clone)]
 pub(crate) struct BootSector {
+    /// Physical sector size reported by the volume.
     pub bytes_per_sector: u32,
+    /// Logical cluster number of the `$MFT`.
     pub mft_lcn: u64,
+    /// Size of a single FILE record in bytes.
     pub file_record_size: u64,
+    /// Size of a cluster in bytes.
     pub cluster_size: u64,
+    /// Byte offset of the `$MFT` from the start of the volume.
     pub mft_byte_offset: u64,
 }
 

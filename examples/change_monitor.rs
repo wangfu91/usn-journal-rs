@@ -1,3 +1,5 @@
+//! Follow the live USN journal from its current tail and print new records as they arrive.
+
 use usn_journal_rs::{
     errors::UsnError,
     journal::{JournalIterOptions, UsnJournal},
@@ -5,12 +7,14 @@ use usn_journal_rs::{
     volume::Volume,
 };
 
+/// Run the example and print any top-level error.
 fn main() {
     if let Err(e) = run() {
         eprintln!("Error: {e}");
     }
 }
 
+/// Query the current journal tail and then block waiting for new records.
 fn run() -> Result<(), UsnError> {
     let drive_letter = 'D';
     let volume = Volume::from_drive_letter(drive_letter)?;

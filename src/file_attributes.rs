@@ -22,6 +22,7 @@ pub(crate) trait FileAttributeView {
     }
 }
 
+/// Display names for known `FILE_ATTRIBUTE_*` bits.
 const FILE_ATTRIBUTE_NAMES: &[(crate::FileAttributes, &str)] = &[
     (crate::FileAttributes::READ_ONLY, "READ_ONLY"),
     (crate::FileAttributes::HIDDEN, "HIDDEN"),

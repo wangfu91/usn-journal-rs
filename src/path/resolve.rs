@@ -19,6 +19,7 @@ use crate::{Fid, volume::Volume};
 /// LRU cache mapping a file ID to its `(full_path, leaf_name)` pair.
 pub(super) type DirLruCache = LruCache<Fid, (Arc<Path>, OsString)>;
 
+/// Resolve a path without using the directory cache.
 pub(super) fn resolve_path(
     volume: &Volume,
     fid: Fid,
@@ -35,7 +36,7 @@ pub(super) fn resolve_path(
     None
 }
 
-/// Internal: Resolve the full path from file ID, parent file ID, and file name.
+/// Resolve a path using a shared parent-directory cache when possible.
 pub(super) fn resolve_path_with_cache(
     volume: &Volume,
     fid: Fid,

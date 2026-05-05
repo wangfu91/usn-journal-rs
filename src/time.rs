@@ -1,3 +1,5 @@
+//! Conversion helpers and the public `Filetime` wrapper.
+
 use crate::errors::UsnError;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use windows::Win32::Foundation::FILETIME;
@@ -114,6 +116,7 @@ impl TryFrom<Filetime> for SystemTime {
     }
 }
 
+/// Convert a `SystemTime` into its raw Windows `FILETIME` representation.
 fn system_time_to_filetime_raw(value: SystemTime) -> Option<u64> {
     match value.duration_since(UNIX_EPOCH) {
         Ok(duration) => {

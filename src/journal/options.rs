@@ -12,11 +12,17 @@ use super::defaults::{DEFAULT_BUFFER_BYTES, USN_REASON_MASK_ALL};
 ///
 /// Use [`JournalIterOptions::builder`] for the fluent builder API.
 pub struct JournalIterOptions {
+    /// USN from which enumeration should begin.
     pub(crate) start_usn: Usn,
+    /// Reason-mask filter applied by the kernel.
     pub(crate) reason_mask: UsnReason,
+    /// Whether only close events should be returned.
     pub(crate) only_on_close: bool,
+    /// Kernel timeout for blocking reads.
     pub(crate) timeout: u64,
+    /// Whether the iterator should wait for more records.
     pub(crate) wait_for_more: bool,
+    /// Size of the kernel output buffer.
     pub(crate) buffer_bytes: NonZeroUsize,
 }
 
@@ -45,6 +51,7 @@ impl JournalIterOptions {
 #[derive(Debug, Default, Clone)]
 #[must_use]
 pub struct JournalIterOptionsBuilder {
+    /// Mutable options value being configured by the builder.
     inner: JournalIterOptions,
 }
 

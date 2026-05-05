@@ -75,9 +75,13 @@ pub const DEFAULT_BUFFER_BYTES: NonZeroUsize = match NonZeroUsize::new(256 * 102
 
 /// Raw `$MFT` reader bound to an open [`Volume`].
 pub struct RawMft<'a> {
+    /// Volume whose `$MFT` is being read.
     volume: &'a Volume,
+    /// Parsed NTFS boot-sector geometry.
     boot: BootSector,
+    /// Extent map for the `$MFT` data stream.
     extent_map: ExtentMap,
+    /// Contents of the `$MFT` bitmap stream when available.
     bitmap: Vec<u8>,
 }
 
@@ -239,10 +243,15 @@ impl<'a> RawMft<'a> {
 
 /// Streaming iterator over MFT records.
 pub struct RawMftIter<'a> {
+    /// Parent raw-MFT reader.
     mft: &'a RawMft<'a>,
+    /// Sector-aligned volume reader reused across iteration.
     reader: VolumeReader,
+    /// Next record number to examine.
     next_record: u64,
+    /// Exclusive end record number.
     end: u64,
+    /// Active iteration options.
     options: RawMftIterOptions,
 }
 
@@ -304,6 +313,7 @@ impl<'a> Iterator for RawMftIter<'a> {
     }
 }
 
+/// Read a raw FILE record and return the parsed entry plus any `$ATTRIBUTE_LIST`.
 fn read_record_raw(
     reader: &mut VolumeReader,
     boot: &BootSector,
@@ -324,6 +334,7 @@ fn read_record_raw(
     Ok(Some(RawMftEntry::from_record_with_attr_list(&rec)))
 }
 
+/// Read a record and perform one level of `$ATTRIBUTE_LIST` enrichment.
 fn read_record_at(
     reader: &mut VolumeReader,
     boot: &BootSector,
@@ -427,6 +438,7 @@ fn enrich_from_attr_list(
     }
 }
 
+/// Materialize the bytes of a non-resident attribute from its decoded runs.
 fn read_nonresident(
     reader: &mut VolumeReader,
     runs: &[DataRun],
@@ -467,6 +479,7 @@ fn read_nonresident(
     Ok(out)
 }
 
+/// Convert a standard I/O error into the crate's error type.
 fn io_err(e: std::io::Error) -> UsnError {
     UsnError::Io(e)
 }

@@ -40,49 +40,83 @@ pub(crate) enum AttributeListInfo {
 /// attribute with a non-empty attribute name).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct AdsInfo {
+    /// Alternate data stream name.
     pub name: OsString,
+    /// Logical stream size in bytes.
     pub real_size: u64,
+    /// Allocated stream size in bytes.
     pub allocated_size: u64,
+    /// Whether the stream data is resident in the FILE record.
     pub is_resident: bool,
 }
 
 /// Comprehensive metadata for one MFT record.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct RawMftEntry {
+    /// Record number in the `$MFT`.
     pub record_number: u64,
+    /// Record sequence number.
     pub sequence_number: u16,
+    /// Full file reference for this record.
     pub file_reference: Fid,
+    /// Parent directory file reference from `$FILE_NAME`.
     pub parent_reference: Fid,
+    /// Base-record reference for extension records.
     pub base_record_reference: u64,
+    /// Number of hard links to the file.
     pub hard_link_count: u16,
+    /// Raw FILE-record flags.
     pub flags: u16,
+    /// Whether the record is marked in use.
     pub is_used: bool,
+    /// Whether the record is marked as a directory.
     pub is_directory: bool,
+    /// Whether the file is marked as a reparse point.
     pub is_reparse_point: bool,
+    /// Reparse tag when the file is a reparse point.
     pub reparse_tag: Option<u32>,
+    /// Namespace of the chosen `$FILE_NAME` attribute.
     pub namespace: FileNameNamespace,
 
+    /// Leaf file name.
     pub file_name: OsString,
 
+    /// `$STANDARD_INFORMATION` creation timestamp.
     pub si_created: Filetime,
+    /// `$STANDARD_INFORMATION` last-modified timestamp.
     pub si_modified: Filetime,
+    /// `$STANDARD_INFORMATION` MFT-record-modified timestamp.
     pub si_mft_modified: Filetime,
+    /// `$STANDARD_INFORMATION` last-access timestamp.
     pub si_accessed: Filetime,
+    /// `$STANDARD_INFORMATION` file-attribute flags.
     pub si_file_attributes: FileAttributes,
 
+    /// `$FILE_NAME` creation timestamp.
     pub fn_created: Filetime,
+    /// `$FILE_NAME` last-modified timestamp.
     pub fn_modified: Filetime,
+    /// `$FILE_NAME` MFT-record-modified timestamp.
     pub fn_mft_modified: Filetime,
+    /// `$FILE_NAME` last-access timestamp.
     pub fn_accessed: Filetime,
 
+    /// Logical size of the unnamed data stream.
     pub real_size: u64,
+    /// Allocated size of the unnamed data stream.
     pub allocated_size: u64,
+    /// Whether the unnamed data stream is resident.
     pub is_resident: bool,
+    /// Whether the unnamed data stream is sparse.
     pub is_sparse: bool,
+    /// Whether the unnamed data stream is compressed.
     pub is_compressed: bool,
+    /// Whether the unnamed data stream is encrypted.
     pub is_encrypted: bool,
+    /// Summary of the unnamed data stream's runs when non-resident.
     pub data_run_summary: Option<DataRunSummary>,
 
+    /// Named alternate data streams attached to the record.
     pub alternate_data_streams: Box<[AdsInfo]>,
 }
 
@@ -109,15 +143,20 @@ impl RawMftEntry {
 }
 
 struct RawMftEntryBuilder {
+    /// Partially built result entry.
     entry: RawMftEntry,
+    /// Alternate streams accumulated while walking attributes.
     alternate_data_streams: Vec<AdsInfo>,
+    /// Score of the best `$FILE_NAME` namespace chosen so far.
     best_namespace_score: i32,
+    /// Whether the unnamed `$DATA` attribute has already been consumed.
     have_unnamed_data: bool,
     /// Captured `$ATTRIBUTE_LIST` data, if any.
     attr_list: Option<AttributeListInfo>,
 }
 
 impl RawMftEntryBuilder {
+    /// Start building an entry from a validated FILE record.
     fn new(record: &FileRecord<'_>) -> Self {
         Self {
             entry: RawMftEntry {
@@ -159,6 +198,7 @@ impl RawMftEntryBuilder {
         }
     }
 
+    /// Dispatch a single attribute to the appropriate accumulator.
     fn consume_attribute(&mut self, attr: &NtfsAttribute<'_>) {
         let type_id = attr.type_id();
         if type_id == NtfsAttributeType::StandardInformation as u32 {
@@ -188,6 +228,7 @@ impl RawMftEntryBuilder {
         }
     }
 
+    /// Fold `$STANDARD_INFORMATION` values into the entry.
     fn apply_standard_information(&mut self, attr: &NtfsAttribute<'_>) {
         if let Some(si) = attr.as_standard_info() {
             self.entry.si_created = Filetime::new(si.creation_time);
@@ -198,6 +239,7 @@ impl RawMftEntryBuilder {
         }
     }
 
+    /// Fold a `$FILE_NAME` attribute into the entry when it has the best namespace so far.
     fn apply_file_name(&mut self, attr: &NtfsAttribute<'_>) {
         if let Some((header, name_units)) = attr.as_file_name() {
             let ns = FileNameNamespace::from_u8(header.namespace);
@@ -220,6 +262,7 @@ impl RawMftEntryBuilder {
         }
     }
 
+    /// Fold a `$DATA` attribute into the unnamed stream or ADS list.
     fn apply_data_attribute(&mut self, attr: &NtfsAttribute<'_>) {
         let stream_name = attr.name_slice();
         if attr.is_non_resident() {
@@ -233,6 +276,7 @@ impl RawMftEntryBuilder {
         }
     }
 
+    /// Fold a non-resident `$DATA` attribute into the entry.
     fn apply_nonresident_data(
         &mut self,
         stream_name: Option<&[u16]>,
@@ -269,6 +313,7 @@ impl RawMftEntryBuilder {
         }
     }
 
+    /// Fold a resident `$DATA` attribute into the entry.
     fn apply_resident_data(&mut self, stream_name: Option<&[u16]>, value_length: u64) {
         match stream_name {
             None => {
@@ -290,6 +335,7 @@ impl RawMftEntryBuilder {
         }
     }
 
+    /// Summarize the data runs of a non-resident `$DATA` attribute.
     fn nonresident_data_run_summary(&self, attr: &NtfsAttribute<'_>) -> Option<DataRunSummary> {
         let h = attr.nonresident_header()?;
         let runs_off = h.data_runs_offset as usize;
@@ -311,12 +357,14 @@ impl RawMftEntryBuilder {
         }
     }
 
+    /// Finalize the entry and return any captured `$ATTRIBUTE_LIST`.
     fn build(mut self) -> (RawMftEntry, Option<AttributeListInfo>) {
         self.fold_si_flags();
         self.entry.alternate_data_streams = self.alternate_data_streams.into_boxed_slice();
         (self.entry, self.attr_list)
     }
 
+    /// Fold `$STANDARD_INFORMATION` bits into the derived convenience flags.
     fn fold_si_flags(&mut self) {
         // SI flags fold-in for sparse/compressed/encrypted (covers some
         // edge cases where the unnamed $DATA flags weren't set).

@@ -200,24 +200,43 @@ bitflags::bitflags! {
     #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
     #[repr(transparent)]
     pub struct FileAttributes: u32 {
+        /// Item is read-only.
         const READ_ONLY            = 0x0000_0001;
+        /// Item is hidden from normal directory listings.
         const HIDDEN               = 0x0000_0002;
+        /// Item is used by the operating system.
         const SYSTEM               = 0x0000_0004;
+        /// Item is a directory.
         const DIRECTORY            = 0x0000_0010;
+        /// Item should be archived.
         const ARCHIVE              = 0x0000_0020;
+        /// Reserved device attribute.
         const DEVICE               = 0x0000_0040;
+        /// Item has no other special attributes set.
         const NORMAL               = 0x0000_0080;
+        /// Item should preferably be kept in temporary storage.
         const TEMPORARY            = 0x0000_0100;
+        /// Item contains sparse data.
         const SPARSE_FILE          = 0x0000_0200;
+        /// Item is represented by a reparse point.
         const REPARSE_POINT        = 0x0000_0400;
+        /// Item is compressed on disk.
         const COMPRESSED           = 0x0000_0800;
+        /// Item's data is not immediately available.
         const OFFLINE              = 0x0000_1000;
+        /// Item should not be content indexed.
         const NOT_CONTENT_INDEXED  = 0x0000_2000;
+        /// Item is encrypted on disk.
         const ENCRYPTED            = 0x0000_4000;
+        /// Item uses integrity streams.
         const INTEGRITY_STREAM     = 0x0000_8000;
+        /// Reserved virtual attribute.
         const VIRTUAL              = 0x0001_0000;
+        /// Item is excluded from scrubber processing.
         const NO_SCRUB_DATA        = 0x0002_0000;
+        /// Item is recalled when opened.
         const RECALL_ON_OPEN       = 0x0004_0000;
+        /// Item is recalled on data access.
         const RECALL_ON_DATA_ACCESS = 0x0040_0000;
     }
 }
@@ -231,29 +250,53 @@ bitflags::bitflags! {
     #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
     #[repr(transparent)]
     pub struct UsnReason: u32 {
+        /// Unnamed stream data was overwritten.
         const DATA_OVERWRITE          = 0x0000_0001;
+        /// Unnamed stream data was extended.
         const DATA_EXTEND             = 0x0000_0002;
+        /// Unnamed stream data was truncated.
         const DATA_TRUNCATION         = 0x0000_0004;
+        /// Named stream data was overwritten.
         const NAMED_DATA_OVERWRITE    = 0x0000_0010;
+        /// Named stream data was extended.
         const NAMED_DATA_EXTEND       = 0x0000_0020;
+        /// Named stream data was truncated.
         const NAMED_DATA_TRUNCATION   = 0x0000_0040;
+        /// A file or directory was created.
         const FILE_CREATE             = 0x0000_0100;
+        /// A file or directory was deleted.
         const FILE_DELETE             = 0x0000_0200;
+        /// Extended attributes changed.
         const EA_CHANGE               = 0x0000_0400;
+        /// Security descriptors changed.
         const SECURITY_CHANGE         = 0x0000_0800;
+        /// An old name in a rename operation.
         const RENAME_OLD_NAME         = 0x0000_1000;
+        /// A new name in a rename operation.
         const RENAME_NEW_NAME         = 0x0000_2000;
+        /// Indexing-related metadata changed.
         const INDEXABLE_CHANGE        = 0x0000_4000;
+        /// Basic file metadata changed.
         const BASIC_INFO_CHANGE       = 0x0000_8000;
+        /// A hard-link set changed.
         const HARD_LINK_CHANGE        = 0x0001_0000;
+        /// Compression state changed.
         const COMPRESSION_CHANGE      = 0x0002_0000;
+        /// Encryption state changed.
         const ENCRYPTION_CHANGE       = 0x0004_0000;
+        /// Object ID metadata changed.
         const OBJECT_ID_CHANGE        = 0x0008_0000;
+        /// Reparse-point metadata changed.
         const REPARSE_POINT_CHANGE    = 0x0010_0000;
+        /// Stream topology changed.
         const STREAM_CHANGE           = 0x0020_0000;
+        /// A transacted operation changed the file.
         const TRANSACTED_CHANGE       = 0x0040_0000;
+        /// Integrity metadata changed.
         const INTEGRITY_CHANGE        = 0x0080_0000;
+        /// Desired storage class changed.
         const DESIRED_STORAGE_CLASS_CHANGE = 0x0100_0000;
+        /// The handle that caused the change was closed.
         const CLOSE                   = 0x8000_0000;
     }
 }
@@ -266,13 +309,18 @@ bitflags::bitflags! {
     #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
     #[repr(transparent)]
     pub struct UsnSourceInfo: u32 {
+        /// The change was caused by data-management software.
         const DATA_MANAGEMENT = 0x0000_0001;
+        /// The change was caused by auxiliary data management.
         const AUXILIARY_DATA = 0x0000_0002;
+        /// The change was caused by replication management.
         const REPLICATION_MANAGEMENT = 0x0000_0004;
+        /// The change was caused by client-side replication management.
         const CLIENT_REPLICATION_MANAGEMENT = 0x0000_0008;
     }
 }
 
+/// Display names for known `USN_SOURCE_*` bits.
 const SOURCE_INFO_NAMES: &[(UsnSourceInfo, &str)] = &[
     (UsnSourceInfo::DATA_MANAGEMENT, "DATA_MANAGEMENT"),
     (UsnSourceInfo::AUXILIARY_DATA, "AUXILIARY_DATA"),

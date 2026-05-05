@@ -18,7 +18,9 @@ use std::{
 /// UTF-16 units so we don't pay an `OsString` allocation per entry.
 #[derive(Debug, Clone)]
 struct DirEntry {
+    /// Full parent file reference for this path component.
     parent: Fid,
+    /// UTF-16 leaf name stored without allocating an `OsString`.
     name: Box<[u16]>,
 }
 
@@ -29,6 +31,7 @@ struct DirEntry {
 /// allocations until the final assembly.
 #[derive(Debug, Default, Clone)]
 pub struct InMemoryDirTree {
+    /// Map from 48-bit NTFS record number to its parent/name pair.
     entries: FxHashMap<u64, DirEntry>,
 }
 
@@ -115,6 +118,7 @@ impl InMemoryDirTree {
         self.resolve_with_optional_drive(fid, Some(drive))
     }
 
+    /// Resolve a path and optionally prepend a drive-letter prefix.
     pub(super) fn resolve_with_optional_drive(
         &self,
         fid: Fid,

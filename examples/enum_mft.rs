@@ -1,11 +1,15 @@
+//! Enumerate `FSCTL_ENUM_USN_DATA` records and print each entry with its resolved path.
+
 use usn_journal_rs::{errors::UsnError, mft::Mft, path::PathResolver, volume::Volume};
 
+/// Run the example and print any top-level error.
 fn main() {
     if let Err(e) = run() {
         eprintln!("Error: {e}");
     }
 }
 
+/// Open a volume, enumerate MFT entries, and resolve each one to a path.
 fn run() -> Result<(), UsnError> {
     let drive_letter = 'C';
     let volume = Volume::from_drive_letter(drive_letter)?;

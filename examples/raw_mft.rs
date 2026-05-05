@@ -12,6 +12,7 @@
 use std::env;
 use usn_journal_rs::{errors::UsnError, path::PathResolver, raw_mft::RawMft, volume::Volume};
 
+/// Run the example and print any top-level error.
 fn main() {
     if let Err(e) = run() {
         eprintln!("Error: {e}");
@@ -19,6 +20,7 @@ fn main() {
     }
 }
 
+/// Open the raw `$MFT`, iterate records, and print a compact metadata summary.
 fn run() -> Result<(), UsnError> {
     let drive_letter = env::args()
         .nth(1)

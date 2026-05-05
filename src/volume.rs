@@ -26,7 +26,9 @@ pub(crate) enum VolumeSource {
 #[derive(Debug)]
 /// Represents an NTFS/ReFS volume handle and its associated drive letter or mount point.
 pub struct Volume {
+    /// Raw volume handle returned by `CreateFileW`.
     pub(crate) handle: HANDLE,
+    /// Source path used to open the volume.
     source: VolumeSource,
 }
 

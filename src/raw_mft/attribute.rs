@@ -13,11 +13,17 @@ use crate::unaligned::read_unaligned_at;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
 pub(crate) enum NtfsAttributeType {
+    /// `$STANDARD_INFORMATION`
     StandardInformation = 0x10,
+    /// `$ATTRIBUTE_LIST`
     AttributeList = 0x20,
+    /// `$FILE_NAME`
     FileName = 0x30,
+    /// `$DATA`
     Data = 0x80,
+    /// `$BITMAP`
     Bitmap = 0xB0,
+    /// End-of-attributes marker.
     End = 0xFFFF_FFFF,
 }
 
@@ -25,44 +31,70 @@ pub(crate) enum NtfsAttributeType {
 /// attributes.
 #[repr(C, packed)]
 pub(crate) struct NtfsAttributeHeader {
+    /// Attribute type code.
     pub type_id: u32,
+    /// Total length of this attribute record in bytes.
     pub length: u32,
+    /// Non-zero when the attribute is non-resident.
     pub is_non_resident: u8,
+    /// Length of the attribute name in UTF-16 code units.
     pub name_length: u8,
+    /// Offset of the optional attribute name within the record.
     pub name_offset: u16,
+    /// On-disk attribute flags.
     pub flags: u16,
+    /// Attribute instance identifier.
     pub id: u16,
 }
 
 #[repr(C, packed)]
 pub(crate) struct NtfsResidentAttributeHeader {
+    /// Common attribute header.
     pub attribute_header: NtfsAttributeHeader,
+    /// Byte length of the resident value payload.
     pub value_length: u32,
+    /// Byte offset of the resident value payload.
     pub value_offset: u16,
+    /// Whether the attribute is indexed.
     pub indexed_flag: u8,
+    /// Padding byte.
     pub _pad: u8,
 }
 
 #[repr(C, packed)]
 pub(crate) struct NtfsNonResidentAttributeHeader {
+    /// Common attribute header.
     pub attribute_header: NtfsAttributeHeader,
+    /// Lowest VCN covered by this attribute instance.
     pub lowest_vcn: i64,
+    /// Highest VCN covered by this attribute instance.
     pub highest_vcn: i64,
+    /// Byte offset of the encoded data runs.
     pub data_runs_offset: u16,
+    /// Compression unit exponent.
     pub compression_unit_exponent: u8,
+    /// Reserved bytes.
     pub _reserved: [u8; 5],
+    /// Allocated size of the stream in bytes.
     pub allocated_size: u64,
+    /// Logical data size in bytes.
     pub data_size: u64,
+    /// Initialized data size in bytes.
     pub initialized_size: u64,
 }
 
 /// Standard information attribute (`$STANDARD_INFORMATION`, 0x10).
 #[repr(C, packed)]
 pub(crate) struct NtfsStandardInformation {
+    /// FILETIME creation timestamp.
     pub creation_time: u64,
+    /// FILETIME last-modified timestamp.
     pub modification_time: u64,
+    /// FILETIME MFT-record-modified timestamp.
     pub mft_record_modification_time: u64,
+    /// FILETIME last-access timestamp.
     pub access_time: u64,
+    /// Raw file-attribute bitmask.
     pub file_attributes: u32,
 }
 
@@ -70,13 +102,18 @@ pub(crate) struct NtfsStandardInformation {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum FileNameNamespace {
+    /// POSIX name entry.
     Posix = 0,
+    /// Win32 long-name entry.
     Win32 = 1,
+    /// DOS 8.3 short-name entry.
     Dos = 2,
+    /// Combined Win32 + DOS entry.
     Win32AndDos = 3,
 }
 
 impl FileNameNamespace {
+    /// Convert the on-disk namespace byte to the closest enum variant.
     pub(crate) fn from_u8(v: u8) -> Self {
         match v {
             0 => Self::Posix,
@@ -158,36 +195,55 @@ where
 #[repr(C, packed)]
 #[derive(Copy, Clone)]
 pub(crate) struct NtfsFileNameHeader {
+    /// Parent directory file reference.
     pub parent_directory_reference: u64,
+    /// FILETIME creation timestamp.
     pub creation_time: u64,
+    /// FILETIME last-modified timestamp.
     pub modification_time: u64,
+    /// FILETIME MFT-record-modified timestamp.
     pub mft_record_modification_time: u64,
+    /// FILETIME last-access timestamp.
     pub access_time: u64,
+    /// Allocated stream size in bytes.
     pub allocated_size: u64,
+    /// Logical stream size in bytes.
     pub real_size: u64,
+    /// Raw file-attribute bitmask.
     pub file_attributes: u32,
+    /// Reparse tag when `file_attributes` includes `REPARSE_POINT`.
     pub reparse_point_tag: u32,
+    /// File-name length in UTF-16 code units.
     pub name_length: u8,
+    /// File-name namespace selector.
     pub namespace: u8,
 }
 
 /// File-attribute flag bits (FILE_NAME / STANDARD_INFORMATION).
 pub mod file_attr_flags {
+    /// Sparse-file attribute bit.
     pub const SPARSE_FILE: u32 = 0x0200;
+    /// Reparse-point attribute bit.
     pub const REPARSE_POINT: u32 = 0x0400;
+    /// Compressed-file attribute bit.
     pub const COMPRESSED: u32 = 0x0800;
+    /// Encrypted-file attribute bit.
     pub const ENCRYPTED: u32 = 0x4000;
 }
 
 /// A view into a single attribute record borrowed from a FILE record's
 /// buffer.
 pub(crate) struct NtfsAttribute<'a> {
+    /// Full attribute-record byte slice.
     data: &'a [u8],
+    /// Borrowed fixed header.
     pub header: &'a NtfsAttributeHeader,
+    /// Valid byte length of this attribute record.
     length: usize,
 }
 
 impl<'a> NtfsAttribute<'a> {
+    /// Validate and borrow an attribute record from the start of `data`.
     pub fn new(data: &'a [u8]) -> Option<Self> {
         if data.len() < size_of::<NtfsAttributeHeader>() {
             return None;
@@ -207,22 +263,27 @@ impl<'a> NtfsAttribute<'a> {
         })
     }
 
+    /// Return the validated length of the attribute record.
     pub fn len(&self) -> usize {
         self.length
     }
 
+    /// Return the exact bytes that belong to this attribute record.
     pub fn data(&self) -> &'a [u8] {
         &self.data[..self.length]
     }
 
+    /// Return the raw attribute type code.
     pub fn type_id(&self) -> u32 {
         self.header.type_id
     }
 
+    /// Return whether the attribute is non-resident.
     pub fn is_non_resident(&self) -> bool {
         self.header.is_non_resident != 0
     }
 
+    /// Return the raw on-disk attribute flags.
     pub fn flags(&self) -> u16 {
         self.header.flags
     }
@@ -248,6 +309,7 @@ impl<'a> NtfsAttribute<'a> {
         Some(unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const u16, n) })
     }
 
+    /// Borrow the resident header when this attribute is resident.
     pub fn resident_header(&self) -> Option<&'a NtfsResidentAttributeHeader> {
         if self.is_non_resident() {
             return None;
@@ -261,6 +323,7 @@ impl<'a> NtfsAttribute<'a> {
         Some(unsafe { &*(self.data.as_ptr() as *const NtfsResidentAttributeHeader) })
     }
 
+    /// Borrow the non-resident header when this attribute is non-resident.
     pub fn nonresident_header(&self) -> Option<&'a NtfsNonResidentAttributeHeader> {
         if !self.is_non_resident() {
             return None;
@@ -274,6 +337,7 @@ impl<'a> NtfsAttribute<'a> {
         Some(unsafe { &*(self.data.as_ptr() as *const NtfsNonResidentAttributeHeader) })
     }
 
+    /// Borrow the resident value payload.
     pub fn resident_value(&self) -> Option<&'a [u8]> {
         let h = self.resident_header()?;
         let start = h.value_offset as usize;
@@ -284,6 +348,7 @@ impl<'a> NtfsAttribute<'a> {
         Some(&self.data()[start..end])
     }
 
+    /// Interpret the resident payload as `$STANDARD_INFORMATION`.
     pub fn as_standard_info(&self) -> Option<&'a NtfsStandardInformation> {
         if self.type_id() != NtfsAttributeType::StandardInformation as u32 {
             return None;

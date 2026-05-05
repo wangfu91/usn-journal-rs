@@ -7,6 +7,7 @@ use super::{iter::MftIter, options::MftIterOptions};
 /// Represents the Master File Table (MFT) enumerator.
 #[derive(Debug)]
 pub struct Mft<'a> {
+    /// Volume whose MFT will be enumerated.
     pub(crate) volume: &'a Volume,
 }
 

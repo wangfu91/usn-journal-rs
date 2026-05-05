@@ -16,6 +16,7 @@ use std::env;
 use divan::Bencher;
 use usn_journal_rs::{errors::UsnError, journal::UsnJournal, volume::Volume};
 
+/// Run the Divan benchmark harness.
 fn main() {
     divan::main();
 }
@@ -29,6 +30,7 @@ fn bench_record_limit() -> usize {
         .unwrap_or(100_000)
 }
 
+/// Read the drive letter to benchmark from `USN_TEST_DRIVE`.
 fn pick_drive() -> char {
     env::var("USN_TEST_DRIVE")
         .ok()
@@ -37,6 +39,7 @@ fn pick_drive() -> char {
         .unwrap_or('C')
 }
 
+/// Open the benchmark target volume or skip when the environment is unsuitable.
 fn open_volume() -> Option<Volume> {
     match Volume::from_drive_letter(pick_drive()) {
         Ok(v) => Some(v),

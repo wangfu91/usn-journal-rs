@@ -15,13 +15,18 @@ pub(crate) struct ExtentSegment {
 
 #[derive(Debug, Clone)]
 pub(crate) struct ExtentMap {
+    /// Ordered list of VCN-to-LCN segments.
     pub segments: Vec<ExtentSegment>,
+    /// Cluster size in bytes.
     pub cluster_size: u64,
+    /// FILE-record size in bytes.
     pub file_record_size: u64,
+    /// Total number of logical clusters across all segments.
     pub total_clusters: u64,
 }
 
 impl ExtentMap {
+    /// Build an extent map from the decoded runs of the `$MFT` data stream.
     pub fn from_runs(runs: &[DataRun], cluster_size: u64, file_record_size: u64) -> Self {
         let mut segments = Vec::with_capacity(runs.len());
         let mut vcn_start: u64 = 0;
