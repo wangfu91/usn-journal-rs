@@ -1,0 +1,115 @@
+//! Integration test: parallel raw-MFT chunk parsing matches the serial chunk path.
+//!
+//! The test intentionally samples an early, relatively stable prefix of the MFT
+//! so live-filesystem churn is less likely to invalidate the comparison.
+
+use std::num::{NonZeroU64, NonZeroUsize};
+
+use usn_journal_rs::{
+    errors::UsnError,
+    raw_mft::{RawMft, RawMftIterOptions, RawMftWorkPlanOptions},
+    volume::Volume,
+};
+
+fn pick_drive() -> char {
+    std::env::var("USN_TEST_DRIVE")
+        .ok()
+        .and_then(|s| s.chars().next())
+        .map(|c| c.to_ascii_uppercase())
+        .unwrap_or('C')
+}
+
+#[test]
+fn raw_mft_parallel_chunk_path_matches_serial_chunk_path() -> Result<(), String> {
+    let drive = pick_drive();
+    let volume = match Volume::from_drive_letter(drive) {
+        Ok(volume) => volume,
+        Err(UsnError::NotElevated) => {
+            eprintln!("raw_mft_parallel_chunk_consistency: skipping (requires admin privileges)");
+            return Ok(());
+        }
+        Err(error) => {
+            eprintln!("raw_mft_parallel_chunk_consistency: skipping on {drive}: {error}");
+            return Ok(());
+        }
+    };
+
+    let raw_mft = match RawMft::new(&volume) {
+        Ok(raw_mft) => raw_mft,
+        Err(UsnError::UnsupportedFilesystem(message)) => {
+            eprintln!(
+                "raw_mft_parallel_chunk_consistency: skipping (unsupported filesystem on {drive}: {message})"
+            );
+            return Ok(());
+        }
+        Err(error) => return Err(format!("RawMft::new failed on {drive}: {error}")),
+    };
+
+    let Some(max_records_per_chunk) = NonZeroU64::new(1024) else {
+        return Err("max_records_per_chunk must be non-zero".into());
+    };
+    let chunk_options = RawMftWorkPlanOptions {
+        start_record: 24,
+        end_record: Some(50_000),
+        max_records_per_chunk,
+        ..RawMftWorkPlanOptions::default()
+    };
+    let chunks: Vec<_> = raw_mft
+        .plan_work_chunks_with_options(chunk_options)
+        .into_iter()
+        .take(8)
+        .collect();
+    if chunks.is_empty() {
+        eprintln!("raw_mft_parallel_chunk_consistency: skipping (no work chunks in sampled range)");
+        return Ok(());
+    }
+
+    let options = RawMftIterOptions::builder()
+        .collect_alternate_data_streams(false)
+        .collect_data_run_summary(false)
+        .build();
+    let serial_entries: Vec<_> = chunks
+        .iter()
+        .map(|chunk| {
+            raw_mft
+                .read_chunk_with_options(*chunk, options.clone())
+                .map_err(|error| {
+                    format!(
+                        "serial read_chunk_with_options failed for {:?}: {error}",
+                        chunk
+                    )
+                })
+        })
+        .collect::<Result<_, _>>()?;
+
+    let Some(worker_count) = NonZeroUsize::new(4) else {
+        return Err("worker_count must be non-zero".into());
+    };
+    let parallel_batches = raw_mft
+        .read_chunks_parallel_with_options(chunks.clone(), options, worker_count)
+        .map_err(|error| format!("read_chunks_parallel_with_options failed: {error}"))?;
+
+    assert_eq!(
+        parallel_batches.len(),
+        chunks.len(),
+        "parallel batch count must match planned chunk count"
+    );
+
+    for ((chunk, serial_entries), parallel_batch) in chunks
+        .iter()
+        .zip(serial_entries.iter())
+        .zip(parallel_batches.iter())
+    {
+        assert_eq!(
+            *chunk, parallel_batch.chunk,
+            "parallel output must preserve chunk order"
+        );
+        assert_eq!(
+            serial_entries, &parallel_batch.entries,
+            "parallel chunk output must match serial chunk output for {:?}",
+            chunk
+        );
+    }
+
+    Ok(())
+}
