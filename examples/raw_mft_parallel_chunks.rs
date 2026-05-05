@@ -56,10 +56,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("raw_mft parallel chunks");
     println!("  drive:                    {drive}:");
     println!("  worker_count:             {}", worker_count);
-    println!(
-        "  max_records_per_chunk:    {}",
-        max_records_per_chunk
-    );
+    println!("  max_records_per_chunk:    {}", max_records_per_chunk);
     println!("  chunk_count:              {chunk_count}");
     println!("  entry_count:              {entry_count}");
     println!("  elapsed:                  {:.3}s", elapsed.as_secs_f64());

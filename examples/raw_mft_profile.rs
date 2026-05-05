@@ -27,13 +27,19 @@ fn main() -> Result<(), Box<dyn Error>> {
         profile.records_skipped_unused
     );
     println!("  sparse_holes:                  {}", profile.sparse_holes);
-    println!("  invalid_records:               {}", profile.invalid_records);
+    println!(
+        "  invalid_records:               {}",
+        profile.invalid_records
+    );
     println!(
         "  extension_records_skipped:     {}",
         profile.extension_records_skipped
     );
     println!("  parse_errors:                  {}", profile.parse_errors);
-    println!("  records_yielded:               {}", profile.records_yielded);
+    println!(
+        "  records_yielded:               {}",
+        profile.records_yielded
+    );
     println!(
         "  attr_list_enrichments:         {}",
         profile.attr_list_enrichments_attempted

@@ -37,8 +37,7 @@ impl Default for RawMftWorkPlanOptions {
         Self {
             skip_unused: true,
             start_record: FIRST_NORMAL_RECORD,
-            max_records_per_chunk: NonZeroU64::new(16 * 1024)
-                .unwrap_or(NonZeroU64::MIN),
+            max_records_per_chunk: NonZeroU64::new(16 * 1024).unwrap_or(NonZeroU64::MIN),
             end_record: None,
         }
     }
@@ -109,7 +108,8 @@ mod tests {
             return Err("chunk size must be non-zero".into());
         };
         let used = [false, true, true, false, true, true, true, false];
-        let chunks = build_work_chunks(0, used.len() as u64, chunk_size, true, |n| used[n as usize]);
+        let chunks =
+            build_work_chunks(0, used.len() as u64, chunk_size, true, |n| used[n as usize]);
         assert_eq!(
             chunks,
             vec![
@@ -158,7 +158,9 @@ mod tests {
             return Err("chunk size must be non-zero".into());
         };
         let used = [true, false, true, false, true, false, true, false];
-        let chunks = build_work_chunks(0, used.len() as u64, chunk_size, false, |n| used[n as usize]);
+        let chunks = build_work_chunks(0, used.len() as u64, chunk_size, false, |n| {
+            used[n as usize]
+        });
         assert_eq!(
             chunks,
             vec![
