@@ -54,7 +54,7 @@ mod file_attributes;
 pub mod journal;
 pub mod mft;
 pub mod path;
-mod privilege;
+pub mod privilege;
 pub mod raw_mft;
 pub mod types;
 mod unaligned;

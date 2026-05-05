@@ -23,7 +23,7 @@ use windows::core::Owned;
 ///
 /// Returns the underlying Win32 error if opening the process token or reading
 /// its elevation state fails.
-pub(crate) fn is_elevated() -> windows::core::Result<bool> {
+pub fn is_elevated() -> windows::core::Result<bool> {
     let mut handle: HANDLE = HANDLE::default();
     // SAFETY: `GetCurrentProcess` returns a pseudo-handle with the
     // necessary access; `&mut handle` is a valid out-pointer. The Win32
