@@ -1317,7 +1317,8 @@ fn merge_extension_data(
     needs: AttrListEnrichNeeds,
 ) {
     if needs.data
-        && (ext_entry.real_size > entry.real_size || ext_entry.allocated_size > entry.allocated_size)
+        && (ext_entry.real_size > entry.real_size
+            || ext_entry.allocated_size > entry.allocated_size)
     {
         entry.real_size = ext_entry.real_size;
         entry.allocated_size = ext_entry.allocated_size;

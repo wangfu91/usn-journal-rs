@@ -216,11 +216,11 @@ fn bench_config() -> &'static BenchConfig {
 fn run_parallel_ingest(mft: &RawMft<'_>, config: &BenchConfig) -> Result<BenchSummary, UsnError> {
     let chunks = mft.plan_work_chunks_with_options(config.work_plan_options());
     let iter_options = config.iter_options();
-    let record_table_len = record_table_len(mft, config);
+    let record_table_len = record_count_hint(mft, config);
     let mut records = Vec::with_capacity(record_table_len);
     records.resize_with(record_table_len, || None);
     let mut children_by_parent = FxHashMap::default();
-    children_by_parent.reserve((record_table_len / 8).max(1024));
+    children_by_parent.reserve((record_count_hint(mft, config) / 8).max(1024));
 
     {
         let mut targets = BenchTargets {
@@ -248,11 +248,11 @@ fn run_parallel_ingest(mft: &RawMft<'_>, config: &BenchConfig) -> Result<BenchSu
 
 fn run_serial_ingest(mft: &RawMft<'_>, config: &BenchConfig) -> Result<BenchSummary, UsnError> {
     let iter = mft.try_iter_with_options(config.iter_options())?;
-    let record_table_len = record_table_len(mft, config);
+    let record_table_len = record_count_hint(mft, config);
     let mut records = Vec::with_capacity(record_table_len);
     records.resize_with(record_table_len, || None);
     let mut children_by_parent = FxHashMap::default();
-    children_by_parent.reserve((record_table_len / 8).max(1024));
+    children_by_parent.reserve((record_count_hint(mft, config) / 8).max(1024));
 
     {
         let mut targets = BenchTargets {
@@ -267,7 +267,7 @@ fn run_serial_ingest(mft: &RawMft<'_>, config: &BenchConfig) -> Result<BenchSumm
     Ok(summarize_targets(&records, &children_by_parent))
 }
 
-fn record_table_len(mft: &RawMft<'_>, config: &BenchConfig) -> usize {
+fn record_count_hint(mft: &RawMft<'_>, config: &BenchConfig) -> usize {
     let total = mft.record_count();
     let end = config.end_record.unwrap_or(total).min(total);
     end.min(usize::MAX as u64) as usize

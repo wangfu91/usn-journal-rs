@@ -217,7 +217,6 @@ mod tests {
         );
     }
 
-
     #[test]
     fn returns_none_for_sparse_holes() {
         let runs = vec![
