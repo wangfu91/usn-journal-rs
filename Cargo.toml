@@ -52,6 +52,10 @@ name = "raw_mft"
 harness = false
 
 [[bench]]
+name = "raw_mft_ingest"
+harness = false
+
+[[bench]]
 name = "journal"
 harness = false
 

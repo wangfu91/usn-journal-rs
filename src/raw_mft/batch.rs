@@ -13,7 +13,7 @@ pub struct RawMftChunkBatch {
     pub entries: Vec<RawMftBatchEntry>,
 }
 
-/// Lean raw-MFT entry shape for high-throughput batch consumers such as DUI.
+/// Lean raw-MFT entry shape for high-throughput batch consumers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RawMftBatchEntry {
     /// Record number in the `$MFT`.
