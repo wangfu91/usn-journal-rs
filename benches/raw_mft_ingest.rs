@@ -36,8 +36,8 @@ use usn_journal_rs::{
 };
 
 const DEFAULT_MAIN_BUFFER_BYTES: usize = 512 * 1024;
-const DEFAULT_ATTR_BUFFER_BYTES: usize = 64 * 1024;
-const DEFAULT_CHUNK_RECORDS: u64 = 24 * 1024;
+const DEFAULT_ATTR_BUFFER_BYTES: usize = 16 * 1024;
+const DEFAULT_CHUNK_RECORDS: u64 = 16 * 1024;
 const FIRST_NORMAL_RECORD: u64 = 24;
 
 #[derive(Debug, Clone)]
@@ -183,6 +183,7 @@ fn parallel_ingest(bencher: Bencher) {
 }
 
 #[divan::bench]
+#[ignore]
 fn serial_ingest(bencher: Bencher) {
     let config = bench_config().clone();
     let Some(volume) = open_volume(config.drive) else {

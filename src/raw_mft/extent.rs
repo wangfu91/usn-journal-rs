@@ -3,6 +3,11 @@
 
 use crate::{errors::UsnError, raw_mft::data_run::DataRun};
 
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct ExtentLookupCursor {
+    segment_index: usize,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct ExtentSegment {
     /// First VCN covered by this segment.
@@ -74,14 +79,40 @@ impl ExtentMap {
     /// Returns `Ok(None)` for sparse regions and `Err` for out-of-range
     /// record numbers.
     pub fn record_offset(&self, record_number: u64) -> Result<Option<u64>, UsnError> {
+        let mut cursor = ExtentLookupCursor::default();
+        self.record_offset_with_cursor(record_number, &mut cursor)
+    }
+
+    pub fn record_offset_with_cursor(
+        &self,
+        record_number: u64,
+        cursor: &mut ExtentLookupCursor,
+    ) -> Result<Option<u64>, UsnError> {
         let byte_off = record_number
             .checked_mul(self.file_record_size)
             .ok_or(UsnError::InvalidDataRun("record offset overflow"))?;
         let vcn = byte_off / self.cluster_size;
         let inner = byte_off % self.cluster_size;
-        for seg in &self.segments {
-            let end = seg.vcn_start + seg.clusters;
+        let start_index = match self.segments.get(cursor.segment_index) {
+            Some(seg) => {
+                let end = seg.vcn_start.saturating_add(seg.clusters);
+                if vcn < seg.vcn_start {
+                    0
+                } else if vcn < end {
+                    cursor.segment_index
+                } else {
+                    cursor.segment_index.saturating_add(1)
+                }
+            }
+            None => 0,
+        };
+        for (index, seg) in self.segments.iter().enumerate().skip(start_index) {
+            let end = seg.vcn_start.saturating_add(seg.clusters);
+            if vcn < seg.vcn_start {
+                break;
+            }
             if vcn >= seg.vcn_start && vcn < end {
+                cursor.segment_index = index;
                 let local_vcn = vcn - seg.vcn_start;
                 return Ok(seg
                     .lcn
@@ -131,6 +162,61 @@ mod tests {
         // record 12 -> VCN 3 -> LCN 201
         assert_eq!(map.record_offset(12).unwrap(), Some(201 * 4096));
     }
+
+    #[test]
+    fn cursor_tracks_sequential_records_across_runs() {
+        let runs = vec![
+            DataRun::Data {
+                lcn: 100,
+                clusters: 2,
+            },
+            DataRun::Data {
+                lcn: 200,
+                clusters: 3,
+            },
+        ];
+        let map = ExtentMap::from_runs(&runs, 4096, 1024);
+        let mut cursor = ExtentLookupCursor::default();
+
+        assert_eq!(
+            map.record_offset_with_cursor(7, &mut cursor).unwrap(),
+            Some(101 * 4096 + 3 * 1024)
+        );
+        assert_eq!(
+            map.record_offset_with_cursor(8, &mut cursor).unwrap(),
+            Some(200 * 4096)
+        );
+        assert_eq!(
+            map.record_offset_with_cursor(12, &mut cursor).unwrap(),
+            Some(201 * 4096)
+        );
+    }
+
+    #[test]
+    fn cursor_falls_back_for_earlier_records() {
+        let runs = vec![
+            DataRun::Data {
+                lcn: 100,
+                clusters: 2,
+            },
+            DataRun::Data {
+                lcn: 200,
+                clusters: 3,
+            },
+        ];
+        let map = ExtentMap::from_runs(&runs, 4096, 1024);
+        let mut cursor = ExtentLookupCursor::default();
+
+        assert_eq!(
+            map.record_offset_with_cursor(12, &mut cursor).unwrap(),
+            Some(201 * 4096)
+        );
+        assert_eq!(
+            map.record_offset_with_cursor(0, &mut cursor).unwrap(),
+            Some(100 * 4096)
+        );
+    }
+
 
     #[test]
     fn returns_none_for_sparse_holes() {

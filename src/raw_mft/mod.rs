@@ -45,7 +45,6 @@ mod record;
 mod tests;
 mod work_plan;
 
-use std::collections::BTreeMap;
 use std::io::{Read, Seek, SeekFrom};
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
@@ -55,6 +54,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use log::{debug, warn};
+use rustc_hash::FxHashSet;
 
 use crate::{
     errors::UsnError,
@@ -63,7 +63,7 @@ use crate::{
         boot::BootSector,
         data_run::{DataRun, decode_runs},
         entry::{AttributeListInfo, EntryBuildOptions},
-        extent::ExtentMap,
+        extent::{ExtentLookupCursor, ExtentMap},
         io::VolumeReader,
         record::{FileRecord, MFT_RECORD_NUMBER},
     },
@@ -297,6 +297,7 @@ impl<'a> RawMft<'a> {
             attr_reader,
             next_record: options.start_record,
             end,
+            offset_cursor: ExtentLookupCursor::default(),
             options,
         })
     }
@@ -331,6 +332,7 @@ impl<'a> RawMft<'a> {
             collect_data_run_summary: options.collect_data_run_summary,
             collect_dos_file_name_links: options.collect_dos_file_name_links,
         };
+        let mut offset_cursor = ExtentLookupCursor::default();
         let mut profile = RawMftProfile {
             start_record: options.start_record,
             end_record: end,
@@ -356,7 +358,10 @@ impl<'a> RawMft<'a> {
             }
 
             let record_offset_start = Instant::now();
-            let offset = match self.extent_map.record_offset(n) {
+            let offset = match self
+                .extent_map
+                .record_offset_with_cursor(n, &mut offset_cursor)
+            {
                 Ok(Some(offset)) => offset,
                 Ok(None) => {
                     profile.record_offset_elapsed += record_offset_start.elapsed();
@@ -474,20 +479,17 @@ impl<'a> RawMft<'a> {
     pub fn read_chunk_with_options(
         &self,
         chunk: RawMftWorkChunk,
-        mut options: RawMftIterOptions,
+        options: RawMftIterOptions,
     ) -> Result<Vec<RawMftBatchEntry>, UsnError> {
-        options.start_record = chunk.start_record;
-        options.end_record = Some(chunk.end_record);
-        self.try_iter_with_options(options)?
-            .map(|result| result.map(RawMftBatchEntry::from))
-            .collect()
+        let (mut reader, mut attr_reader) = self.buffered_readers_for_options(&options)?;
+        self.read_chunk_with_reused_readers(chunk, &options, &mut reader, &mut attr_reader)
     }
 
     /// Parse one logical work chunk and fold parsed entries into a caller-owned accumulator.
     pub fn fold_chunk_with_options<T, Init, Fold>(
         &self,
         chunk: RawMftWorkChunk,
-        mut options: RawMftIterOptions,
+        options: RawMftIterOptions,
         init: &Init,
         fold_entry: &Fold,
     ) -> Result<T, UsnError>
@@ -495,12 +497,160 @@ impl<'a> RawMft<'a> {
         Init: Fn(RawMftWorkChunk) -> T,
         Fold: Fn(&mut T, RawMftEntry) -> Result<(), UsnError>,
     {
-        options.start_record = chunk.start_record;
-        options.end_record = Some(chunk.end_record);
-        let mut acc = init(chunk);
-        for entry in self.try_iter_with_options(options)? {
-            fold_entry(&mut acc, entry?)?;
+        let (mut reader, mut attr_reader) = self.buffered_readers_for_options(&options)?;
+        self.fold_chunk_with_reused_readers(
+            chunk,
+            &options,
+            init,
+            fold_entry,
+            &mut reader,
+            &mut attr_reader,
+        )
+    }
+
+    fn buffered_readers_for_options(
+        &self,
+        options: &RawMftIterOptions,
+    ) -> Result<(VolumeReader, VolumeReader), UsnError> {
+        let reader = VolumeReader::with_buffer_bytes(
+            self.volume.handle,
+            self.boot.bytes_per_sector as u64,
+            options.buffer_bytes.get(),
+        )?;
+        let attr_reader = VolumeReader::with_buffer_bytes(
+            self.volume.handle,
+            self.boot.bytes_per_sector as u64,
+            options.attr_buffer_bytes.get(),
+        )?;
+        Ok((reader, attr_reader))
+    }
+
+    fn entry_build_options(options: &RawMftIterOptions) -> EntryBuildOptions {
+        EntryBuildOptions {
+            collect_alternate_data_streams: options.collect_alternate_data_streams,
+            collect_data_run_summary: options.collect_data_run_summary,
+            collect_dos_file_name_links: options.collect_dos_file_name_links,
         }
+    }
+
+    fn for_each_entry_in_range_with_readers<F>(
+        &self,
+        start_record: u64,
+        end_record: u64,
+        options: &RawMftIterOptions,
+        reader: &mut VolumeReader,
+        attr_reader: &mut VolumeReader,
+        mut visit: F,
+    ) -> Result<(), UsnError>
+    where
+        F: FnMut(RawMftEntry) -> Result<(), UsnError>,
+    {
+        let end_record = end_record.min(self.record_count());
+        let record_size = self.boot.file_record_size as usize;
+        let build_options = Self::entry_build_options(options);
+        let mut next_record = start_record;
+        let mut offset_cursor = ExtentLookupCursor::default();
+
+        while next_record < end_record {
+            let n = next_record;
+            next_record += 1;
+
+            if options.skip_unused && !self.bitmap_used(n) {
+                continue;
+            }
+
+            let offset = match self
+                .extent_map
+                .record_offset_with_cursor(n, &mut offset_cursor)
+            {
+                Ok(Some(offset)) => offset,
+                Ok(None) => continue,
+                Err(error) => return Err(error),
+            };
+
+            let buf = reader.borrow_at(offset, record_size).map_err(io_err)?;
+            if !FileRecord::is_valid(buf) {
+                continue;
+            }
+
+            let rec = match FileRecord::parse(n, Some(offset), buf) {
+                Ok(record) => record,
+                Err(error) => {
+                    warn!("raw_mft: failed to parse record {n}: {error}");
+                    continue;
+                }
+            };
+
+            let (mut entry, attr_list) =
+                RawMftEntry::from_record_with_attr_list(&rec, build_options);
+            if options.skip_extension_records && entry.base_record_reference != 0 {
+                continue;
+            }
+
+            if let Some(attr_list) = attr_list
+                && should_enrich_from_attr_list(&entry)
+            {
+                let _ = enrich_from_attr_list(
+                    &mut entry,
+                    attr_list,
+                    n,
+                    attr_reader,
+                    &self.boot,
+                    &self.extent_map,
+                    build_options,
+                );
+            }
+
+            visit(entry)?;
+        }
+
+        Ok(())
+    }
+
+    fn read_chunk_with_reused_readers(
+        &self,
+        chunk: RawMftWorkChunk,
+        options: &RawMftIterOptions,
+        reader: &mut VolumeReader,
+        attr_reader: &mut VolumeReader,
+    ) -> Result<Vec<RawMftBatchEntry>, UsnError> {
+        let mut entries = Vec::with_capacity(chunk.record_len().min(usize::MAX as u64) as usize);
+        self.for_each_entry_in_range_with_readers(
+            chunk.start_record,
+            chunk.end_record,
+            options,
+            reader,
+            attr_reader,
+            |entry| {
+                entries.push(RawMftBatchEntry::from(entry));
+                Ok(())
+            },
+        )?;
+        Ok(entries)
+    }
+
+    fn fold_chunk_with_reused_readers<T, Init, Fold>(
+        &self,
+        chunk: RawMftWorkChunk,
+        options: &RawMftIterOptions,
+        init: &Init,
+        fold_entry: &Fold,
+        reader: &mut VolumeReader,
+        attr_reader: &mut VolumeReader,
+    ) -> Result<T, UsnError>
+    where
+        Init: Fn(RawMftWorkChunk) -> T,
+        Fold: Fn(&mut T, RawMftEntry) -> Result<(), UsnError>,
+    {
+        let mut acc = init(chunk);
+        self.for_each_entry_in_range_with_readers(
+            chunk.start_record,
+            chunk.end_record,
+            options,
+            reader,
+            attr_reader,
+            |entry| fold_entry(&mut acc, entry),
+        )?;
         Ok(acc)
     }
 
@@ -585,6 +735,14 @@ impl<'a> RawMft<'a> {
                         extent_map,
                         bitmap,
                     };
+                    let (mut reader, mut attr_reader) =
+                        match worker_mft.buffered_readers_for_options(&options) {
+                            Ok(readers) => readers,
+                            Err(error) => {
+                                let _ = tx.send(Err(error));
+                                return;
+                            }
+                        };
 
                     loop {
                         let index = next_index.fetch_add(1, Ordering::Relaxed);
@@ -593,7 +751,12 @@ impl<'a> RawMft<'a> {
                         }
                         let chunk = chunks[index];
                         let mapped = worker_mft
-                            .read_chunk_with_options(chunk, options.clone())
+                            .read_chunk_with_reused_readers(
+                                chunk,
+                                &options,
+                                &mut reader,
+                                &mut attr_reader,
+                            )
                             .and_then(|entries| map_chunk(RawMftChunkBatch { chunk, entries }))
                             .map(|mapped| (index, mapped));
                         if tx.send(mapped).is_err() {
@@ -605,19 +768,18 @@ impl<'a> RawMft<'a> {
             drop(tx);
 
             let mut next_expected = 0usize;
-            let mut pending = BTreeMap::new();
+            let mut pending = Vec::with_capacity(chunk_count);
+            pending.resize_with(chunk_count, || None);
             while next_expected < chunk_count {
                 match rx.recv() {
                     Ok(Ok((index, mapped))) => {
-                        if index == next_expected {
+                        pending[index] = Some(mapped);
+                        while next_expected < chunk_count {
+                            let Some(mapped) = pending[next_expected].take() else {
+                                break;
+                            };
                             visit(mapped)?;
                             next_expected += 1;
-                            while let Some(mapped) = pending.remove(&next_expected) {
-                                visit(mapped)?;
-                                next_expected += 1;
-                            }
-                        } else {
-                            pending.insert(index, mapped);
                         }
                     }
                     Ok(Err(error)) => return Err(error),
@@ -710,6 +872,14 @@ impl<'a> RawMft<'a> {
                         extent_map,
                         bitmap,
                     };
+                    let (mut reader, mut attr_reader) =
+                        match worker_mft.buffered_readers_for_options(&options) {
+                            Ok(readers) => readers,
+                            Err(error) => {
+                                let _ = tx.send(Err(error));
+                                return;
+                            }
+                        };
 
                     loop {
                         let index = next_index.fetch_add(1, Ordering::Relaxed);
@@ -718,7 +888,14 @@ impl<'a> RawMft<'a> {
                         }
                         let chunk = chunks[index];
                         let folded = worker_mft
-                            .fold_chunk_with_options(chunk, options.clone(), init, fold_entry)
+                            .fold_chunk_with_reused_readers(
+                                chunk,
+                                &options,
+                                init,
+                                fold_entry,
+                                &mut reader,
+                                &mut attr_reader,
+                            )
                             .map(|folded| (index, folded));
                         if tx.send(folded).is_err() {
                             break;
@@ -729,19 +906,18 @@ impl<'a> RawMft<'a> {
             drop(tx);
 
             let mut next_expected = 0usize;
-            let mut pending = BTreeMap::new();
+            let mut pending = Vec::with_capacity(chunk_count);
+            pending.resize_with(chunk_count, || None);
             while next_expected < chunk_count {
                 match rx.recv() {
                     Ok(Ok((index, folded))) => {
-                        if index == next_expected {
+                        pending[index] = Some(folded);
+                        while next_expected < chunk_count {
+                            let Some(folded) = pending[next_expected].take() else {
+                                break;
+                            };
                             visit(folded)?;
                             next_expected += 1;
-                            while let Some(folded) = pending.remove(&next_expected) {
-                                visit(folded)?;
-                                next_expected += 1;
-                            }
-                        } else {
-                            pending.insert(index, folded);
                         }
                     }
                     Ok(Err(error)) => return Err(error),
@@ -827,6 +1003,8 @@ pub struct RawMftIter<'a> {
     next_record: u64,
     /// Exclusive end record number.
     end: u64,
+    /// Cursor tracking the last extent segment used for sequential lookups.
+    offset_cursor: ExtentLookupCursor,
     /// Active iteration options.
     options: RawMftIterOptions,
 }
@@ -845,7 +1023,11 @@ impl<'a> Iterator for RawMftIter<'a> {
 
             let record_size = self.mft.boot.file_record_size as usize;
 
-            let offset = match self.mft.extent_map.record_offset(n) {
+            let offset = match self
+                .mft
+                .extent_map
+                .record_offset_with_cursor(n, &mut self.offset_cursor)
+            {
                 Ok(Some(o)) => o,
                 Ok(None) => continue, // sparse hole
                 Err(e) => return Some(Err(e)),
@@ -972,6 +1154,10 @@ fn enrich_from_attr_list(
     build_options: EntryBuildOptions,
 ) -> AttrListEnrichStats {
     let mut stats = AttrListEnrichStats::default();
+    let needs = attr_list_enrich_needs(entry);
+    if !needs.any() {
+        return stats;
+    }
     // 1. Materialise the flat $ATTRIBUTE_LIST byte slice.
     let data: Vec<u8> = match attr_list {
         AttributeListInfo::Resident(bytes) => bytes,
@@ -1005,15 +1191,11 @@ fn enrich_from_attr_list(
     // 2. Collect unique extension record numbers that hold data we may need to
     //    merge back into the base record.
     let mut ext_records: Vec<u64> = Vec::new();
+    let mut seen_ext_records = FxHashSet::default();
     for_each_attr_list_entry(&data, |type_id, file_ref| {
-        if matches!(
-            type_id,
-            x if x == NtfsAttributeType::FileName as u32
-                || x == NtfsAttributeType::Data as u32
-                || x == NtfsAttributeType::ReparsePoint as u32
-        ) {
+        if needs.wants_type(type_id) {
             let rec_num = file_ref & 0x0000_FFFF_FFFF_FFFF;
-            if rec_num != base_record_number && !ext_records.contains(&rec_num) {
+            if rec_num != base_record_number && seen_ext_records.insert(rec_num) {
                 ext_records.push(rec_num);
             }
         }
@@ -1031,82 +1213,128 @@ fn enrich_from_attr_list(
         // Use read_record_raw (no recursive enrichment) to avoid unbounded
         // depth in pathological MFTs.
         let ext_entry = match read_record_raw(reader, boot, extent_map, ext_num, build_options) {
-            Ok(Some((e, _))) => {
+            Ok(Some((entry, _))) => {
                 stats.extension_records_loaded += 1;
-                e
+                entry
             }
             Ok(None) => continue,
-            Err(e) => {
+            Err(error) => {
                 debug!(
                     "raw_mft: record {base_record_number}: \
-                     failed to load extension record {ext_num}: {e}"
+                     failed to load extension record {ext_num}: {error}"
                 );
                 continue;
             }
         };
-        let score = ext_entry.namespace.score();
-        let has_single_ext_link = ext_entry.links.is_empty() && !ext_entry.file_name.is_empty();
-        if has_single_ext_link || !ext_entry.links.is_empty() {
-            let base_link_count =
-                usize::from(entry.links.is_empty() && !entry.file_name.is_empty());
-            let ext_link_count = if has_single_ext_link {
-                1
-            } else {
-                ext_entry.links.len()
-            };
-            let mut links =
-                Vec::with_capacity(entry.links.len() + base_link_count + ext_link_count);
-            links.extend_from_slice(&entry.links);
-            if links.is_empty() && !entry.file_name.is_empty() {
-                links.push(RawMftLink {
-                    parent_reference: entry.parent_reference,
-                    namespace: entry.namespace,
-                    file_name: entry.file_name.clone(),
-                });
+        if needs.file_name {
+            let score = ext_entry.namespace.score();
+            let has_single_ext_link = ext_entry.links.is_empty() && !ext_entry.file_name.is_empty();
+            if has_single_ext_link || !ext_entry.links.is_empty() {
+                let base_link_count =
+                    usize::from(entry.links.is_empty() && !entry.file_name.is_empty());
+                let ext_link_count = if has_single_ext_link {
+                    1
+                } else {
+                    ext_entry.links.len()
+                };
+                let mut links =
+                    Vec::with_capacity(entry.links.len() + base_link_count + ext_link_count);
+                links.extend_from_slice(&entry.links);
+                if links.is_empty() && !entry.file_name.is_empty() {
+                    links.push(RawMftLink {
+                        parent_reference: entry.parent_reference,
+                        namespace: entry.namespace,
+                        file_name: entry.file_name.clone(),
+                    });
+                }
+                if has_single_ext_link {
+                    links.push(RawMftLink {
+                        parent_reference: ext_entry.parent_reference,
+                        namespace: ext_entry.namespace,
+                        file_name: ext_entry.file_name.clone(),
+                    });
+                } else {
+                    links.extend_from_slice(&ext_entry.links);
+                }
+                entry.links = links.into_boxed_slice();
             }
-            if has_single_ext_link {
-                links.push(RawMftLink {
-                    parent_reference: ext_entry.parent_reference,
-                    namespace: ext_entry.namespace,
-                    file_name: ext_entry.file_name.clone(),
-                });
-            } else {
-                links.extend_from_slice(&ext_entry.links);
+            if needs.data || needs.reparse {
+                merge_extension_data(entry, &ext_entry, needs);
             }
-            entry.links = links.into_boxed_slice();
-        }
-        merge_extension_data(entry, &ext_entry);
-        if score > best_score {
-            best_score = score;
-            entry.namespace = ext_entry.namespace;
-            entry.file_name = ext_entry.file_name;
-            entry.parent_reference = ext_entry.parent_reference;
-            entry.fn_created = ext_entry.fn_created;
-            entry.fn_modified = ext_entry.fn_modified;
-            entry.fn_mft_modified = ext_entry.fn_mft_modified;
-            entry.fn_accessed = ext_entry.fn_accessed;
+            if score > best_score {
+                best_score = score;
+                entry.namespace = ext_entry.namespace;
+                entry.file_name = ext_entry.file_name;
+                entry.parent_reference = ext_entry.parent_reference;
+                entry.fn_created = ext_entry.fn_created;
+                entry.fn_modified = ext_entry.fn_modified;
+                entry.fn_mft_modified = ext_entry.fn_mft_modified;
+                entry.fn_accessed = ext_entry.fn_accessed;
+            }
+        } else if needs.data || needs.reparse {
+            merge_extension_data(entry, &ext_entry, needs);
         }
     }
     stats
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+struct AttrListEnrichNeeds {
+    file_name: bool,
+    data: bool,
+    reparse: bool,
+}
+
+impl AttrListEnrichNeeds {
+    fn any(self) -> bool {
+        self.file_name || self.data || self.reparse
+    }
+
+    fn wants_type(self, type_id: u32) -> bool {
+        (self.file_name && type_id == NtfsAttributeType::FileName as u32)
+            || (self.data && type_id == NtfsAttributeType::Data as u32)
+            || (self.reparse && type_id == NtfsAttributeType::ReparsePoint as u32)
+    }
+}
+
+fn attr_list_enrich_needs(entry: &RawMftEntry) -> AttrListEnrichNeeds {
+    AttrListEnrichNeeds {
+        file_name: entry.file_name.is_empty()
+            || !matches!(
+                entry.namespace,
+                FileNameNamespace::Win32 | FileNameNamespace::Win32AndDos
+            )
+            || entry.hard_link_count > 1,
+        data: !entry.is_directory && !entry.has_unnamed_data,
+        reparse: entry.is_reparse_point && entry.reparse_tag.is_none(),
+    }
+}
+
 /// Merge relevant metadata from an extension record into the base record.
-fn merge_extension_data(entry: &mut RawMftEntry, ext_entry: &RawMftEntry) {
-    if ext_entry.real_size > entry.real_size || ext_entry.allocated_size > entry.allocated_size {
+fn merge_extension_data(
+    entry: &mut RawMftEntry,
+    ext_entry: &RawMftEntry,
+    needs: AttrListEnrichNeeds,
+) {
+    if needs.data
+        && (ext_entry.real_size > entry.real_size || ext_entry.allocated_size > entry.allocated_size)
+    {
         entry.real_size = ext_entry.real_size;
         entry.allocated_size = ext_entry.allocated_size;
         entry.has_unnamed_data = ext_entry.has_unnamed_data;
         entry.is_resident = ext_entry.is_resident;
         entry.data_run_summary = ext_entry.data_run_summary.clone();
     }
-    entry.is_sparse |= ext_entry.is_sparse;
-    entry.is_compressed |= ext_entry.is_compressed;
-    entry.is_encrypted |= ext_entry.is_encrypted;
-    entry.is_reparse_point |= ext_entry.is_reparse_point;
-    if entry.reparse_tag.is_none() {
+    if needs.data {
+        entry.is_sparse |= ext_entry.is_sparse;
+        entry.is_compressed |= ext_entry.is_compressed;
+        entry.is_encrypted |= ext_entry.is_encrypted;
+    }
+    if needs.reparse {
+        entry.is_reparse_point |= ext_entry.is_reparse_point;
         entry.reparse_tag = ext_entry.reparse_tag;
     }
-    if !ext_entry.alternate_data_streams.is_empty() {
+    if needs.data && !ext_entry.alternate_data_streams.is_empty() {
         let mut ads = entry.alternate_data_streams.to_vec();
         ads.extend_from_slice(&ext_entry.alternate_data_streams);
         entry.alternate_data_streams = ads.into_boxed_slice();
@@ -1115,14 +1343,7 @@ fn merge_extension_data(entry: &mut RawMftEntry, ext_entry: &RawMftEntry) {
 
 /// Heuristic to decide whether to enrich a base record from its `$ATTRIBUTE_LIST` or not.
 fn should_enrich_from_attr_list(entry: &RawMftEntry) -> bool {
-    entry.file_name.is_empty()
-        || !matches!(
-            entry.namespace,
-            FileNameNamespace::Win32 | FileNameNamespace::Win32AndDos
-        )
-        || entry.hard_link_count > 1
-        || (!entry.is_directory && !entry.has_unnamed_data)
-        || (entry.is_reparse_point && entry.reparse_tag.is_none())
+    attr_list_enrich_needs(entry).any()
 }
 
 /// Materialize the bytes of a non-resident attribute from its decoded runs.
