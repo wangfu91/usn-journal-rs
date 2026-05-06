@@ -23,6 +23,7 @@ use crate::{
 pub(crate) struct EntryBuildOptions {
     pub(crate) collect_alternate_data_streams: bool,
     pub(crate) collect_data_run_summary: bool,
+    pub(crate) collect_dos_file_name_links: bool,
 }
 
 impl EntryBuildOptions {
@@ -30,6 +31,7 @@ impl EntryBuildOptions {
         Self {
             collect_alternate_data_streams: true,
             collect_data_run_summary: true,
+            collect_dos_file_name_links: true,
         }
     }
 }
@@ -190,6 +192,8 @@ struct RawMftEntryBuilder {
     collect_alternate_data_streams: bool,
     /// Whether to compute non-resident data run summaries.
     collect_data_run_summary: bool,
+    /// Whether to retain DOS 8.3 aliases shadowed by better same-parent names.
+    collect_dos_file_name_links: bool,
 }
 
 impl RawMftEntryBuilder {
@@ -237,6 +241,7 @@ impl RawMftEntryBuilder {
             attr_list: None,
             collect_alternate_data_streams: options.collect_alternate_data_streams,
             collect_data_run_summary: options.collect_data_run_summary,
+            collect_dos_file_name_links: options.collect_dos_file_name_links,
         }
     }
 
@@ -289,20 +294,41 @@ impl RawMftEntryBuilder {
             let ns = FileNameNamespace::from_u8(header.namespace);
             let score = ns.score();
             let parent_reference = Fid::new(header.parent_directory_reference);
+            if !self.collect_dos_file_name_links
+                && ns == FileNameNamespace::Dos
+                && self.has_non_dos_file_name_link(parent_reference)
+            {
+                return;
+            }
             let file_name = OsString::from_wide(name_units);
+            if !self.collect_dos_file_name_links && ns != FileNameNamespace::Dos {
+                self.links.retain(|link| {
+                    link.namespace != FileNameNamespace::Dos
+                        || link.parent_reference != parent_reference
+                });
+            }
             if self.best_namespace_score >= 0 {
-                if self.links.is_empty() {
+                if self.links.is_empty()
+                    && self.should_retain_file_name_link(
+                        self.entry.namespace,
+                        self.entry.parent_reference,
+                        ns,
+                        parent_reference,
+                    )
+                {
                     self.links.push(RawMftLink {
                         parent_reference: self.entry.parent_reference,
                         namespace: self.entry.namespace,
                         file_name: self.entry.file_name.clone(),
                     });
                 }
-                self.links.push(RawMftLink {
-                    parent_reference,
-                    namespace: ns,
-                    file_name: file_name.clone(),
-                });
+                if self.should_retain_file_name_link(ns, parent_reference, ns, parent_reference) {
+                    self.links.push(RawMftLink {
+                        parent_reference,
+                        namespace: ns,
+                        file_name: file_name.clone(),
+                    });
+                }
             }
             if score > self.best_namespace_score {
                 self.best_namespace_score = score;
@@ -320,6 +346,34 @@ impl RawMftEntryBuilder {
                 }
             }
         }
+    }
+
+    fn has_non_dos_file_name_link(&self, parent_reference: Fid) -> bool {
+        (self.best_namespace_score >= 0
+            && self.entry.parent_reference == parent_reference
+            && self.entry.namespace != FileNameNamespace::Dos)
+            || self.links.iter().any(|link| {
+                link.parent_reference == parent_reference
+                    && link.namespace != FileNameNamespace::Dos
+            })
+    }
+
+    fn should_retain_file_name_link(
+        &self,
+        link_namespace: FileNameNamespace,
+        link_parent: Fid,
+        current_namespace: FileNameNamespace,
+        current_parent: Fid,
+    ) -> bool {
+        if self.collect_dos_file_name_links || link_namespace != FileNameNamespace::Dos {
+            return true;
+        }
+        let current_shadows_link =
+            current_namespace != FileNameNamespace::Dos && current_parent == link_parent;
+        let existing_link_shadows = self.links.iter().any(|link| {
+            link.parent_reference == link_parent && link.namespace != FileNameNamespace::Dos
+        });
+        !current_shadows_link && !existing_link_shadows
     }
 
     /// Fold a `$DATA` attribute into the unnamed stream or ADS list.

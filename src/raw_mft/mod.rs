@@ -41,16 +41,16 @@ mod fixup;
 mod io;
 mod options;
 mod record;
-mod work_plan;
 #[cfg(test)]
 mod tests;
+mod work_plan;
 
 use std::collections::BTreeMap;
 use std::io::{Read, Seek, SeekFrom};
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
-use std::sync::mpsc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -83,7 +83,11 @@ pub const DEFAULT_BUFFER_BYTES: NonZeroUsize = unsafe {
     // SAFETY: `256 * 1024` is a non-zero constant.
     NonZeroUsize::new_unchecked(256 * 1024)
 };
-const ATTR_READER_BUFFER_BYTES: usize = 64 * 1024;
+#[allow(clippy::useless_nonzero_new_unchecked)]
+pub const DEFAULT_ATTR_BUFFER_BYTES: NonZeroUsize = unsafe {
+    // SAFETY: `64 * 1024` is a non-zero constant.
+    NonZeroUsize::new_unchecked(64 * 1024)
+};
 
 /// Stage-by-stage timing and counters for raw `$MFT` parsing.
 #[derive(Debug, Clone, Default)]
@@ -283,7 +287,7 @@ impl<'a> RawMft<'a> {
         let attr_reader = VolumeReader::with_buffer_bytes(
             self.volume.handle,
             self.boot.bytes_per_sector as u64,
-            options.buffer_bytes.get().min(ATTR_READER_BUFFER_BYTES),
+            options.attr_buffer_bytes.get(),
         )?;
         let total = self.record_count();
         let end = options.end_record.unwrap_or(total).min(total);
@@ -315,7 +319,7 @@ impl<'a> RawMft<'a> {
         let mut attr_reader = VolumeReader::with_buffer_bytes(
             self.volume.handle,
             self.boot.bytes_per_sector as u64,
-            options.buffer_bytes.get().min(ATTR_READER_BUFFER_BYTES),
+            options.attr_buffer_bytes.get(),
         )?;
         let end = options
             .end_record
@@ -325,6 +329,7 @@ impl<'a> RawMft<'a> {
         let build_options = EntryBuildOptions {
             collect_alternate_data_streams: options.collect_alternate_data_streams,
             collect_data_run_summary: options.collect_data_run_summary,
+            collect_dos_file_name_links: options.collect_dos_file_name_links,
         };
         let mut profile = RawMftProfile {
             start_record: options.start_record,
@@ -387,7 +392,8 @@ impl<'a> RawMft<'a> {
             profile.parse_elapsed += parse_start.elapsed();
 
             let entry_build_start = Instant::now();
-            let (mut entry, attr_list) = RawMftEntry::from_record_with_attr_list(&rec, build_options);
+            let (mut entry, attr_list) =
+                RawMftEntry::from_record_with_attr_list(&rec, build_options);
             profile.entry_build_elapsed += entry_build_start.elapsed();
 
             if options.skip_extension_records && entry.base_record_reference != 0 {
@@ -475,6 +481,27 @@ impl<'a> RawMft<'a> {
         self.try_iter_with_options(options)?
             .map(|result| result.map(RawMftBatchEntry::from))
             .collect()
+    }
+
+    /// Parse one logical work chunk and fold parsed entries into a caller-owned accumulator.
+    pub fn fold_chunk_with_options<T, Init, Fold>(
+        &self,
+        chunk: RawMftWorkChunk,
+        mut options: RawMftIterOptions,
+        init: &Init,
+        fold_entry: &Fold,
+    ) -> Result<T, UsnError>
+    where
+        Init: Fn(RawMftWorkChunk) -> T,
+        Fold: Fn(&mut T, RawMftEntry) -> Result<(), UsnError>,
+    {
+        options.start_record = chunk.start_record;
+        options.end_record = Some(chunk.end_record);
+        let mut acc = init(chunk);
+        for entry in self.try_iter_with_options(options)? {
+            fold_entry(&mut acc, entry?)?;
+        }
+        Ok(acc)
     }
 
     /// Parse logical work chunks in parallel using worker-local readers.
@@ -613,6 +640,130 @@ impl<'a> RawMft<'a> {
         })
     }
 
+    /// Parse logical work chunks in parallel and fold entries on worker threads.
+    pub fn for_each_folded_chunk_parallel_with_options<Init, Fold, T, V>(
+        &self,
+        chunks: Vec<RawMftWorkChunk>,
+        options: RawMftIterOptions,
+        worker_count: NonZeroUsize,
+        init: Init,
+        fold_entry: Fold,
+        mut visit: V,
+    ) -> Result<(), UsnError>
+    where
+        Init: Fn(RawMftWorkChunk) -> T + Sync,
+        Fold: Fn(&mut T, RawMftEntry) -> Result<(), UsnError> + Sync,
+        T: Send,
+        V: FnMut(T) -> Result<(), UsnError>,
+    {
+        if chunks.is_empty() {
+            return Ok(());
+        }
+
+        let worker_count = worker_count.get().min(chunks.len()).max(1);
+        if worker_count == 1 {
+            for chunk in chunks {
+                let folded =
+                    self.fold_chunk_with_options(chunk, options.clone(), &init, &fold_entry)?;
+                visit(folded)?;
+            }
+            return Ok(());
+        }
+
+        let Some(source) = parallel_volume_source(self.volume) else {
+            return Err(UsnError::Io(std::io::Error::other(
+                "raw_mft parallel chunk parsing requires a reusable volume source",
+            )));
+        };
+        let next_index = AtomicUsize::new(0);
+        let chunk_count = chunks.len();
+        let chunks = chunks.into_boxed_slice();
+        let boot = self.boot.clone();
+        let extent_map = self.extent_map.clone();
+        let bitmap = self.bitmap.clone();
+
+        thread::scope(|scope| -> Result<(), UsnError> {
+            let (tx, rx) = mpsc::channel::<Result<(usize, T), UsnError>>();
+            let mut handles = Vec::with_capacity(worker_count);
+            for _ in 0..worker_count {
+                let next_index = &next_index;
+                let chunks = &chunks;
+                let tx = tx.clone();
+                let options = options.clone();
+                let source = source.clone();
+                let boot = boot.clone();
+                let extent_map = extent_map.clone();
+                let bitmap = bitmap.clone();
+                let init = &init;
+                let fold_entry = &fold_entry;
+                handles.push(scope.spawn(move || {
+                    let volume = match open_parallel_volume(&source) {
+                        Ok(volume) => volume,
+                        Err(error) => {
+                            let _ = tx.send(Err(error));
+                            return;
+                        }
+                    };
+                    let worker_mft = RawMft {
+                        volume: &volume,
+                        boot,
+                        extent_map,
+                        bitmap,
+                    };
+
+                    loop {
+                        let index = next_index.fetch_add(1, Ordering::Relaxed);
+                        if index >= chunks.len() {
+                            break;
+                        }
+                        let chunk = chunks[index];
+                        let folded = worker_mft
+                            .fold_chunk_with_options(chunk, options.clone(), init, fold_entry)
+                            .map(|folded| (index, folded));
+                        if tx.send(folded).is_err() {
+                            break;
+                        }
+                    }
+                }));
+            }
+            drop(tx);
+
+            let mut next_expected = 0usize;
+            let mut pending = BTreeMap::new();
+            while next_expected < chunk_count {
+                match rx.recv() {
+                    Ok(Ok((index, folded))) => {
+                        if index == next_expected {
+                            visit(folded)?;
+                            next_expected += 1;
+                            while let Some(folded) = pending.remove(&next_expected) {
+                                visit(folded)?;
+                                next_expected += 1;
+                            }
+                        } else {
+                            pending.insert(index, folded);
+                        }
+                    }
+                    Ok(Err(error)) => return Err(error),
+                    Err(_) => {
+                        return Err(UsnError::Io(std::io::Error::other(
+                            "raw_mft parallel chunk channel closed unexpectedly",
+                        )));
+                    }
+                }
+            }
+
+            for handle in handles {
+                if handle.join().is_err() {
+                    return Err(UsnError::Io(std::io::Error::other(
+                        "raw_mft parallel worker panicked",
+                    )));
+                }
+            }
+            Ok(())
+        })
+    }
+
     /// Parse logical work chunks in parallel and visit batches in deterministic order.
     pub fn for_each_chunk_parallel_with_options<F>(
         &self,
@@ -715,6 +866,7 @@ impl<'a> Iterator for RawMftIter<'a> {
                     let build_options = EntryBuildOptions {
                         collect_alternate_data_streams: self.options.collect_alternate_data_streams,
                         collect_data_run_summary: self.options.collect_data_run_summary,
+                        collect_dos_file_name_links: self.options.collect_dos_file_name_links,
                     };
                     let (mut entry, attr_list) =
                         RawMftEntry::from_record_with_attr_list(&rec, build_options);
@@ -893,18 +1045,18 @@ fn enrich_from_attr_list(
             }
         };
         let score = ext_entry.namespace.score();
-        let ext_links: Vec<RawMftLink> =
-            if ext_entry.links.is_empty() && !ext_entry.file_name.is_empty() {
-                vec![RawMftLink {
-                    parent_reference: ext_entry.parent_reference,
-                    namespace: ext_entry.namespace,
-                    file_name: ext_entry.file_name.clone(),
-                }]
+        let has_single_ext_link = ext_entry.links.is_empty() && !ext_entry.file_name.is_empty();
+        if has_single_ext_link || !ext_entry.links.is_empty() {
+            let base_link_count =
+                usize::from(entry.links.is_empty() && !entry.file_name.is_empty());
+            let ext_link_count = if has_single_ext_link {
+                1
             } else {
-                ext_entry.links.to_vec()
+                ext_entry.links.len()
             };
-        if !ext_links.is_empty() {
-            let mut links = entry.links.to_vec();
+            let mut links =
+                Vec::with_capacity(entry.links.len() + base_link_count + ext_link_count);
+            links.extend_from_slice(&entry.links);
             if links.is_empty() && !entry.file_name.is_empty() {
                 links.push(RawMftLink {
                     parent_reference: entry.parent_reference,
@@ -912,7 +1064,15 @@ fn enrich_from_attr_list(
                     file_name: entry.file_name.clone(),
                 });
             }
-            links.extend(ext_links);
+            if has_single_ext_link {
+                links.push(RawMftLink {
+                    parent_reference: ext_entry.parent_reference,
+                    namespace: ext_entry.namespace,
+                    file_name: ext_entry.file_name.clone(),
+                });
+            } else {
+                links.extend_from_slice(&ext_entry.links);
+            }
             entry.links = links.into_boxed_slice();
         }
         merge_extension_data(entry, &ext_entry);

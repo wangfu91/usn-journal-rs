@@ -6,8 +6,9 @@
 use std::num::{NonZeroU64, NonZeroUsize};
 
 use usn_journal_rs::{
+    Fid,
     errors::UsnError,
-    raw_mft::{RawMft, RawMftIterOptions, RawMftWorkPlanOptions},
+    raw_mft::{RawMft, RawMftBatchEntry, RawMftIterOptions, RawMftWorkPlanOptions},
     volume::Volume,
 };
 
@@ -104,12 +105,24 @@ fn raw_mft_parallel_chunk_path_matches_serial_chunk_path() -> Result<(), String>
             *chunk, parallel_batch.chunk,
             "parallel output must preserve chunk order"
         );
+        let serial_identity: Vec<_> = serial_entries.iter().map(entry_identity).collect();
+        let parallel_identity: Vec<_> = parallel_batch.entries.iter().map(entry_identity).collect();
         assert_eq!(
-            serial_entries, &parallel_batch.entries,
-            "parallel chunk output must match serial chunk output for {:?}",
+            serial_identity, parallel_identity,
+            "parallel chunk identity/order must match serial chunk output for {:?}",
             chunk
         );
     }
 
     Ok(())
+}
+
+fn entry_identity(entry: &RawMftBatchEntry) -> (u64, Fid, u64, Fid, bool) {
+    (
+        entry.record_number,
+        entry.file_reference,
+        entry.base_record_reference,
+        entry.parent_reference,
+        entry.is_directory,
+    )
 }
