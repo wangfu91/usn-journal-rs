@@ -346,7 +346,13 @@ impl fmt::Display for UsnSourceInfo {
                 wrote = true;
             }
         }
-        if wrote { Ok(()) } else { f.write_str("NONE") }
+        if wrote {
+            Ok(())
+        } else if self.is_empty() {
+            f.write_str("NONE")
+        } else {
+            write!(f, "0x{:x}", self.bits())
+        }
     }
 }
 
@@ -366,6 +372,28 @@ mod tests {
     #[test]
     fn usn_display_is_decimal() {
         assert_eq!(format!("{}", Usn::new(0x10)), "16");
+    }
+
+    #[test]
+    fn file_attributes_display_is_none_for_zero_bits() {
+        assert_eq!(format!("{}", FileAttributes::empty()), "NONE");
+    }
+
+    #[test]
+    fn file_attributes_display_uses_hex_for_unknown_bits() {
+        let attrs = FileAttributes::from_bits_retain(0x8000_0000);
+        assert_eq!(format!("{attrs}"), "0x80000000");
+    }
+
+    #[test]
+    fn usn_source_info_display_is_none_for_zero_bits() {
+        assert_eq!(format!("{}", UsnSourceInfo::empty()), "NONE");
+    }
+
+    #[test]
+    fn usn_source_info_display_uses_hex_for_unknown_bits() {
+        let info = UsnSourceInfo::from_bits_retain(0x8000_0000);
+        assert_eq!(format!("{info}"), "0x80000000");
     }
 
     #[test]

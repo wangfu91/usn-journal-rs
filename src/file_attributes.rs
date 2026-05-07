@@ -63,6 +63,12 @@ impl fmt::Display for crate::FileAttributes {
                 wrote = true;
             }
         }
-        if wrote { Ok(()) } else { f.write_str("NONE") }
+        if wrote {
+            Ok(())
+        } else if self.is_empty() {
+            f.write_str("NONE")
+        } else {
+            write!(f, "0x{:x}", self.bits())
+        }
     }
 }
