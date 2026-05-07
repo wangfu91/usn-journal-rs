@@ -40,7 +40,7 @@ and idiomatic Rust refactoring. **Breaking changes throughout** — see the
   `TryFrom` conversions, `to_unix_seconds`, and `to_unix_nanos`.
 - `Volume::from_drive_letter(c: char)` and `Volume::from_mount_point(p)` —
   replaces the previous single constructor.
-- `VolumeSource` enum (`DriveLetter` vs `MountPoint`).
+- `Volume` now records the originating drive letter or mount point internally.
 - `JournalIterOptions::builder()`, `MftIterOptions::builder()`,
   `RawMftIterOptions::builder()`.
 - `PathResolver::new(v).with_lru_cache(n).with_in_memory_tree(&raw_mft)?`
@@ -71,7 +71,7 @@ and idiomatic Rust refactoring. **Breaking changes throughout** — see the
   `mft::EnumOptions` renamed to `MftIterOptions`.
 - Fallible iteration entry points renamed to `try_iter` / `try_iter_with_options`.
 - `PathResolvableEntry::fid()` and `parent_fid()` now return `Fid`.
-- `VolumeSource` is public and exposed via `Volume::source()`.
+- `Volume` keeps the originating drive letter or mount point internally; use `Volume::drive_letter()` and `Volume::mount_point()` to inspect it.
 - Entry structs now derive `Clone`, `PartialEq`, `Eq`, and `Hash` where their
   field types permit it.
 - `Fid` now represents both standard 64-bit NTFS file references and
