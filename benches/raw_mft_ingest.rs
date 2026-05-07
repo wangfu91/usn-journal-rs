@@ -332,7 +332,10 @@ fn merge_partial_ingest(partial: PartialIngest, targets: &mut BenchTargets<'_>) 
     }
     let mut child_links = partial.child_links.into_iter().peekable();
     while let Some((parent_record, child_link)) = child_links.next() {
-        let children = targets.children_by_parent.entry(parent_record).or_default();
+        let children = targets
+            .children_by_parent
+            .entry(parent_record)
+            .or_insert_with(|| Vec::with_capacity(1));
         children.push(child_link);
         while let Some((next_parent, _)) = child_links.peek() {
             if *next_parent != parent_record {
@@ -529,13 +532,13 @@ fn open_volume(drive: char) -> Option<Volume> {
     }
 }
 
-/// Pick a conservative default worker count for this machine.
+/// Pick a tuned default worker count for this machine class.
 fn default_worker_count() -> NonZeroUsize {
     let available = thread::available_parallelism()
         .ok()
         .map(NonZeroUsize::get)
         .unwrap_or(1);
-    nonzero_usize((available / 2).clamp(1, 8))
+    nonzero_usize(available.clamp(1, 10))
 }
 
 /// Parse a non-zero usize from the environment or return the default.
