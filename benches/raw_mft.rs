@@ -104,7 +104,7 @@ fn raw_mft_iter_with_path_resolver(bencher: Bencher) {
         }
     };
     bencher.bench_local(|| {
-        let mut resolver = PathResolver::new(&volume).without_lru_cache();
+        let mut resolver = PathResolver::new(&volume);
         let mut count = 0u64;
         if let Ok(it) = mft.try_iter() {
             for r in it.flatten().take(BENCH_RECORD_LIMIT) {

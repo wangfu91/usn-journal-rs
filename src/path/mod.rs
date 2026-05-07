@@ -10,7 +10,7 @@ mod util;
 
 pub use entry::PathResolvableEntry;
 pub use in_memory_tree::InMemoryDirTree;
-pub use resolver::{PathResolver, PathResolverBuilder};
+pub use resolver::PathResolver;
 
 #[cfg(test)]
 mod tests;

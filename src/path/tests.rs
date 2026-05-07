@@ -287,7 +287,7 @@ fn resolve_path_with_cache_name_mismatch() {
 #[test]
 fn resolve_path_failure() {
     let volume = create_mock_volume();
-    let mut resolver = PathResolver::new(&volume).without_lru_cache();
+    let mut resolver = PathResolver::new(&volume);
 
     let entry = MockEntry {
         fid: Fid::new(0x123456),
@@ -311,7 +311,7 @@ fn resolver_default_has_cache_and_no_tree() {
 #[test]
 fn resolver_without_lru_cache_disables_cache() {
     let volume = create_mock_volume();
-    let resolver = PathResolver::new(&volume).without_lru_cache();
+    let resolver = PathResolver::new(&volume);
     assert!(resolver.dir_fid_path_cache.is_none());
     assert!(resolver.in_memory_tree.is_none());
 }

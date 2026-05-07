@@ -52,11 +52,9 @@ mod integration_tests {
             Err(UsnError::UnsupportedFilesystem(_)) => return,
             Err(e) => panic!("RawMft::new failed: {e}"),
         };
-        let mut resolver = PathResolver::builder(&volume)
-            .with_lru_cache(
-                std::num::NonZeroUsize::new(4096).expect("cache capacity must be non-zero"),
-            )
-            .build();
+        let mut resolver = PathResolver::new(&volume).with_lru_cache(
+            std::num::NonZeroUsize::new(4096).expect("cache capacity must be non-zero"),
+        );
         let mut resolved_any = false;
         // Cap the search so the test stays bounded on huge volumes.
         for r in mft.try_iter().expect("iter").flatten().take(20_000) {
