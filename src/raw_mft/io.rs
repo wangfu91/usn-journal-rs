@@ -25,9 +25,13 @@ pub const DEFAULT_BUFFER_BYTES: usize = 256 * 1024;
 /// into sector-aligned `ReadFile` calls under the hood, with the data
 /// copied into the caller's buffer.
 pub(crate) struct VolumeReader {
+    /// Borrowed raw volume handle.
     handle: HANDLE,
+    /// Required sector alignment for I/O.
     sector_size: u64,
+    /// Byte-oriented cursor exposed through `Read + Seek`.
     position: u64,
+    /// Sector-aligned backing buffer.
     buf: Vec<u8>,
     /// Volume offset of the start of `buf`.
     buf_pos: u64,
@@ -36,10 +40,12 @@ pub(crate) struct VolumeReader {
 }
 
 impl VolumeReader {
+    /// Create a reader with the default internal buffer size.
     pub fn new(handle: HANDLE, sector_size: u64) -> Result<Self, UsnError> {
         Self::with_buffer_bytes(handle, sector_size, DEFAULT_BUFFER_BYTES)
     }
 
+    /// Create a reader with a caller-chosen internal buffer size.
     pub fn with_buffer_bytes(
         handle: HANDLE,
         sector_size: u64,
@@ -62,10 +68,12 @@ impl VolumeReader {
         })
     }
 
+    /// Round `n` down to the nearest sector boundary.
     fn round_down(&self, n: u64) -> u64 {
         n & !(self.sector_size - 1)
     }
 
+    /// Seek the underlying volume handle to an absolute byte offset.
     fn raw_seek(&self, offset: u64) -> io::Result<()> {
         let mut new_pos: i64 = 0;
         // SAFETY: `self.handle` is a live volume handle owned by this
@@ -76,6 +84,7 @@ impl VolumeReader {
         Ok(())
     }
 
+    /// Refill the internal buffer starting at a sector-aligned volume offset.
     fn refill(&mut self, sector_pos: u64) -> io::Result<()> {
         self.raw_seek(sector_pos)?;
         let mut bytes_read: u32 = 0;
@@ -105,6 +114,7 @@ impl VolumeReader {
         Ok(())
     }
 
+    /// Return whether the internal buffer fully covers the requested range.
     fn buf_contains(&self, position: u64, n: usize) -> bool {
         if self.buf_len == 0 {
             return false;

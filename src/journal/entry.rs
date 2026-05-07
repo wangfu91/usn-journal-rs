@@ -5,15 +5,15 @@ use std::{ffi::OsString, os::windows::ffi::OsStringExt};
 
 use crate::file_attributes::FileAttributeView;
 use crate::usn_record::UsnRecordView;
-use crate::{Fid, Filetime, Usn};
+use crate::{Fid, FileAttributes, Filetime, Usn, UsnReason, UsnSourceInfo};
 
-use super::reason::format_reason;
+use super::reason::{CompactReason, format_reason};
 
 /// Owned representation of a USN journal entry.
 ///
 /// `fid` / `parent_fid` may be either standard 64-bit NTFS file references
 /// or 128-bit file IDs from `USN_RECORD_V3` on ReFS.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct UsnEntry {
     /// Parsed Update Sequence Number.
     pub usn: Usn,
@@ -23,14 +23,14 @@ pub struct UsnEntry {
     pub fid: Fid,
     /// Parsed parent file identifier.
     pub parent_fid: Fid,
-    /// Raw USN reason bitmask.
-    pub reason: u32,
-    /// Raw source-info bitmask.
-    pub source_info: u32,
+    /// USN reason flags.
+    pub reason: UsnReason,
+    /// Source-info flags.
+    pub source_info: UsnSourceInfo,
     /// Parsed file name.
     pub file_name: OsString,
-    /// Raw file-attribute bitmask.
-    pub file_attributes: u32,
+    /// File-attribute flags.
+    pub file_attributes: FileAttributes,
 }
 
 impl UsnEntry {
@@ -53,10 +53,10 @@ impl UsnEntry {
             }),
             fid: record.fid(),
             parent_fid: record.parent_fid(),
-            reason: record.reason(),
-            source_info: record.source_info(),
+            reason: UsnReason::from_bits_retain(record.reason()),
+            source_info: UsnSourceInfo::from_bits_retain(record.source_info()),
             file_name,
-            file_attributes: record.file_attributes(),
+            file_attributes: FileAttributes::from_bits_retain(record.file_attributes()),
         }
     }
 
@@ -74,38 +74,15 @@ impl UsnEntry {
         <Self as FileAttributeView>::has_hidden_attribute(self)
     }
 
-    /// Strongly-typed view of [`UsnEntry::reason`].
-    ///
-    /// Unknown bits are preserved.
-    #[must_use]
-    #[inline]
-    pub fn reason_flags(&self) -> crate::UsnReason {
-        crate::UsnReason::from_bits_retain(self.reason)
-    }
-
-    /// Strongly-typed view of [`UsnEntry::file_attributes`].
-    ///
-    /// Unknown bits are preserved.
-    #[must_use]
-    #[inline]
-    pub fn file_attributes_flags(&self) -> crate::FileAttributes {
-        <Self as FileAttributeView>::file_attribute_flags(self)
-    }
-
     /// Converts a USN reason bitfield to a human-readable string using Windows constants.
     #[must_use]
     pub fn get_reason_string(&self) -> String {
         format_reason(self.reason)
     }
-
-    /// Formats a compact reason summary using `|` as separator (no spaces).
-    fn reason_compact(&self) -> String {
-        self.get_reason_string().replace(" | ", "|")
-    }
 }
 
 impl FileAttributeView for UsnEntry {
-    fn raw_file_attributes(&self) -> u32 {
+    fn file_attributes(&self) -> FileAttributes {
         self.file_attributes
     }
 }
@@ -118,10 +95,10 @@ impl fmt::Display for UsnEntry {
             f,
             "USN 0x{:x} [{}] fid={} parent={} attrs=0x{:x} \"{}\"",
             self.usn.get(),
-            self.reason_compact(),
+            CompactReason(self.reason),
             self.fid,
             self.parent_fid,
-            self.file_attributes,
+            self.file_attributes.bits(),
             self.file_name.to_string_lossy(),
         )
     }

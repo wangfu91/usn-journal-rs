@@ -11,19 +11,32 @@
 use crate::errors::UsnError;
 
 /// One decoded data run.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum DataRun {
-    Data { lcn: u64, clusters: u64 },
-    Sparse { clusters: u64 },
+    /// Allocated clusters starting at `lcn`.
+    Data {
+        /// Starting logical cluster number on disk.
+        lcn: u64,
+        /// Number of clusters in the run.
+        clusters: u64,
+    },
+    /// Sparse hole occupying `clusters` logical clusters.
+    Sparse {
+        /// Number of logical clusters represented by the hole.
+        clusters: u64,
+    },
 }
 
 /// Aggregated information about an attribute's runs.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub struct DataRunSummary {
+    /// Number of runs present in the attribute.
     pub run_count: u32,
+    /// Total number of logical clusters covered by all runs.
     pub total_clusters: u64,
 }
 
+/// Maximum byte width of an NTFS run length or offset field.
 const MAX_FIELD_BYTES: usize = 8;
 
 /// Decode a sequence of data-run records starting at `runs`.
@@ -31,6 +44,26 @@ const MAX_FIELD_BYTES: usize = 8;
 /// Returns the sequence of runs alongside a [`DataRunSummary`].
 pub(crate) fn decode_runs(runs: &[u8]) -> Result<(Vec<DataRun>, DataRunSummary), UsnError> {
     let mut out: Vec<DataRun> = Vec::new();
+    let summary = visit_runs(runs, |run| {
+        out.push(run);
+        Ok(())
+    })?;
+
+    Ok((out, summary))
+}
+
+/// Decode runs but only produce the summary, without allocating a `Vec`
+/// for each individual run. Used in the hot path of `RawMftEntry`
+/// construction where the per-run details aren't needed.
+pub(crate) fn summarize_runs(runs: &[u8]) -> Result<DataRunSummary, UsnError> {
+    visit_runs(runs, |_| Ok(()))
+}
+
+/// Visit each decoded run in sequence and accumulate a summary.
+fn visit_runs<F>(runs: &[u8], mut visitor: F) -> Result<DataRunSummary, UsnError>
+where
+    F: FnMut(DataRun) -> Result<(), UsnError>,
+{
     let mut summary = DataRunSummary::default();
     let mut prev_lcn: i128 = 0;
     let mut cursor = 0usize;
@@ -87,73 +120,11 @@ pub(crate) fn decode_runs(runs: &[u8]) -> Result<(Vec<DataRun>, DataRunSummary),
             Some(new_lcn as u64)
         };
 
-        summary.run_count = summary.run_count.saturating_add(1);
-        summary.total_clusters = summary.total_clusters.saturating_add(clusters);
-
-        match lcn_opt {
-            Some(lcn) => out.push(DataRun::Data { lcn, clusters }),
-            None => out.push(DataRun::Sparse { clusters }),
-        }
-    }
-
-    Ok((out, summary))
-}
-
-/// Decode runs but only produce the summary, without allocating a `Vec`
-/// for each individual run. Used in the hot path of `RawMftEntry`
-/// construction where the per-run details aren't needed.
-pub(crate) fn summarize_runs(runs: &[u8]) -> Result<DataRunSummary, UsnError> {
-    let mut summary = DataRunSummary::default();
-    let mut prev_lcn: i128 = 0;
-    let mut cursor = 0usize;
-
-    loop {
-        if cursor >= runs.len() {
-            return Err(UsnError::InvalidDataRun("unterminated data run sequence"));
-        }
-        let descriptor = runs[cursor];
-        if descriptor == 0 {
-            break;
-        }
-        let length_bytes = (descriptor & 0x0F) as usize;
-        let offset_bytes = ((descriptor >> 4) & 0x0F) as usize;
-        if length_bytes == 0 || length_bytes > MAX_FIELD_BYTES {
-            return Err(UsnError::InvalidDataRun("invalid run length field"));
-        }
-        if offset_bytes > MAX_FIELD_BYTES {
-            return Err(UsnError::InvalidDataRun("invalid run offset field"));
-        }
-        cursor += 1;
-
-        if cursor + length_bytes > runs.len() {
-            return Err(UsnError::InvalidDataRun("truncated run length field"));
-        }
-        let mut len_buf = [0u8; MAX_FIELD_BYTES];
-        len_buf[..length_bytes].copy_from_slice(&runs[cursor..cursor + length_bytes]);
-        let clusters = u64::from_le_bytes(len_buf);
-        if clusters == 0 {
-            return Err(UsnError::InvalidDataRun("zero-length run"));
-        }
-        cursor += length_bytes;
-
-        if offset_bytes != 0 {
-            if cursor + offset_bytes > runs.len() {
-                return Err(UsnError::InvalidDataRun("truncated run offset field"));
-            }
-            let mut off_buf = [0u8; MAX_FIELD_BYTES];
-            off_buf[..offset_bytes].copy_from_slice(&runs[cursor..cursor + offset_bytes]);
-            let raw = i64::from_le_bytes(off_buf);
-            let empty_bits = (MAX_FIELD_BYTES - offset_bytes) * 8;
-            let delta = (raw << empty_bits) >> empty_bits;
-            cursor += offset_bytes;
-            let new_lcn = prev_lcn
-                .checked_add(delta as i128)
-                .ok_or(UsnError::InvalidDataRun("relative offset overflow"))?;
-            if new_lcn < 0 {
-                return Err(UsnError::InvalidDataRun("relative offset underflow"));
-            }
-            prev_lcn = new_lcn;
-        }
+        let run = match lcn_opt {
+            Some(lcn) => DataRun::Data { lcn, clusters },
+            None => DataRun::Sparse { clusters },
+        };
+        visitor(run)?;
 
         summary.run_count = summary.run_count.saturating_add(1);
         summary.total_clusters = summary.total_clusters.saturating_add(clusters);
@@ -230,5 +201,37 @@ mod tests {
         // header 0x11 len=1 off=-5 -> previous lcn = 0, new lcn = -5
         let runs = [0x11u8, 0x01, 0xFB, 0x00];
         assert!(decode_runs(&runs).is_err());
+    }
+
+    #[test]
+    fn summarize_matches_decode_for_valid_runs() {
+        let cases: &[&[u8]] = &[
+            &[0x21, 0x05, 0x34, 0x02, 0x00],
+            &[0x21, 0x05, 0x0A, 0x00, 0x21, 0x03, 0xFD, 0xFF, 0x00],
+            &[0x01, 0x07, 0x00],
+        ];
+
+        for runs in cases {
+            let (_, decoded_summary) = decode_runs(runs).unwrap();
+            let summary_only = summarize_runs(runs).unwrap();
+            assert_eq!(summary_only, decoded_summary);
+        }
+    }
+
+    #[test]
+    fn summarize_matches_decode_errors() {
+        let cases: &[&[u8]] = &[
+            &[0x21, 0x05],
+            &[0x11, 0x00, 0x00, 0x00],
+            &[0x11, 0x01, 0xFB, 0x00],
+            &[0x10, 0x00],
+            &[0x19, 0x01, 0x00],
+        ];
+
+        for runs in cases {
+            let decode_error = decode_runs(runs).unwrap_err().to_string();
+            let summary_error = summarize_runs(runs).unwrap_err().to_string();
+            assert_eq!(summary_error, decode_error);
+        }
     }
 }

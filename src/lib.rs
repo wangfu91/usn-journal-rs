@@ -54,17 +54,26 @@ mod file_attributes;
 pub mod journal;
 pub mod mft;
 pub mod path;
-mod privilege;
+pub mod privilege;
 pub mod raw_mft;
 pub mod types;
+mod unaligned;
 mod usn_record;
 
 // Re-export commonly used types
 pub use errors::UsnError;
-pub use types::{Fid, FileAttributes, Usn, UsnReason};
+pub use types::{Fid, FileAttributes, Usn, UsnReason, UsnSourceInfo};
 
 /// A convenient type alias for Results with UsnError.
 pub type UsnResult<T> = std::result::Result<T, UsnError>;
+
+/// Common imports for applications using the crate.
+pub mod prelude {
+    pub use crate::{
+        Fid, FileAttributes, Filetime, Usn, UsnError, UsnReason, UsnResult, UsnSourceInfo,
+        journal::UsnJournal, mft::Mft, path::PathResolver, raw_mft::RawMft, volume::Volume,
+    };
+}
 
 /// Windows FILETIME wrapper used throughout the crate.
 #[doc(inline)]
@@ -75,3 +84,29 @@ pub mod volume;
 
 #[cfg(test)]
 mod test_support;
+
+#[cfg(test)]
+mod tests {
+    use super::prelude;
+
+    #[test]
+    fn prelude_exports_common_types() {
+        fn accepts<T>() {}
+
+        accepts::<prelude::Volume>();
+        accepts::<prelude::UsnJournal>();
+        accepts::<prelude::Mft>();
+        accepts::<prelude::RawMft<'_>>();
+        accepts::<prelude::PathResolver<'_>>();
+        accepts::<prelude::UsnError>();
+        accepts::<prelude::Usn>();
+        accepts::<prelude::Fid>();
+        accepts::<prelude::Filetime>();
+        accepts::<prelude::UsnReason>();
+        accepts::<prelude::FileAttributes>();
+        accepts::<prelude::UsnSourceInfo>();
+
+        let result: prelude::UsnResult<()> = Ok(());
+        assert!(result.is_ok());
+    }
+}

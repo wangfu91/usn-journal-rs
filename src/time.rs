@@ -1,3 +1,5 @@
+//! Conversion helpers and the public `Filetime` wrapper.
+
 use crate::errors::UsnError;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use windows::Win32::Foundation::FILETIME;
@@ -12,8 +14,7 @@ pub(crate) const WINDOWS_TO_UNIX_OFFSET_100NS: u64 = 116_444_736_000_000_000u64;
 /// This is the raw timestamp representation used by the NTFS USN journal
 /// and MFT records. It is exposed in this crate's public API in place of
 /// any specific date/time type so that callers can pick whichever
-/// downstream conversion (e.g. `SystemTime`, `chrono::DateTime<Utc>`,
-/// `time::OffsetDateTime`) suits their use case.
+/// downstream conversion suits their use case.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[repr(transparent)]
 pub struct Filetime(u64);
@@ -52,6 +53,15 @@ impl Filetime {
         }
     }
 
+    /// Convert from `SystemTime`.
+    ///
+    /// Returns `None` when the input is before the Windows FILETIME epoch or
+    /// when the 100-nanosecond interval count would overflow `u64`.
+    #[must_use]
+    pub fn from_system_time(value: SystemTime) -> Option<Self> {
+        system_time_to_filetime_raw(value).map(Self)
+    }
+
     /// Number of seconds since the Unix epoch (may be negative).
     #[must_use]
     #[inline]
@@ -86,42 +96,49 @@ impl From<Filetime> for FILETIME {
     }
 }
 
-/// Converts a Windows FILETIME (100-nanosecond intervals since 1601-01-01 UTC)
-/// to a `std::time::SystemTime`.
-///
-/// # Arguments
-/// * `filetime` - FILETIME value as i64.
-///
-/// # Returns
-/// * `Result<SystemTime, UsnError>` - The corresponding system time or an error for invalid input.
-///
-/// # Errors
-/// * Returns an error if the filetime value is negative, as FILETIME values should be non-negative.
-#[allow(dead_code)]
-pub(crate) fn filetime_to_systemtime(filetime: i64) -> Result<SystemTime, UsnError> {
-    // FILETIME is technically unsigned, representing 100-nanosecond intervals.
-    // Negative values are invalid and should be rejected.
-    if filetime < 0 {
-        return Err(UsnError::Io(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            format!("FILETIME cannot be negative: {filetime}"),
-        )));
-    }
+impl TryFrom<SystemTime> for Filetime {
+    type Error = UsnError;
 
-    Filetime::new(filetime as u64)
-        .to_system_time()
-        .ok_or_else(|| {
-            UsnError::Io(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("FILETIME out of representable range: {filetime}"),
-            ))
-        })
+    fn try_from(value: SystemTime) -> Result<Self, Self::Error> {
+        Self::from_system_time(value).ok_or(UsnError::InvalidTimestamp(
+            "SystemTime is outside the Windows FILETIME range",
+        ))
+    }
+}
+
+impl TryFrom<Filetime> for SystemTime {
+    type Error = UsnError;
+
+    fn try_from(value: Filetime) -> Result<Self, Self::Error> {
+        value.to_system_time().ok_or(UsnError::InvalidTimestamp(
+            "FILETIME is outside the SystemTime range",
+        ))
+    }
+}
+
+/// Convert a `SystemTime` into its raw Windows `FILETIME` representation.
+fn system_time_to_filetime_raw(value: SystemTime) -> Option<u64> {
+    match value.duration_since(UNIX_EPOCH) {
+        Ok(duration) => {
+            let intervals = duration.as_nanos() / 100;
+            (WINDOWS_TO_UNIX_OFFSET_100NS as u128)
+                .checked_add(intervals)
+                .and_then(|raw| u64::try_from(raw).ok())
+        }
+        Err(err) => {
+            let intervals = err.duration().as_nanos() / 100;
+            if intervals > WINDOWS_TO_UNIX_OFFSET_100NS as u128 {
+                None
+            } else {
+                Some(WINDOWS_TO_UNIX_OFFSET_100NS - intervals as u64)
+            }
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::errors::UsnError;
     use std::time::{Duration, UNIX_EPOCH};
     use windows::Win32::{
         Foundation::{FILETIME, SYSTEMTIME as WinSystemTime},
@@ -133,22 +150,22 @@ mod tests {
         use super::*;
 
         #[test]
-        fn filetime_to_systemtime_unix_and_windows_epoch() {
+        fn filetime_unix_and_windows_epoch() {
             // Test with the Unix Epoch (January 1, 1970 00:00:00 UTC)
-            let unix_epoch_filetime: i64 = 116_444_736_000_000_000;
-            let unix_epoch_systemtime = filetime_to_systemtime(unix_epoch_filetime).unwrap();
+            let unix_epoch_filetime: u64 = 116_444_736_000_000_000;
+            let unix_epoch_systemtime =
+                Filetime::new(unix_epoch_filetime).to_system_time().unwrap();
             assert_eq!(unix_epoch_systemtime, UNIX_EPOCH);
 
             // Test with a date before Unix Epoch (Windows epoch: 1601-01-01 00:00:00 UTC)
-            let windows_epoch_filetime: i64 = 0;
-            let windows_epoch_systemtime = filetime_to_systemtime(windows_epoch_filetime).unwrap();
+            let windows_epoch_systemtime = Filetime::new(0).to_system_time().unwrap();
             let secs_between_epochs = 116_444_736_000_000_000 / 10_000_000;
             let expected = UNIX_EPOCH - Duration::from_secs(secs_between_epochs);
             assert_eq!(windows_epoch_systemtime, expected);
         }
 
         #[test]
-        fn filetime_to_systemtime_round_trip_via_win32() -> windows::core::Result<()> {
+        fn filetime_round_trip_via_win32() -> windows::core::Result<()> {
             // Use SystemTimeToFileTime to get a Win32-blessed FILETIME, then
             // convert to SystemTime and back, asserting nanosecond accuracy.
             let st = WinSystemTime {
@@ -163,14 +180,14 @@ mod tests {
             };
             let mut ft = FILETIME::default();
             unsafe { SystemTimeToFileTime(&st, &mut ft)? };
-            let filetime_i64 = ((ft.dwHighDateTime as i64) << 32) | (ft.dwLowDateTime as i64);
-            let converted = filetime_to_systemtime(filetime_i64).unwrap();
+            let filetime = ((ft.dwHighDateTime as u64) << 32) | (ft.dwLowDateTime as u64);
+            let converted = Filetime::new(filetime).to_system_time().unwrap();
 
             // Reconstruct: SystemTime -> FILETIME via nanos and compare.
             let dur = converted.duration_since(UNIX_EPOCH).unwrap();
             let intervals = dur.as_nanos() / 100;
             let unix_epoch_filetime: u128 = 116_444_736_000_000_000;
-            assert_eq!(filetime_i64 as u128, intervals + unix_epoch_filetime);
+            assert_eq!(filetime as u128, intervals + unix_epoch_filetime);
             Ok(())
         }
     }
@@ -182,41 +199,27 @@ mod tests {
         #[test]
         fn test_large_filetime_values() {
             // Test with a reasonable large FILETIME value (not MAX to avoid overflow)
-            let large_filetime = 132_000_000_000_000_000; // Year ~2020
-            let result = filetime_to_systemtime(large_filetime).unwrap();
+            let large_filetime = 132_000_000_000_000_000u64; // Year ~2020
+            let result = Filetime::new(large_filetime).to_system_time().unwrap();
 
             // Should not panic and should produce a valid SystemTime
             assert!(result > UNIX_EPOCH);
         }
 
         #[test]
-        fn test_negative_filetime_values() {
-            // Test with negative FILETIME (should return error)
-            let negative_filetime = -10_000_000; // 1 second before Windows epoch
-            let result = filetime_to_systemtime(negative_filetime);
-
-            assert!(result.is_err());
-            if let Err(UsnError::Io(e)) = result {
-                assert!(e.to_string().contains("FILETIME cannot be negative"));
-            } else {
-                panic!("Expected Io error with negative FILETIME message");
-            }
-        }
-
-        #[test]
         fn test_nanosecond_precision() {
             // Test that nanosecond precision is handled correctly
-            let base_filetime = 116_444_736_000_000_000; // Unix epoch
+            let base_filetime = 116_444_736_000_000_000u64; // Unix epoch
 
             // Add exactly 1 second (10,000,000 * 100-nanosecond intervals)
             let one_second_later = base_filetime + 10_000_000;
-            let result = filetime_to_systemtime(one_second_later).unwrap();
+            let result = Filetime::new(one_second_later).to_system_time().unwrap();
             let expected = UNIX_EPOCH + Duration::from_secs(1);
             assert_eq!(result, expected);
 
             // Add exactly 1 millisecond (10,000 * 100-nanosecond intervals)
             let one_ms_later = base_filetime + 10_000;
-            let result_ms = filetime_to_systemtime(one_ms_later).unwrap();
+            let result_ms = Filetime::new(one_ms_later).to_system_time().unwrap();
             let expected_ms = UNIX_EPOCH + Duration::from_millis(1);
             assert_eq!(result_ms, expected_ms);
         }
@@ -235,10 +238,10 @@ mod tests {
                 132_103_584_000_000_000, // 2020-01-01
             ];
 
-            let windows_epoch_systemtime = filetime_to_systemtime(0).unwrap();
+            let windows_epoch_systemtime = Filetime::new(0).to_system_time().unwrap();
 
             for filetime in test_values {
-                let system_time = filetime_to_systemtime(filetime as i64).unwrap();
+                let system_time = Filetime::new(filetime).to_system_time().unwrap();
 
                 // Convert back to approximate FILETIME for comparison
                 let duration_since_windows_epoch = system_time
@@ -308,6 +311,24 @@ mod tests {
             assert_eq!(round_trip_win32.dwLowDateTime, win32.dwLowDateTime);
             assert_eq!(round_trip_win32.dwHighDateTime, win32.dwHighDateTime);
         }
+
+        #[test]
+        fn from_system_time_round_trips_unix_epoch() {
+            let filetime = Filetime::from_system_time(UNIX_EPOCH).expect("unix epoch");
+            assert_eq!(filetime.raw(), WINDOWS_TO_UNIX_OFFSET_100NS);
+            let system_time: SystemTime = filetime.try_into().expect("system time");
+            assert_eq!(system_time, UNIX_EPOCH);
+        }
+
+        #[test]
+        fn try_from_system_time_preserves_subsecond_ticks() {
+            let st = UNIX_EPOCH + Duration::new(1, 123_456_700);
+            let filetime = Filetime::try_from(st).expect("system time");
+            assert_eq!(
+                filetime.raw(),
+                WINDOWS_TO_UNIX_OFFSET_100NS + 10_000_000 + 1_234_567
+            );
+        }
     }
 
     // Integration tests with actual Windows API
@@ -334,13 +355,13 @@ mod tests {
                 SystemTimeToFileTime(&st, &mut ft)?;
             }
 
-            let filetime_i64 = ((ft.dwHighDateTime as i64) << 32) | (ft.dwLowDateTime as i64);
-            let converted = filetime_to_systemtime(filetime_i64).unwrap();
+            let filetime = ((ft.dwHighDateTime as u64) << 32) | (ft.dwLowDateTime as u64);
+            let converted = Filetime::new(filetime).to_system_time().unwrap();
 
             let dur = converted.duration_since(UNIX_EPOCH).unwrap();
             let intervals = dur.as_nanos() / 100;
             let unix_epoch_filetime: u128 = 116_444_736_000_000_000;
-            assert_eq!(filetime_i64 as u128, intervals + unix_epoch_filetime);
+            assert_eq!(filetime as u128, intervals + unix_epoch_filetime);
 
             Ok(())
         }

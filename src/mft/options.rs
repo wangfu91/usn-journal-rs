@@ -1,26 +1,43 @@
 //! Options for iterating over the Master File Table.
 
-use crate::{Usn, journal::DEFAULT_BUFFER_BYTES};
+use std::num::NonZeroUsize;
+
+use crate::{Usn, journal::DEFAULT_BUFFER_BYTES_NONZERO};
+
+/// Maximum `USN_RECORD` major version the kernel is allowed to return.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum UsnRecordVersion {
+    /// Force `USN_RECORD_V2` (standard 64-bit NTFS file IDs).
+    V2,
+    /// Permit `USN_RECORD_V3` (128-bit extended IDs, used on ReFS and some NTFS builds).
+    V3,
+}
+
+impl UsnRecordVersion {
+    /// Return the raw major-version value expected by the Windows API.
+    pub(crate) const fn as_u16(self) -> u16 {
+        match self {
+            Self::V2 => 2,
+            Self::V3 => 3,
+        }
+    }
+}
 
 /// Options for enumerating the Master File Table (MFT).
 ///
 /// Allows customization of the USN range and buffer size for enumeration.
 ///
-/// Use [`MftIterOptions::builder`] for the fluent builder API, or construct
-/// directly via struct-literal syntax. [`Default`] is also implemented.
+/// Use [`MftIterOptions::builder`] for the fluent builder API.
 #[derive(Debug, Clone)]
 pub struct MftIterOptions {
-    pub low_usn: Usn,
-    pub high_usn: Usn,
-    pub buffer_size: usize,
-    /// Maximum `USN_RECORD` major version the kernel is allowed to return.
-    ///
-    /// `2` forces `USN_RECORD_V2` (standard 64-bit NTFS file IDs).
-    /// `3` permits `USN_RECORD_V3` (128-bit extended IDs, used on ReFS and
-    /// on Windows 11 builds that prefer V3 even for NTFS).
-    ///
-    /// Defaults to `3` (accept whatever the kernel prefers).
-    pub max_usn_record_version: u16,
+    /// Inclusive lower USN bound for returned records.
+    pub(crate) low_usn: Usn,
+    /// Inclusive upper USN bound for returned records.
+    pub(crate) high_usn: Usn,
+    /// Size of the kernel output buffer.
+    pub(crate) buffer_bytes: NonZeroUsize,
+    /// Highest `USN_RECORD` major version the kernel may return.
+    pub(crate) max_usn_record_version: UsnRecordVersion,
 }
 
 impl Default for MftIterOptions {
@@ -28,8 +45,8 @@ impl Default for MftIterOptions {
         MftIterOptions {
             low_usn: Usn::new(0),
             high_usn: Usn::new(i64::MAX),
-            buffer_size: DEFAULT_BUFFER_BYTES,
-            max_usn_record_version: 3,
+            buffer_bytes: DEFAULT_BUFFER_BYTES_NONZERO,
+            max_usn_record_version: UsnRecordVersion::V3,
         }
     }
 }
@@ -45,6 +62,7 @@ impl MftIterOptions {
 #[derive(Debug, Default, Clone)]
 #[must_use]
 pub struct MftIterOptionsBuilder {
+    /// Mutable options value being configured by the builder.
     inner: MftIterOptions,
 }
 
@@ -62,16 +80,16 @@ impl MftIterOptionsBuilder {
     }
 
     /// Set the in-memory buffer size, in bytes.
-    pub fn buffer_size(mut self, v: usize) -> Self {
-        self.inner.buffer_size = v;
+    pub fn buffer_bytes(mut self, v: NonZeroUsize) -> Self {
+        self.inner.buffer_bytes = v;
         self
     }
 
     /// Set the maximum `USN_RECORD` major version the kernel may return.
     ///
-    /// Pass `2` to force `USN_RECORD_V2` (standard 64-bit NTFS file IDs).
-    /// Pass `3` (the default) to allow `USN_RECORD_V3` (128-bit extended IDs).
-    pub fn max_usn_record_version(mut self, v: u16) -> Self {
+    /// Pass [`UsnRecordVersion::V2`] to force standard 64-bit NTFS file IDs.
+    /// Pass [`UsnRecordVersion::V3`] (the default) to allow extended IDs.
+    pub fn max_usn_record_version(mut self, v: UsnRecordVersion) -> Self {
         self.inner.max_usn_record_version = v;
         self
     }

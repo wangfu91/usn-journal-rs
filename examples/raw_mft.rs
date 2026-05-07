@@ -10,10 +10,9 @@
 //! ```
 
 use std::env;
-use std::num::NonZeroUsize;
-
 use usn_journal_rs::{errors::UsnError, path::PathResolver, raw_mft::RawMft, volume::Volume};
 
+/// Run the example and print any top-level error.
 fn main() {
     if let Err(e) = run() {
         eprintln!("Error: {e}");
@@ -21,6 +20,7 @@ fn main() {
     }
 }
 
+/// Open the raw `$MFT`, iterate records, and print a compact metadata summary.
 fn run() -> Result<(), UsnError> {
     let drive_letter = env::args()
         .nth(1)
@@ -30,9 +30,7 @@ fn run() -> Result<(), UsnError> {
 
     let volume = Volume::from_drive_letter(drive_letter)?;
     let mft = RawMft::new(&volume)?;
-    let mut resolver = PathResolver::builder(&volume)
-        .with_lru_cache(NonZeroUsize::new(4096).expect("cache capacity must be non-zero"))
-        .build();
+    let mut resolver = PathResolver::new(&volume);
 
     println!(
         "$MFT: {} records, cluster_size={}, file_record_size={}",

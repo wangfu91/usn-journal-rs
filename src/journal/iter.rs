@@ -15,10 +15,15 @@ use crate::{
 use super::entry::UsnEntry;
 
 pub(super) struct UsnJournalIterConfig {
+    /// Starting USN for the next `FSCTL_READ_USN_JOURNAL` call.
     pub(super) next_start_usn: i64,
+    /// Raw reason-mask filter passed to the kernel.
     pub(super) reason_mask: u32,
+    /// Whether records should only be returned once the handle closes.
     pub(super) return_only_on_close: u32,
+    /// Kernel wait timeout in 100-nanosecond units.
     pub(super) timeout: u64,
+    /// Number of bytes the kernel should wait for before returning.
     pub(super) bytes_to_wait_for: u64,
 }
 
@@ -26,19 +31,30 @@ pub(super) struct UsnJournalIterConfig {
 ///
 /// This iterator yields `Result<UsnEntry, UsnError>` items.
 pub struct UsnJournalIter {
+    /// Open volume handle used for journal reads.
     volume_handle: HANDLE,
+    /// Identifier of the journal being read.
     journal_id: u64,
+    /// Scratch buffer reused across `DeviceIoControl` calls.
     buffer: Vec<u8>,
+    /// Number of valid bytes currently stored in `buffer`.
     bytes_read: u32,
+    /// Current scan offset within `buffer`.
     offset: u32,
+    /// USN to request on the next kernel call.
     next_start_usn: i64,
+    /// Raw reason-mask filter applied by the kernel.
     reason_mask: u32,
+    /// Whether only close events should be returned.
     return_only_on_close: u32,
+    /// Kernel wait timeout in 100-nanosecond units.
     timeout: u64,
+    /// Number of bytes to wait for before the kernel returns.
     bytes_to_wait_for: u64,
 }
 
 impl UsnJournalIter {
+    /// Construct an iterator around an open volume handle and journal configuration.
     pub(super) fn new(
         volume_handle: HANDLE,
         journal_id: u64,

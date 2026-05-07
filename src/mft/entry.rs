@@ -5,13 +5,13 @@ use std::{ffi::OsString, os::windows::ffi::OsStringExt};
 
 use crate::file_attributes::FileAttributeView;
 use crate::usn_record::UsnRecordView;
-use crate::{Fid, Usn};
+use crate::{Fid, FileAttributes, Usn};
 
 /// Owned representation of a single entry returned by `FSCTL_ENUM_USN_DATA`.
 ///
 /// On NTFS the file IDs are standard 64-bit references. On ReFS, when the
 /// system returns `USN_RECORD_V3`, `fid` / `parent_fid` hold 128-bit IDs.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct MftEntry {
     /// Parsed Update Sequence Number.
     pub usn: Usn,
@@ -21,8 +21,8 @@ pub struct MftEntry {
     pub parent_fid: Fid,
     /// Parsed file name.
     pub file_name: OsString,
-    /// Raw file-attribute bitmask.
-    pub file_attributes: u32,
+    /// File-attribute flags.
+    pub file_attributes: FileAttributes,
 }
 
 impl MftEntry {
@@ -35,7 +35,7 @@ impl MftEntry {
             fid: record.fid(),
             parent_fid: record.parent_fid(),
             file_name,
-            file_attributes: record.file_attributes(),
+            file_attributes: FileAttributes::from_bits_retain(record.file_attributes()),
         }
     }
 
@@ -52,19 +52,10 @@ impl MftEntry {
     pub fn is_hidden(&self) -> bool {
         <Self as FileAttributeView>::has_hidden_attribute(self)
     }
-
-    /// Strongly-typed view of [`MftEntry::file_attributes`].
-    ///
-    /// Unknown bits are preserved.
-    #[must_use]
-    #[inline]
-    pub fn file_attributes_flags(&self) -> crate::FileAttributes {
-        <Self as FileAttributeView>::file_attribute_flags(self)
-    }
 }
 
 impl FileAttributeView for MftEntry {
-    fn raw_file_attributes(&self) -> u32 {
+    fn file_attributes(&self) -> FileAttributes {
         self.file_attributes
     }
 }
@@ -78,7 +69,7 @@ impl fmt::Display for MftEntry {
             "MFT fid={} parent={} attrs=0x{:x} \"{}\"",
             self.fid,
             self.parent_fid,
-            self.file_attributes,
+            self.file_attributes.bits(),
             self.file_name.to_string_lossy(),
         )
     }

@@ -18,7 +18,9 @@ use std::{
 /// UTF-16 units so we don't pay an `OsString` allocation per entry.
 #[derive(Debug, Clone)]
 struct DirEntry {
+    /// Full parent file reference for this path component.
     parent: Fid,
+    /// UTF-16 leaf name stored without allocating an `OsString`.
     name: Box<[u16]>,
 }
 
@@ -29,6 +31,7 @@ struct DirEntry {
 /// allocations until the final assembly.
 #[derive(Debug, Default, Clone)]
 pub struct InMemoryDirTree {
+    /// Map from 48-bit NTFS record number to its parent/name pair.
     entries: FxHashMap<u64, DirEntry>,
 }
 
@@ -36,10 +39,14 @@ impl InMemoryDirTree {
     /// Build the tree from a raw `$MFT` reader. Iterates every record
     /// once. Skips entries marked unused in the `$MFT $BITMAP`.
     pub fn from_raw_mft(raw_mft: &RawMft<'_>) -> crate::UsnResult<Self> {
-        let mut entries = FxHashMap::with_capacity_and_hasher(
-            raw_mft.record_count() as usize,
-            Default::default(),
-        );
+        let record_count = raw_mft.record_count() as usize;
+        let estimated_used_records = if record_count < 2_048 {
+            record_count
+        } else {
+            record_count / 2
+        };
+        let mut entries =
+            FxHashMap::with_capacity_and_hasher(estimated_used_records, Default::default());
         for r in raw_mft.try_iter()? {
             let entry = match r {
                 Ok(e) => e,
@@ -64,6 +71,7 @@ impl InMemoryDirTree {
                 },
             );
         }
+        entries.shrink_to_fit();
         Ok(InMemoryDirTree { entries })
     }
 
@@ -82,8 +90,9 @@ impl InMemoryDirTree {
     }
 
     /// Insert a directory entry (testing / advanced use).
+    #[cfg(test)]
     #[doc(hidden)]
-    pub fn insert(&mut self, fid: u64, parent: u64, name: &[u16]) {
+    pub(crate) fn insert(&mut self, fid: u64, parent: u64, name: &[u16]) {
         self.entries.insert(
             Fid::new(fid)
                 .record_number()
@@ -109,6 +118,7 @@ impl InMemoryDirTree {
         self.resolve_with_optional_drive(fid, Some(drive))
     }
 
+    /// Resolve a path and optionally prepend a drive-letter prefix.
     pub(super) fn resolve_with_optional_drive(
         &self,
         fid: Fid,

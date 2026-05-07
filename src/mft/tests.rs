@@ -3,12 +3,12 @@ use super::*;
 use injectorpp::interface::injector::*;
 use std::mem::offset_of;
 use windows::Win32::{
-    Foundation::{ERROR_INVALID_HANDLE, HANDLE},
+    Foundation::ERROR_INVALID_HANDLE,
     Storage::FileSystem::FILE_ID_128,
     System::Ioctl::{USN_RECORD_V2, USN_RECORD_V3},
 };
 
-use crate::{Usn, errors::UsnError, usn_record, volume::Volume};
+use crate::{Usn, errors::UsnError, usn_record};
 
 // Test data generators
 #[allow(clippy::too_many_arguments)]
@@ -138,7 +138,7 @@ mod entry {
         assert_eq!(entry.fid, Fid::new(12345));
         assert_eq!(entry.parent_fid, Fid::new(67890));
         assert_eq!(entry.file_name.to_string_lossy(), "test.txt");
-        assert_eq!(entry.file_attributes, 0x20);
+        assert_eq!(entry.file_attributes.bits(), 0x20);
     }
 
     #[test]
@@ -230,7 +230,7 @@ mod entry {
         assert_eq!(entry.fid, Fid::from_u128(file_id));
         assert_eq!(entry.parent_fid, Fid::from_u128(parent_id));
         assert_eq!(entry.file_name.to_string_lossy(), "refs.txt");
-        assert_eq!(entry.file_attributes, 0x20);
+        assert_eq!(entry.file_attributes.bits(), 0x20);
     }
 }
 
@@ -265,25 +265,15 @@ mod mocked {
     }
 
     #[test]
-    fn iter_with_invalid_buffer_size() {
-        let volume = Volume::mock(
-            HANDLE(std::ptr::null_mut()),
-            crate::volume::VolumeSource::DriveLetter('T'),
-        );
-        let mft = Mft::new(&volume);
+    fn options_builder_uses_typed_record_version() {
+        let options = MftIterOptions::builder()
+            .low_usn(Usn::new(10))
+            .high_usn(Usn::new(20))
+            .max_usn_record_version(UsnRecordVersion::V2)
+            .build();
 
-        let result = mft.try_iter_with_options(MftIterOptions {
-            low_usn: Usn::new(0),
-            high_usn: Usn::new(i64::MAX),
-            buffer_size: 0,
-            max_usn_record_version: 3,
-        });
-
-        assert!(matches!(
-            result,
-            Err(UsnError::InvalidOptions(
-                "buffer_size must be greater than 0"
-            ))
-        ));
+        assert_eq!(options.low_usn, Usn::new(10));
+        assert_eq!(options.high_usn, Usn::new(20));
+        assert_eq!(options.max_usn_record_version, UsnRecordVersion::V2);
     }
 }

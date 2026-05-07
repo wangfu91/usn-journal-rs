@@ -11,13 +11,13 @@
 //! not elevated.
 
 use std::env;
-use std::num::NonZeroUsize;
 
 use divan::Bencher;
 use usn_journal_rs::{
     errors::UsnError, mft::Mft, path::PathResolver, raw_mft::RawMft, volume::Volume,
 };
 
+/// Run the Divan benchmark harness.
 fn main() {
     divan::main();
 }
@@ -26,6 +26,7 @@ fn main() {
 /// even on multi-million-record system drives.
 const BENCH_RECORD_LIMIT: usize = 200_000;
 
+/// Read the drive letter to benchmark from `USN_TEST_DRIVE`.
 fn pick_drive() -> char {
     env::var("USN_TEST_DRIVE")
         .ok()
@@ -34,6 +35,7 @@ fn pick_drive() -> char {
         .unwrap_or('C')
 }
 
+/// Open the benchmark target volume or skip when the environment is unsuitable.
 fn open_volume() -> Option<Volume> {
     match Volume::from_drive_letter(pick_drive()) {
         Ok(v) => Some(v),
@@ -48,6 +50,7 @@ fn open_volume() -> Option<Volume> {
     }
 }
 
+/// Benchmark raw `$MFT` iteration.
 #[divan::bench]
 fn raw_mft_iter(bencher: Bencher) {
     let Some(volume) = open_volume() else { return };
@@ -71,6 +74,7 @@ fn raw_mft_iter(bencher: Bencher) {
     });
 }
 
+/// Benchmark `FSCTL_ENUM_USN_DATA`-based MFT iteration.
 #[divan::bench]
 fn usn_mft_iter(bencher: Bencher) {
     let Some(volume) = open_volume() else { return };
@@ -88,6 +92,7 @@ fn usn_mft_iter(bencher: Bencher) {
     });
 }
 
+/// Benchmark raw `$MFT` iteration with uncached path resolution.
 #[divan::bench]
 fn raw_mft_iter_with_path_resolver(bencher: Bencher) {
     let Some(volume) = open_volume() else { return };
@@ -99,7 +104,7 @@ fn raw_mft_iter_with_path_resolver(bencher: Bencher) {
         }
     };
     bencher.bench_local(|| {
-        let mut resolver = PathResolver::builder(&volume).build();
+        let mut resolver = PathResolver::new(&volume);
         let mut count = 0u64;
         if let Ok(it) = mft.try_iter() {
             for r in it.flatten().take(BENCH_RECORD_LIMIT) {
@@ -111,6 +116,7 @@ fn raw_mft_iter_with_path_resolver(bencher: Bencher) {
     });
 }
 
+/// Benchmark raw `$MFT` iteration with the default cached resolver.
 #[divan::bench]
 fn raw_mft_iter_with_cached_resolver(bencher: Bencher) {
     let Some(volume) = open_volume() else { return };
@@ -122,9 +128,7 @@ fn raw_mft_iter_with_cached_resolver(bencher: Bencher) {
         }
     };
     bencher.bench_local(|| {
-        let mut resolver = PathResolver::builder(&volume)
-            .with_lru_cache(NonZeroUsize::new(4096).expect("cache capacity must be non-zero"))
-            .build();
+        let mut resolver = PathResolver::new(&volume);
         let mut count = 0u64;
         if let Ok(it) = mft.try_iter() {
             for r in it.flatten().take(BENCH_RECORD_LIMIT) {
@@ -150,10 +154,12 @@ fn raw_mft_buffer_size(bencher: Bencher, buffer_bytes: usize) {
         }
     };
     bencher.bench_local(|| {
-        let opts = usn_journal_rs::raw_mft::RawMftIterOptions {
-            buffer_bytes: std::num::NonZeroUsize::new(buffer_bytes).unwrap(),
-            ..Default::default()
+        let Some(buffer_bytes) = std::num::NonZeroUsize::new(buffer_bytes) else {
+            return divan::black_box(0u64);
         };
+        let opts = usn_journal_rs::raw_mft::RawMftIterOptions::builder()
+            .buffer_bytes(buffer_bytes)
+            .build();
         let mut count = 0u64;
         if let Ok(it) = mft.try_iter_with_options(opts) {
             for r in it.take(BENCH_RECORD_LIMIT) {

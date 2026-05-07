@@ -42,7 +42,7 @@ fn mft_entry_path_resolvable_trait() {
         fid: Fid::new(0x123456),
         parent_fid: Fid::new(0x654321),
         file_name: OsString::from("test.txt"),
-        file_attributes: 0,
+        file_attributes: crate::FileAttributes::empty(),
     };
 
     assert_eq!(entry.fid(), Fid::new(0x123456));
@@ -169,9 +169,7 @@ fn in_memory_tree_fid_with_sequence_bits_is_masked() {
 #[test]
 fn resolve_path_with_cache_hit() {
     let volume = create_mock_volume();
-    let mut resolver = PathResolver::builder(&volume)
-        .with_lru_cache(NonZeroUsize::new(4096).unwrap())
-        .build();
+    let mut resolver = PathResolver::new(&volume).with_lru_cache(NonZeroUsize::new(4096).unwrap());
 
     let cached_path = arc_path("C:\\Documents\\Folder");
     let cached_name = OsString::from("test.txt");
@@ -198,9 +196,7 @@ fn resolve_path_with_cache_hit() {
 #[test]
 fn resolve_path_with_cache_miss_parent_hit() {
     let volume = create_mock_volume();
-    let mut resolver = PathResolver::builder(&volume)
-        .with_lru_cache(NonZeroUsize::new(4096).unwrap())
-        .build();
+    let mut resolver = PathResolver::new(&volume).with_lru_cache(NonZeroUsize::new(4096).unwrap());
 
     let cached_parent_path = arc_path("C:\\Documents");
     let cached_parent_name = OsString::from("Documents");
@@ -224,9 +220,7 @@ fn resolve_path_with_cache_miss_parent_hit() {
 #[test]
 fn resolve_path_with_cache_directory_caching() {
     let volume = create_mock_volume();
-    let mut resolver = PathResolver::builder(&volume)
-        .with_lru_cache(NonZeroUsize::new(4096).unwrap())
-        .build();
+    let mut resolver = PathResolver::new(&volume).with_lru_cache(NonZeroUsize::new(4096).unwrap());
 
     let cached_parent_path = arc_path("C:\\Documents");
     let cached_parent_name = OsString::from("Documents");
@@ -257,9 +251,7 @@ fn resolve_path_with_cache_directory_caching() {
 #[test]
 fn resolve_path_with_cache_name_mismatch() {
     let volume = create_mock_volume();
-    let mut resolver = PathResolver::builder(&volume)
-        .with_lru_cache(NonZeroUsize::new(4096).unwrap())
-        .build();
+    let mut resolver = PathResolver::new(&volume).with_lru_cache(NonZeroUsize::new(4096).unwrap());
 
     let cached_path = arc_path("C:\\Documents\\OldName");
     let cached_old_name = OsString::from("OldName");
@@ -295,7 +287,7 @@ fn resolve_path_with_cache_name_mismatch() {
 #[test]
 fn resolve_path_failure() {
     let volume = create_mock_volume();
-    let mut resolver = PathResolver::builder(&volume).build();
+    let mut resolver = PathResolver::new(&volume);
 
     let entry = MockEntry {
         fid: Fid::new(0x123456),
@@ -309,9 +301,17 @@ fn resolve_path_failure() {
 }
 
 #[test]
-fn builder_default_has_no_cache_and_no_tree() {
+fn resolver_default_has_no_cache_and_no_tree() {
     let volume = create_mock_volume();
-    let resolver = PathResolver::builder(&volume).build();
+    let resolver = PathResolver::new(&volume);
+    assert!(resolver.dir_fid_path_cache.is_none());
+    assert!(resolver.in_memory_tree.is_none());
+}
+
+#[test]
+fn resolver_without_lru_cache_disables_cache() {
+    let volume = create_mock_volume();
+    let resolver = PathResolver::new(&volume);
     assert!(resolver.dir_fid_path_cache.is_none());
     assert!(resolver.in_memory_tree.is_none());
 }
@@ -320,7 +320,7 @@ fn builder_default_has_no_cache_and_no_tree() {
 fn builder_with_lru_cache_sets_cache() {
     let volume = create_mock_volume();
     let cap = NonZeroUsize::new(64).unwrap();
-    let resolver = PathResolver::builder(&volume).with_lru_cache(cap).build();
+    let resolver = PathResolver::new(&volume).with_lru_cache(cap);
     assert!(resolver.dir_fid_path_cache.is_some());
     assert!(resolver.in_memory_tree.is_none());
 }
@@ -329,7 +329,7 @@ fn builder_with_lru_cache_sets_cache() {
 fn builder_lru_cache_respects_capacity() {
     let volume = create_mock_volume();
     let cap = NonZeroUsize::new(8).unwrap();
-    let resolver = PathResolver::builder(&volume).with_lru_cache(cap).build();
+    let resolver = PathResolver::new(&volume).with_lru_cache(cap);
     let cache = resolver.dir_fid_path_cache.as_ref().unwrap();
     assert_eq!(cache.cap(), NonZeroUsize::new(8).unwrap());
 }
@@ -337,10 +337,9 @@ fn builder_lru_cache_respects_capacity() {
 #[test]
 fn builder_with_lru_cache_twice_keeps_last() {
     let volume = create_mock_volume();
-    let resolver = PathResolver::builder(&volume)
+    let resolver = PathResolver::new(&volume)
         .with_lru_cache(NonZeroUsize::new(32).unwrap())
-        .with_lru_cache(NonZeroUsize::new(128).unwrap())
-        .build();
+        .with_lru_cache(NonZeroUsize::new(128).unwrap());
     let cache = resolver.dir_fid_path_cache.as_ref().unwrap();
     assert_eq!(cache.cap(), NonZeroUsize::new(128).unwrap());
 }

@@ -27,8 +27,9 @@ journal IOCTLs are privilege-gated by the OS.
   counts, alternate data streams, and sparse/compressed/encrypted flags
 - Resolve file IDs to full paths with three strategies: syscall-only, LRU-cached,
   or an in-memory directory tree for O(1) resolution on large scans
-- Lightweight `Filetime(u64)` newtype — `chrono` is **not** a default dependency
-- Strong `Usn(i64)` and `Fid` typed IDs throughout (`Fid` supports both 64-bit NTFS and 128-bit ReFS file IDs)
+- Lightweight `Filetime(u64)` newtype with standard-library conversions
+- Strong `Usn`, `Fid`, `UsnReason`, and `FileAttributes` types throughout (`Fid` supports both 64-bit NTFS and 128-bit ReFS file IDs)
+- `usn_journal_rs::prelude` for the common high-level types and bitflags
 
 ## Quick start
 
@@ -45,7 +46,8 @@ Iterate the USN change journal on drive `C:`:
 use usn_journal_rs::errors::UsnError;
 use usn_journal_rs::journal::{JournalIterOptions, UsnEntry, UsnJournal, USN_REASON_MASK_ALL};
 use usn_journal_rs::volume::Volume;
-use usn_journal_rs::Usn;
+use usn_journal_rs::{Usn, UsnReason};
+use std::num::NonZeroUsize;
 
 fn main() -> Result<(), UsnError> {
     let volume = Volume::from_drive_letter('C')?;
@@ -53,9 +55,9 @@ fn main() -> Result<(), UsnError> {
 
     let opts = JournalIterOptions::builder()
         .start_usn(Usn::new(0))
-        .reason_mask(USN_REASON_MASK_ALL)
+        .reason_mask(UsnReason::from_bits_retain(USN_REASON_MASK_ALL))
         .only_on_close(false)
-        .buffer_size(64 * 1024)
+        .buffer_bytes(NonZeroUsize::new(64 * 1024).unwrap())
         .build();
 
     for result in journal.try_iter_with_options(opts)? {

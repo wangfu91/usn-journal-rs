@@ -15,6 +15,14 @@ targets = [
     "i686-pc-windows-msvc",
 ]
 
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+
 [dependencies]
 bitflags = "2"
 log = "0.4"
@@ -41,6 +49,10 @@ divan = "0.1"
 
 [[bench]]
 name = "raw_mft"
+harness = false
+
+[[bench]]
+name = "raw_mft_ingest"
 harness = false
 
 [[bench]]

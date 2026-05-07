@@ -14,7 +14,7 @@ use std::collections::HashSet;
 
 use usn_journal_rs::{
     errors::UsnError,
-    mft::{Mft, MftIterOptions},
+    mft::{Mft, MftIterOptions, UsnRecordVersion},
     path::PathResolver,
     raw_mft::RawMft,
     volume::Volume,
@@ -64,7 +64,7 @@ fn raw_mft_and_mft_api_agree_on_sampled_entries() {
     const MIN_COMPARED: usize = 200;
     const PATH_TARGET: usize = 2_000;
 
-    let mut mft_path_resolver = PathResolver::builder(&volume).build();
+    let mut mft_path_resolver = PathResolver::new(&volume);
     let mut mft_paths = HashSet::with_capacity(PATH_TARGET);
 
     let mut samples = Vec::with_capacity(SAMPLE_LIMIT);
@@ -194,7 +194,7 @@ fn raw_mft_and_mft_api_agree_on_sampled_entries() {
 
     // Fallback for environments that only surface extended MFT IDs.
     let mut raw_paths = HashSet::with_capacity(PATH_TARGET);
-    let mut raw_path_resolver = PathResolver::builder(&volume).build();
+    let mut raw_path_resolver = PathResolver::new(&volume);
     for raw_entry in raw_mft
         .try_iter()
         .expect("RawMft::try_iter failed")
@@ -271,10 +271,9 @@ fn raw_mft_and_mft_api_record_parity_standard_ids() {
 
     // Pin MaxMajorVersion=2: forces USN_RECORD_V2 (64-bit standard IDs) even
     // on Windows 11 builds that would otherwise return USN_RECORD_V3.
-    let options = MftIterOptions {
-        max_usn_record_version: 2,
-        ..MftIterOptions::default()
-    };
+    let options = MftIterOptions::builder()
+        .max_usn_record_version(UsnRecordVersion::V2)
+        .build();
 
     let mft = Mft::new(&volume);
     let iter = match mft.try_iter_with_options(options) {

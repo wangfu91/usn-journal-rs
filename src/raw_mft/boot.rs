@@ -14,10 +14,15 @@ pub const NTFS_OEM_ID: &[u8; 8] = b"NTFS    ";
 /// Parsed NTFS boot sector geometry.
 #[derive(Debug, Clone)]
 pub(crate) struct BootSector {
+    /// Physical sector size reported by the volume.
     pub bytes_per_sector: u32,
+    /// Logical cluster number of the `$MFT`.
     pub mft_lcn: u64,
+    /// Size of a single FILE record in bytes.
     pub file_record_size: u64,
+    /// Size of a cluster in bytes.
     pub cluster_size: u64,
+    /// Byte offset of the `$MFT` from the start of the volume.
     pub mft_byte_offset: u64,
 }
 
@@ -43,7 +48,9 @@ impl BootSector {
 
         let bytes_per_sector = u16::from_le_bytes([buf[11], buf[12]]) as u32;
         let sectors_per_cluster_raw = buf[13] as i8;
-        let mft_lcn = u64::from_le_bytes(buf[48..56].try_into().unwrap());
+        let mut mft_lcn_bytes = [0u8; 8];
+        mft_lcn_bytes.copy_from_slice(&buf[48..56]);
+        let mft_lcn = u64::from_le_bytes(mft_lcn_bytes);
         let file_record_size_info = buf[64] as i8;
 
         if bytes_per_sector == 0 || !bytes_per_sector.is_power_of_two() {

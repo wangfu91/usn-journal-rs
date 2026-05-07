@@ -6,7 +6,7 @@ use std::os::windows::ffi::OsStringExt;
 use log::warn;
 
 use crate::{
-    Fid, Filetime,
+    Fid, FileAttributes, Filetime,
     file_attributes::FileAttributeView,
     path::PathResolvableEntry,
     raw_mft::{
@@ -18,6 +18,23 @@ use crate::{
         record::FileRecord,
     },
 };
+
+#[derive(Clone, Copy)]
+pub(crate) struct EntryBuildOptions {
+    pub(crate) collect_alternate_data_streams: bool,
+    pub(crate) collect_data_run_summary: bool,
+    pub(crate) collect_dos_file_name_links: bool,
+}
+
+impl EntryBuildOptions {
+    pub(crate) const fn full() -> Self {
+        Self {
+            collect_alternate_data_streams: true,
+            collect_data_run_summary: true,
+            collect_dos_file_name_links: true,
+        }
+    }
+}
 
 /// Raw `$ATTRIBUTE_LIST` data captured from a FILE record, used by
 /// `from_record_with_attr_list` so the caller can load extension records
@@ -38,66 +55,104 @@ pub(crate) enum AttributeListInfo {
 
 /// Information about a single named alternate data stream (`$DATA`
 /// attribute with a non-empty attribute name).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct AdsInfo {
+    /// Alternate data stream name.
     pub name: OsString,
+    /// Logical stream size in bytes.
     pub real_size: u64,
+    /// Allocated stream size in bytes.
     pub allocated_size: u64,
+    /// Whether the stream data is resident in the FILE record.
     pub is_resident: bool,
+}
+
+/// One `$FILE_NAME` link carried by an MFT record.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct RawMftLink {
+    /// Parent directory file reference for this link.
+    pub parent_reference: Fid,
+    /// Namespace of this specific `$FILE_NAME` attribute.
+    pub namespace: FileNameNamespace,
+    /// Leaf name carried by this link.
+    pub file_name: OsString,
 }
 
 /// Comprehensive metadata for one MFT record.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct RawMftEntry {
+    /// Record number in the `$MFT`.
     pub record_number: u64,
+    /// Record sequence number.
     pub sequence_number: u16,
+    /// Full file reference for this record.
     pub file_reference: Fid,
+    /// Parent directory file reference from `$FILE_NAME`.
     pub parent_reference: Fid,
+    /// Base-record reference for extension records.
     pub base_record_reference: u64,
+    /// Number of hard links to the file.
     pub hard_link_count: u16,
+    /// Raw FILE-record flags.
     pub flags: u16,
+    /// Whether the record is marked in use.
     pub is_used: bool,
+    /// Whether the record is marked as a directory.
     pub is_directory: bool,
+    /// Whether the file is marked as a reparse point.
     pub is_reparse_point: bool,
+    /// Reparse tag when the file is a reparse point.
     pub reparse_tag: Option<u32>,
+    /// Namespace of the chosen `$FILE_NAME` attribute.
     pub namespace: FileNameNamespace,
 
+    /// Leaf file name.
     pub file_name: OsString,
 
+    /// `$STANDARD_INFORMATION` creation timestamp.
     pub si_created: Filetime,
+    /// `$STANDARD_INFORMATION` last-modified timestamp.
     pub si_modified: Filetime,
+    /// `$STANDARD_INFORMATION` MFT-record-modified timestamp.
     pub si_mft_modified: Filetime,
+    /// `$STANDARD_INFORMATION` last-access timestamp.
     pub si_accessed: Filetime,
-    pub si_file_attributes: u32,
+    /// `$STANDARD_INFORMATION` file-attribute flags.
+    pub si_file_attributes: FileAttributes,
 
+    /// `$FILE_NAME` creation timestamp.
     pub fn_created: Filetime,
+    /// `$FILE_NAME` last-modified timestamp.
     pub fn_modified: Filetime,
+    /// `$FILE_NAME` MFT-record-modified timestamp.
     pub fn_mft_modified: Filetime,
+    /// `$FILE_NAME` last-access timestamp.
     pub fn_accessed: Filetime,
 
+    /// Logical size of the unnamed data stream.
     pub real_size: u64,
+    /// Allocated size of the unnamed data stream.
     pub allocated_size: u64,
+    /// Whether the record had an unnamed `$DATA` attribute in the parsed record set.
+    pub has_unnamed_data: bool,
+    /// Whether the unnamed data stream is resident.
     pub is_resident: bool,
+    /// Whether the unnamed data stream is sparse.
     pub is_sparse: bool,
+    /// Whether the unnamed data stream is compressed.
     pub is_compressed: bool,
+    /// Whether the unnamed data stream is encrypted.
     pub is_encrypted: bool,
+    /// Summary of the unnamed data stream's runs when non-resident.
     pub data_run_summary: Option<DataRunSummary>,
 
-    pub alternate_data_streams: Vec<AdsInfo>,
+    /// Named alternate data streams attached to the record.
+    pub alternate_data_streams: Box<[AdsInfo]>,
+    /// All `$FILE_NAME` links observed on this record and any loaded extension records.
+    pub links: Box<[RawMftLink]>,
 }
 
 impl RawMftEntry {
-    /// Build a `RawMftEntry` from a parsed FILE record.
-    ///
-    /// Any `$ATTRIBUTE_LIST` encountered is silently dropped; use
-    /// [`from_record_with_attr_list`] when you need to load extension
-    /// records to get the best-namespace `$FILE_NAME`.
-    #[allow(dead_code)] // used only in unit tests; non-test code uses from_record_with_attr_list
-    pub(crate) fn from_record(record: &FileRecord<'_>) -> Self {
-        let (entry, _) = Self::from_record_with_attr_list(record);
-        entry
-    }
-
     /// Build a `RawMftEntry` and also return any `$ATTRIBUTE_LIST` data
     /// found in the record.
     ///
@@ -107,8 +162,9 @@ impl RawMftEntry {
     /// the highest-scoring file-name namespace.
     pub(crate) fn from_record_with_attr_list(
         record: &FileRecord<'_>,
+        options: EntryBuildOptions,
     ) -> (Self, Option<AttributeListInfo>) {
-        let mut builder = RawMftEntryBuilder::new(record);
+        let mut builder = RawMftEntryBuilder::new(record, options);
 
         let (attrs_off, used) = record.attrs_range();
         for_each_attribute(record.data, attrs_off, used, |attr| {
@@ -117,27 +173,32 @@ impl RawMftEntry {
 
         builder.build()
     }
-
-    /// Strongly-typed view of [`RawMftEntry::si_file_attributes`].
-    ///
-    /// Unknown bits are preserved.
-    #[must_use]
-    #[inline]
-    pub fn si_file_attributes_flags(&self) -> crate::FileAttributes {
-        <Self as FileAttributeView>::file_attribute_flags(self)
-    }
 }
 
 struct RawMftEntryBuilder {
+    /// Partially built result entry.
     entry: RawMftEntry,
+    /// Alternate streams accumulated while walking attributes.
+    alternate_data_streams: Vec<AdsInfo>,
+    /// `$FILE_NAME` links accumulated while walking attributes.
+    links: Vec<RawMftLink>,
+    /// Score of the best `$FILE_NAME` namespace chosen so far.
     best_namespace_score: i32,
+    /// Whether the unnamed `$DATA` attribute has already been consumed.
     have_unnamed_data: bool,
     /// Captured `$ATTRIBUTE_LIST` data, if any.
     attr_list: Option<AttributeListInfo>,
+    /// Whether to collect alternate data stream names and sizes.
+    collect_alternate_data_streams: bool,
+    /// Whether to compute non-resident data run summaries.
+    collect_data_run_summary: bool,
+    /// Whether to retain DOS 8.3 aliases shadowed by better same-parent names.
+    collect_dos_file_name_links: bool,
 }
 
 impl RawMftEntryBuilder {
-    fn new(record: &FileRecord<'_>) -> Self {
+    /// Start building an entry from a validated FILE record.
+    fn new(record: &FileRecord<'_>, options: EntryBuildOptions) -> Self {
         Self {
             entry: RawMftEntry {
                 record_number: record.number,
@@ -157,26 +218,34 @@ impl RawMftEntryBuilder {
                 si_modified: Filetime::new(0),
                 si_mft_modified: Filetime::new(0),
                 si_accessed: Filetime::new(0),
-                si_file_attributes: 0,
+                si_file_attributes: FileAttributes::empty(),
                 fn_created: Filetime::new(0),
                 fn_modified: Filetime::new(0),
                 fn_mft_modified: Filetime::new(0),
                 fn_accessed: Filetime::new(0),
                 real_size: 0,
                 allocated_size: 0,
+                has_unnamed_data: false,
                 is_resident: true,
                 is_sparse: false,
                 is_compressed: false,
                 is_encrypted: false,
                 data_run_summary: None,
-                alternate_data_streams: Vec::new(),
+                alternate_data_streams: Box::default(),
+                links: Box::default(),
             },
+            alternate_data_streams: Vec::new(),
+            links: Vec::new(),
             best_namespace_score: -1,
             have_unnamed_data: false,
             attr_list: None,
+            collect_alternate_data_streams: options.collect_alternate_data_streams,
+            collect_data_run_summary: options.collect_data_run_summary,
+            collect_dos_file_name_links: options.collect_dos_file_name_links,
         }
     }
 
+    /// Dispatch a single attribute to the appropriate accumulator.
     fn consume_attribute(&mut self, attr: &NtfsAttribute<'_>) {
         let type_id = attr.type_id();
         if type_id == NtfsAttributeType::StandardInformation as u32 {
@@ -185,6 +254,8 @@ impl RawMftEntryBuilder {
             self.apply_file_name(attr);
         } else if type_id == NtfsAttributeType::Data as u32 {
             self.apply_data_attribute(attr);
+        } else if type_id == NtfsAttributeType::ReparsePoint as u32 {
+            self.apply_reparse_point_attribute(attr);
         } else if type_id == NtfsAttributeType::AttributeList as u32 {
             if attr.is_non_resident() {
                 // Store the data-run bytes so the caller can load the
@@ -206,25 +277,64 @@ impl RawMftEntryBuilder {
         }
     }
 
+    /// Fold `$STANDARD_INFORMATION` values into the entry.
     fn apply_standard_information(&mut self, attr: &NtfsAttribute<'_>) {
         if let Some(si) = attr.as_standard_info() {
             self.entry.si_created = Filetime::new(si.creation_time);
             self.entry.si_modified = Filetime::new(si.modification_time);
             self.entry.si_mft_modified = Filetime::new(si.mft_record_modification_time);
             self.entry.si_accessed = Filetime::new(si.access_time);
-            self.entry.si_file_attributes = si.file_attributes;
+            self.entry.si_file_attributes = FileAttributes::from_bits_retain(si.file_attributes);
         }
     }
 
+    /// Fold a `$FILE_NAME` attribute into the entry when it has the best namespace so far.
     fn apply_file_name(&mut self, attr: &NtfsAttribute<'_>) {
         if let Some((header, name_units)) = attr.as_file_name() {
             let ns = FileNameNamespace::from_u8(header.namespace);
-            let score = file_name_namespace_score(ns);
+            let score = ns.score();
+            let parent_reference = Fid::new(header.parent_directory_reference);
+            if !self.collect_dos_file_name_links
+                && ns == FileNameNamespace::Dos
+                && self.has_non_dos_file_name_link(parent_reference)
+            {
+                return;
+            }
+            let file_name = OsString::from_wide(name_units);
+            if !self.collect_dos_file_name_links && ns != FileNameNamespace::Dos {
+                self.links.retain(|link| {
+                    link.namespace != FileNameNamespace::Dos
+                        || link.parent_reference != parent_reference
+                });
+            }
+            if self.best_namespace_score >= 0 {
+                if self.links.is_empty()
+                    && self.should_retain_file_name_link(
+                        self.entry.namespace,
+                        self.entry.parent_reference,
+                        ns,
+                        parent_reference,
+                    )
+                {
+                    self.links.push(RawMftLink {
+                        parent_reference: self.entry.parent_reference,
+                        namespace: self.entry.namespace,
+                        file_name: self.entry.file_name.clone(),
+                    });
+                }
+                if self.should_retain_file_name_link(ns, parent_reference, ns, parent_reference) {
+                    self.links.push(RawMftLink {
+                        parent_reference,
+                        namespace: ns,
+                        file_name: file_name.clone(),
+                    });
+                }
+            }
             if score > self.best_namespace_score {
                 self.best_namespace_score = score;
                 self.entry.namespace = ns;
-                self.entry.file_name = OsString::from_wide(name_units);
-                self.entry.parent_reference = Fid::new(header.parent_directory_reference);
+                self.entry.file_name = file_name;
+                self.entry.parent_reference = parent_reference;
                 self.entry.fn_created = Filetime::new(header.creation_time);
                 self.entry.fn_modified = Filetime::new(header.modification_time);
                 self.entry.fn_mft_modified = Filetime::new(header.mft_record_modification_time);
@@ -238,6 +348,35 @@ impl RawMftEntryBuilder {
         }
     }
 
+    fn has_non_dos_file_name_link(&self, parent_reference: Fid) -> bool {
+        (self.best_namespace_score >= 0
+            && self.entry.parent_reference == parent_reference
+            && self.entry.namespace != FileNameNamespace::Dos)
+            || self.links.iter().any(|link| {
+                link.parent_reference == parent_reference
+                    && link.namespace != FileNameNamespace::Dos
+            })
+    }
+
+    fn should_retain_file_name_link(
+        &self,
+        link_namespace: FileNameNamespace,
+        link_parent: Fid,
+        current_namespace: FileNameNamespace,
+        current_parent: Fid,
+    ) -> bool {
+        if self.collect_dos_file_name_links || link_namespace != FileNameNamespace::Dos {
+            return true;
+        }
+        let current_shadows_link =
+            current_namespace != FileNameNamespace::Dos && current_parent == link_parent;
+        let existing_link_shadows = self.links.iter().any(|link| {
+            link.parent_reference == link_parent && link.namespace != FileNameNamespace::Dos
+        });
+        !current_shadows_link && !existing_link_shadows
+    }
+
+    /// Fold a `$DATA` attribute into the unnamed stream or ADS list.
     fn apply_data_attribute(&mut self, attr: &NtfsAttribute<'_>) {
         let stream_name = attr.name_slice();
         if attr.is_non_resident() {
@@ -251,6 +390,7 @@ impl RawMftEntryBuilder {
         }
     }
 
+    /// Fold a non-resident `$DATA` attribute into the entry.
     fn apply_nonresident_data(
         &mut self,
         stream_name: Option<&[u16]>,
@@ -258,7 +398,11 @@ impl RawMftEntryBuilder {
         data_size: u64,
         attr: &NtfsAttribute<'_>,
     ) {
-        let summary = self.nonresident_data_run_summary(attr);
+        let summary = if self.collect_data_run_summary {
+            self.nonresident_data_run_summary(attr)
+        } else {
+            None
+        };
         let attr_flags = attr.flags();
         let is_compressed = attr_flags & 0x0001 != 0;
         let is_encrypted = attr_flags & 0x4000 != 0;
@@ -269,6 +413,7 @@ impl RawMftEntryBuilder {
                     self.have_unnamed_data = true;
                     self.entry.real_size = data_size;
                     self.entry.allocated_size = allocated_size;
+                    self.entry.has_unnamed_data = true;
                     self.entry.is_resident = false;
                     self.entry.is_compressed |= is_compressed;
                     self.entry.is_encrypted |= is_encrypted;
@@ -277,16 +422,33 @@ impl RawMftEntryBuilder {
                 }
             }
             Some(name_units) => {
-                self.entry.alternate_data_streams.push(AdsInfo {
-                    name: OsString::from_wide(name_units),
-                    real_size: data_size,
-                    allocated_size,
-                    is_resident: false,
-                });
+                if self.collect_alternate_data_streams {
+                    self.alternate_data_streams.push(AdsInfo {
+                        name: OsString::from_wide(name_units),
+                        real_size: data_size,
+                        allocated_size,
+                        is_resident: false,
+                    });
+                }
             }
         }
     }
 
+    /// Fold a resident `$REPARSE_POINT` attribute into the entry.
+    fn apply_reparse_point_attribute(&mut self, attr: &NtfsAttribute<'_>) {
+        let Some(value) = attr.resident_value() else {
+            return;
+        };
+        let Some(tag_bytes) = value.get(..4) else {
+            return;
+        };
+        let reparse_tag =
+            u32::from_le_bytes([tag_bytes[0], tag_bytes[1], tag_bytes[2], tag_bytes[3]]);
+        self.entry.is_reparse_point = true;
+        self.entry.reparse_tag = Some(reparse_tag);
+    }
+
+    /// Fold a resident `$DATA` attribute into the entry.
     fn apply_resident_data(&mut self, stream_name: Option<&[u16]>, value_length: u64) {
         match stream_name {
             None => {
@@ -294,20 +456,24 @@ impl RawMftEntryBuilder {
                     self.have_unnamed_data = true;
                     self.entry.real_size = value_length;
                     self.entry.allocated_size = value_length;
+                    self.entry.has_unnamed_data = true;
                     self.entry.is_resident = true;
                 }
             }
             Some(name_units) => {
-                self.entry.alternate_data_streams.push(AdsInfo {
-                    name: OsString::from_wide(name_units),
-                    real_size: value_length,
-                    allocated_size: value_length,
-                    is_resident: true,
-                });
+                if self.collect_alternate_data_streams {
+                    self.alternate_data_streams.push(AdsInfo {
+                        name: OsString::from_wide(name_units),
+                        real_size: value_length,
+                        allocated_size: value_length,
+                        is_resident: true,
+                    });
+                }
             }
         }
     }
 
+    /// Summarize the data runs of a non-resident `$DATA` attribute.
     fn nonresident_data_run_summary(&self, attr: &NtfsAttribute<'_>) -> Option<DataRunSummary> {
         let h = attr.nonresident_header()?;
         let runs_off = h.data_runs_offset as usize;
@@ -329,36 +495,36 @@ impl RawMftEntryBuilder {
         }
     }
 
+    /// Finalize the entry and return any captured `$ATTRIBUTE_LIST`.
     fn build(mut self) -> (RawMftEntry, Option<AttributeListInfo>) {
         self.fold_si_flags();
+        self.entry.alternate_data_streams = self.alternate_data_streams.into_boxed_slice();
+        self.entry.links = self.links.into_boxed_slice();
         (self.entry, self.attr_list)
     }
 
+    /// Fold `$STANDARD_INFORMATION` bits into the derived convenience flags.
     fn fold_si_flags(&mut self) {
         // SI flags fold-in for sparse/compressed/encrypted (covers some
         // edge cases where the unnamed $DATA flags weren't set).
-        if self.entry.si_file_attributes & file_attr_flags::SPARSE_FILE != 0 {
+        let si_bits = self.entry.si_file_attributes.bits();
+        if si_bits & file_attr_flags::SPARSE_FILE != 0 {
             self.entry.is_sparse = true;
         }
-        if self.entry.si_file_attributes & file_attr_flags::COMPRESSED != 0 {
+        if si_bits & file_attr_flags::COMPRESSED != 0 {
             self.entry.is_compressed = true;
         }
-        if self.entry.si_file_attributes & file_attr_flags::ENCRYPTED != 0 {
+        if si_bits & file_attr_flags::ENCRYPTED != 0 {
             self.entry.is_encrypted = true;
         }
-        if self.entry.si_file_attributes & file_attr_flags::REPARSE_POINT != 0 {
+        if si_bits & file_attr_flags::REPARSE_POINT != 0 {
             self.entry.is_reparse_point = true;
         }
     }
 }
 
-#[inline]
-fn file_name_namespace_score(namespace: FileNameNamespace) -> i32 {
-    namespace.score()
-}
-
 impl FileAttributeView for RawMftEntry {
-    fn raw_file_attributes(&self) -> u32 {
+    fn file_attributes(&self) -> FileAttributes {
         self.si_file_attributes
     }
 }
@@ -543,8 +709,8 @@ mod tests {
     #[test]
     fn builds_entry_from_synthetic_record() {
         let mut buf = build_test_record(42);
-        let rec = FileRecord::parse(42, &mut buf).expect("parse");
-        let entry = RawMftEntry::from_record(&rec);
+        let rec = FileRecord::parse(42, None, &mut buf).expect("parse");
+        let (entry, _) = RawMftEntry::from_record_with_attr_list(&rec, EntryBuildOptions::full());
         assert_eq!(entry.record_number, 42);
         assert_eq!(entry.file_name.to_string_lossy(), "hello.txt");
         assert_eq!(entry.namespace, FileNameNamespace::Win32);
@@ -560,13 +726,16 @@ mod tests {
         assert_eq!(entry.alternate_data_streams[0].real_size, 3);
         assert!(entry.si_created.raw() != 0);
         assert_eq!(entry.parent_reference, Fid::new((5u64 << 48) | 5));
+        assert!(entry.links.is_empty());
+        assert_eq!(entry.parent_reference, Fid::new((5u64 << 48) | 5));
+        assert_eq!(entry.file_name.to_string_lossy(), "hello.txt");
     }
 
     #[test]
     fn path_resolvable_returns_unmasked_fids() {
         let mut buf = build_test_record(42);
-        let rec = FileRecord::parse(42, &mut buf).expect("parse");
-        let entry = RawMftEntry::from_record(&rec);
+        let rec = FileRecord::parse(42, None, &mut buf).expect("parse");
+        let (entry, _) = RawMftEntry::from_record_with_attr_list(&rec, EntryBuildOptions::full());
         // file_reference = (seq << 48) | record_number; with seq=1, record=42
         assert_eq!(entry.fid(), Fid::new((1u64 << 48) | 42));
         // parent_directory_reference was built as (5 << 48) | 5

@@ -14,8 +14,8 @@ use windows::{
     core::HSTRING,
 };
 
-/// Internal source used to open a [`Volume`].
-#[derive(Debug)]
+/// Source used to open a [`Volume`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) enum VolumeSource {
     /// Volume was opened via a drive letter (e.g. `'C'`).
     DriveLetter(char),
@@ -26,7 +26,9 @@ pub(crate) enum VolumeSource {
 #[derive(Debug)]
 /// Represents an NTFS/ReFS volume handle and its associated drive letter or mount point.
 pub struct Volume {
+    /// Raw volume handle returned by `CreateFileW`.
     pub(crate) handle: HANDLE,
+    /// Source path used to open the volume.
     source: VolumeSource,
 }
 

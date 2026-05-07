@@ -1,9 +1,4 @@
-// Demonstrates a verbose, multi-line "pretty" formatter for `UsnEntry`,
-// equivalent to the previously built-in `UsnEntry::pretty_format` method.
-//
-// The library now provides a compact one-line `Display` impl. This example
-// shows how callers can build their own verbose formatter on top of the
-// public fields when richer output is desired.
+//! Demonstrate a custom multi-line formatter built on top of the public `UsnEntry` fields.
 
 use std::path::Path;
 use std::time::SystemTime;
@@ -12,6 +7,7 @@ use usn_journal_rs::journal::{UsnEntry, UsnJournal};
 use usn_journal_rs::path::PathResolver;
 use usn_journal_rs::volume::Volume;
 
+/// Render a `UsnEntry` plus an optional resolved path as a multi-line string.
 fn pretty_format<P: AsRef<Path>>(entry: &UsnEntry, full_path_opt: Option<P>) -> String {
     let mut output = String::new();
     output.push_str(&format!("{:<20}: {}\n", "USN", entry.usn));
@@ -67,6 +63,7 @@ fn format_system_time(st: SystemTime) -> String {
     }
 }
 
+/// Format Unix seconds as a UTC timestamp string.
 fn format_unix_seconds_utc(secs: i64) -> String {
     // Days from epoch and seconds within day.
     let days = secs.div_euclid(86_400);
@@ -78,6 +75,7 @@ fn format_unix_seconds_utc(secs: i64) -> String {
     format!("{y:04}-{mo:02}-{d:02} {h:02}:{m:02}:{s:02} UTC")
 }
 
+/// Convert days since the Unix epoch to a Gregorian `(year, month, day)` tuple.
 fn days_to_ymd(days: i64) -> (i64, u32, u32) {
     // Convert days since 1970-01-01 to (year, month, day).
     // Algorithm by Howard Hinnant: http://howardhinnant.github.io/date_algorithms.html
@@ -94,10 +92,11 @@ fn days_to_ymd(days: i64) -> (i64, u32, u32) {
     (y, m, d)
 }
 
+/// Run the example and print a few journal entries in a multi-line format.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let volume = Volume::from_drive_letter('C')?;
     let usn_journal = UsnJournal::new(&volume);
-    let mut path_resolver = PathResolver::builder(&volume).build();
+    let mut path_resolver = PathResolver::new(&volume);
 
     for result in usn_journal.try_iter()?.take(10) {
         match result {

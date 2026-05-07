@@ -17,9 +17,9 @@ and idiomatic Rust refactoring. **Breaking changes throughout** — see the
 - Raw `$MFT` iteration is ~6× faster (262 ms vs 1.64 s for 200 k records).
 - New in-memory directory-tree path resolver: full-volume scans drop from ~21 s
   to <500 ms (~40× faster).
-- `chrono` is now an optional feature; default builds expose a lightweight
-  `Filetime(u64)` newtype.
-- Strong typing via `Usn(i64)` and `Fid` typed file IDs (64-bit NTFS + 128-bit ReFS).
+- Timestamps now use a lightweight `Filetime(u64)` newtype instead of an
+  external date/time dependency.
+- Strong typing via `Usn`, `Fid`, `UsnReason`, `UsnSourceInfo`, and `FileAttributes`.
 - Builder patterns for all iterator option structs.
 - Concrete `UsnError` variants — no more `OtherError(String)`.
 
@@ -30,39 +30,40 @@ and idiomatic Rust refactoring. **Breaking changes throughout** — see the
 - Path resolver: `Arc<Path>` cache values for cheap clones; reusable scratch
   buffer; in-memory directory tree.
 - USN reason-string formatting via static lookup table.
-- `read_unaligned` for unaligned `i64`/`u64` reads in record parsers.
+- Checked unaligned-read helper for byte-oriented record parsers.
+- Shared data-run decoder used by both full decode and summary-only paths.
 
 ### Added
 
 - `usn_journal_rs::types` module with `Usn` and `Fid` newtypes.
-- `usn_journal_rs::time::Filetime` with `try_to_system_time`, `to_unix_seconds`,
-  and (with `chrono` feature) `to_chrono_utc`.
+- `usn_journal_rs::time::Filetime` with `to_system_time`, `from_system_time`,
+  `TryFrom` conversions, `to_unix_seconds`, and `to_unix_nanos`.
 - `Volume::from_drive_letter(c: char)` and `Volume::from_mount_point(p)` —
   replaces the previous single constructor.
-- `VolumeSource` enum (`DriveLetter` vs `MountPoint`).
+- `Volume` now records the originating drive letter or mount point internally.
 - `JournalIterOptions::builder()`, `MftIterOptions::builder()`,
   `RawMftIterOptions::builder()`.
 - `PathResolver::new(v).with_lru_cache(n).with_in_memory_tree(&raw_mft)?`
   fluent builder API.
+- `usn_journal_rs::prelude` for common application imports.
 - `InMemoryDirTree::from_raw_mft` for O(1) path resolution without per-lookup
   syscalls.
 - USN v3 / 128-bit file ID support for `UsnJournal`, `Mft`, and `PathResolver`.
 - `UsnError::NotElevated`, `UsnError::UnsupportedFilesystem(String)`,
-  `UsnError::BufferTooSmall { needed, got }`, and
-  `UsnError::InvalidRecord { offset, reason }` variants.
+  `UsnError::BufferTooSmall { needed, got }`, precise USN parser error
+  variants, and offset-aware raw-MFT parse diagnostics.
 - `Display` impl on `UsnEntry` and `MftEntry` (compact one-line format).
 - Benchmarks: `benches/journal.rs`, `benches/path_resolver.rs`.
 - Integration tests: `tests/in_memory_tree.rs`,
   `tests/path_resolver_consistency.rs`, `tests/refs_unsupported.rs`,
   `tests/filetime_roundtrip.rs`.
-- `chrono` cargo feature (optional `Filetime::to_chrono_utc()`).
 
 ### Changed
 
 - `Volume` fields are now private; use the public accessor methods.
 - `PathResolver::new` now enables the default LRU directory cache automatically;
   call `.without_lru_cache()` for fully uncached syscall resolution.
-- `RawMftEntry` timestamps are `Filetime` instead of `chrono::DateTime<Utc>`.
+- `RawMftEntry` timestamps are `Filetime` instead of external date/time types.
 - `UsnEntry::time` is `Filetime` instead of `std::time::SystemTime`.
 - `RawMftIterOptions::batch_records: usize` →
   `RawMftIterOptions::buffer_bytes: NonZeroUsize`.
@@ -70,6 +71,9 @@ and idiomatic Rust refactoring. **Breaking changes throughout** — see the
   `mft::EnumOptions` renamed to `MftIterOptions`.
 - Fallible iteration entry points renamed to `try_iter` / `try_iter_with_options`.
 - `PathResolvableEntry::fid()` and `parent_fid()` now return `Fid`.
+- `Volume` keeps the originating drive letter or mount point internally; use `Volume::drive_letter()` and `Volume::mount_point()` to inspect it.
+- Entry structs now derive `Clone`, `PartialEq`, `Eq`, and `Hash` where their
+  field types permit it.
 - `Fid` now represents both standard 64-bit NTFS file references and
   128-bit ReFS file IDs. Use `is_standard()`, `is_extended()`, `as_u64()`,
   `as_u128()`, and `as_bytes()` to inspect the underlying representation.
@@ -89,7 +93,8 @@ and idiomatic Rust refactoring. **Breaking changes throughout** — see the
 - `UsnError::OtherError(String)` catch-all variant.
 - `PathResolver::new_with_cache` (deprecated; use
   `PathResolver::new(v).with_lru_cache(n)`).
-- `chrono` from default dependencies (now an opt-in feature).
+- `Fid::from_u64`; use `Fid::new` or `Fid::from(u64)` instead.
+- External date/time crate integration from the public API.
 - Crate-root re-exports of `DEFAULT_JOURNAL_MAX_SIZE`,
   `DEFAULT_JOURNAL_ALLOCATION_DELTA`, `USN_REASON_MASK_ALL`, and
   `DEFAULT_BUFFER_SIZE` (moved into the `journal` module).
@@ -129,24 +134,24 @@ Or via mount point:
 - use usn_journal_rs::journal::EnumOptions;
 - let opts = EnumOptions { start_usn: 0, ..Default::default() };
 + use usn_journal_rs::journal::{JournalIterOptions, USN_REASON_MASK_ALL};
-+ use usn_journal_rs::Usn;
++ use std::num::NonZeroUsize;
++ use usn_journal_rs::{Usn, UsnReason};
 + let opts = JournalIterOptions::builder()
 +     .start_usn(Usn::new(0))
-+     .reason_mask(USN_REASON_MASK_ALL)
++     .reason_mask(UsnReason::from_bits_retain(USN_REASON_MASK_ALL))
++     .buffer_bytes(NonZeroUsize::new(64 * 1024).unwrap())
 +     .build();
 ```
 
 ### Timestamps
 
 ```diff
-- let dt: chrono::DateTime<chrono::Utc> = entry.created;
+- let dt = entry.created;
 + use usn_journal_rs::time::Filetime;
 + let ft: Filetime = entry.time;
-+ let st: Option<std::time::SystemTime> = ft.try_to_system_time();
++ let st: Option<std::time::SystemTime> = ft.to_system_time();
++ let ft2 = Filetime::from_system_time(std::time::SystemTime::now());
 + let unix: i64 = ft.to_unix_seconds();
-+ // For chrono, add the feature flag:
-+ // usn-journal-rs = { version = "0.5", features = ["chrono"] }
-+ // let dt: chrono::DateTime<chrono::Utc> = ft.to_chrono_utc();
 ```
 
 ### Error matching

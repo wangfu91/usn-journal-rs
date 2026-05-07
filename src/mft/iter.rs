@@ -24,17 +24,26 @@ use super::entry::MftEntry;
 /// This iterator yields `Result<MftEntry, UsnError>` items, allowing applications
 /// to handle individual entry errors without stopping the entire iteration process.
 pub struct MftIter {
+    /// Open volume handle used for enumeration.
     volume_handle: HANDLE,
+    /// Inclusive lower USN bound passed to the kernel.
     low_usn: i64,
+    /// Inclusive upper USN bound passed to the kernel.
     high_usn: i64,
+    /// Highest `USN_RECORD` major version accepted from the kernel.
     max_usn_record_version: u16,
+    /// Scratch buffer reused across `DeviceIoControl` calls.
     buffer: Vec<u8>,
+    /// Number of valid bytes currently stored in `buffer`.
     bytes_read: u32,
+    /// Current scan offset within `buffer`.
     offset: u32,
+    /// File reference number cursor for the next enumeration call.
     next_start_fid: u64,
 }
 
 impl MftIter {
+    /// Construct an iterator around an open volume handle and enumeration settings.
     pub(super) fn new(
         volume_handle: HANDLE,
         low_usn: i64,

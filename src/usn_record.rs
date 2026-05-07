@@ -4,7 +4,7 @@
 //! view over `USN_RECORD_V2` / `USN_RECORD_V3`, and converts the records into
 //! the smaller owned types used by the rest of the crate.
 
-use crate::{Fid, Usn, UsnError, UsnResult};
+use crate::{Fid, Usn, UsnError, UsnResult, unaligned::read_unaligned_at};
 use std::mem::size_of;
 use windows::Win32::Storage::FileSystem::FILE_ID_128;
 use windows::Win32::System::Ioctl::{USN_RECORD_COMMON_HEADER, USN_RECORD_V2, USN_RECORD_V3};
@@ -129,24 +129,14 @@ pub(crate) const fn file_id_128_to_u128(file_id: FILE_ID_128) -> u128 {
     u128::from_le_bytes(file_id.Identifier)
 }
 
-/// Convert an extended [`Fid`] into a Windows `FILE_ID_128`.
-#[inline]
-pub(crate) const fn fid_to_file_id_128(fid: Fid) -> Option<FILE_ID_128> {
-    match fid {
-        Fid::Extended(value) => Some(FILE_ID_128 {
-            Identifier: value.to_le_bytes(),
-        }),
-        Fid::Standard(_) => None,
-    }
-}
-
 /// Validate `bytes_read` against `buffer` and convert it to `usize`.
 fn checked_bytes_read(buffer: &[u8], bytes_read: u32) -> UsnResult<usize> {
     let bytes_read = bytes_read as usize;
     if bytes_read > buffer.len() {
-        return Err(UsnError::InvalidRecordData(
-            "bytes_read exceeds buffer size",
-        ));
+        return Err(UsnError::InvalidBytesRead {
+            bytes_read,
+            buffer_len: buffer.len(),
+        });
     }
     Ok(bytes_read)
 }
@@ -156,18 +146,21 @@ pub(crate) fn read_next_start_usn(buffer: &[u8], bytes_read: u32) -> UsnResult<U
     let bytes_read = checked_bytes_read(buffer, bytes_read)?;
     let cursor_len = size_of::<Usn>();
     if bytes_read < cursor_len {
-        return Err(UsnError::InvalidRecordData(
-            "missing next start USN cursor in buffer",
-        ));
+        return Err(UsnError::TruncatedRecord {
+            offset: 0,
+            needed: cursor_len,
+            got: bytes_read,
+        });
     }
 
-    // SAFETY: `bytes_read >= cursor_len` and `cursor_len <= buffer.len()`
-    // (enforced by `checked_bytes_read`), so reading 8 bytes from the
-    // start of the buffer is in bounds. We use `read_unaligned` because
-    // the buffer may not be 8-byte aligned, and the FSCTL output stores
-    // the cursor in native (little-endian on Windows) byte order.
-    let value = unsafe { std::ptr::read_unaligned::<i64>(buffer.as_ptr() as *const i64) };
-    Ok(Usn::new(value))
+    let Some(raw_value) = read_unaligned_at::<i64>(buffer, 0) else {
+        return Err(UsnError::TruncatedRecord {
+            offset: 0,
+            needed: cursor_len,
+            got: bytes_read,
+        });
+    };
+    Ok(Usn::new(i64::from_le(raw_value)))
 }
 
 /// Read the next file-ID cursor from the start of an MFT enumeration buffer.
@@ -175,14 +168,21 @@ pub(crate) fn read_next_start_fid(buffer: &[u8], bytes_read: u32) -> UsnResult<u
     let bytes_read = checked_bytes_read(buffer, bytes_read)?;
     let cursor_len = size_of::<u64>();
     if bytes_read < cursor_len {
-        return Err(UsnError::InvalidRecordData(
-            "missing next start file ID cursor in buffer",
-        ));
+        return Err(UsnError::TruncatedRecord {
+            offset: 0,
+            needed: cursor_len,
+            got: bytes_read,
+        });
     }
 
-    let mut raw = [0u8; size_of::<u64>()];
-    raw.copy_from_slice(&buffer[..cursor_len]);
-    Ok(u64::from_le_bytes(raw))
+    let Some(raw_value) = read_unaligned_at::<u64>(buffer, 0) else {
+        return Err(UsnError::TruncatedRecord {
+            offset: 0,
+            needed: cursor_len,
+            got: bytes_read,
+        });
+    };
+    Ok(u64::from_le(raw_value))
 }
 
 /// Parse the next USN record and advance `offset` past it.
@@ -200,38 +200,45 @@ pub(crate) fn find_next_record<'a>(
 
     let min_record_len = size_of::<USN_RECORD_COMMON_HEADER>();
     if bytes_read - offset_usize < min_record_len {
-        return Err(UsnError::InvalidRecordData(
-            "insufficient bytes remaining for USN record header",
-        ));
+        return Err(UsnError::TruncatedRecord {
+            offset: offset_usize as u64,
+            needed: min_record_len,
+            got: bytes_read - offset_usize,
+        });
     }
 
-    // SAFETY: `offset_usize + min_record_len <= bytes_read <= buffer.len()`,
-    // so reading the fixed-size common header with `read_unaligned` is
-    // in bounds even if the record start is only byte-aligned.
-    let header = unsafe {
-        std::ptr::read_unaligned(
-            buffer.as_ptr().add(offset_usize) as *const USN_RECORD_COMMON_HEADER
-        )
+    let Some(header) = read_unaligned_at::<USN_RECORD_COMMON_HEADER>(buffer, offset_usize) else {
+        return Err(UsnError::TruncatedRecord {
+            offset: offset_usize as u64,
+            needed: min_record_len,
+            got: bytes_read - offset_usize,
+        });
     };
 
     let record_len = header.RecordLength as usize;
     if record_len < min_record_len {
-        return Err(UsnError::InvalidRecordData(
-            "record length is smaller than header",
-        ));
+        return Err(UsnError::InvalidRecordLength {
+            offset: offset_usize as u64,
+            length: header.RecordLength,
+            reason: "record length is smaller than header",
+        });
     }
     if record_len > bytes_read - offset_usize {
-        return Err(UsnError::InvalidRecordData(
-            "record length exceeds bytes read",
-        ));
+        return Err(UsnError::TruncatedRecord {
+            offset: offset_usize as u64,
+            needed: record_len,
+            got: bytes_read - offset_usize,
+        });
     }
 
     let record = match header.MajorVersion {
         2 => {
             if record_len < size_of::<USN_RECORD_V2>() {
-                return Err(UsnError::InvalidRecordData(
-                    "record length is smaller than USN_RECORD_V2",
-                ));
+                return Err(UsnError::InvalidRecordLength {
+                    offset: offset_usize as u64,
+                    length: header.RecordLength,
+                    reason: "record length is smaller than USN_RECORD_V2",
+                });
             }
             // SAFETY: `record_len` has been validated against the V2 header size
             // and stays within `buffer`. The FSCTL buffer is 8-byte aligned and
@@ -242,9 +249,11 @@ pub(crate) fn find_next_record<'a>(
         }
         3 => {
             if record_len < size_of::<USN_RECORD_V3>() {
-                return Err(UsnError::InvalidRecordData(
-                    "record length is smaller than USN_RECORD_V3",
-                ));
+                return Err(UsnError::InvalidRecordLength {
+                    offset: offset_usize as u64,
+                    length: header.RecordLength,
+                    reason: "record length is smaller than USN_RECORD_V3",
+                });
             }
             // SAFETY: same argument as the V2 branch above, but for the V3
             // layout requested via `READ_USN_JOURNAL_DATA_V1` /
@@ -253,32 +262,132 @@ pub(crate) fn find_next_record<'a>(
             UsnRecordView::V3(record)
         }
         _ => {
-            return Err(UsnError::InvalidRecordData(
-                "unsupported USN record major version",
-            ));
+            return Err(UsnError::UnsupportedRecordVersion {
+                offset: offset_usize as u64,
+                major_version: header.MajorVersion,
+            });
         }
     };
 
     let file_name_offset = record.file_name_offset() as usize;
     let file_name_length = record.file_name_length() as usize;
     if !file_name_length.is_multiple_of(size_of::<u16>()) {
-        return Err(UsnError::InvalidRecordData(
-            "file name length is not aligned to UTF-16 units",
-        ));
+        return Err(UsnError::MisalignedRecord {
+            offset: offset_usize as u64,
+            reason: "file name length is not aligned to UTF-16 units",
+        });
     }
-    let file_name_end = file_name_offset
-        .checked_add(file_name_length)
-        .ok_or(UsnError::InvalidRecordData("file name range overflowed"))?;
+    let file_name_end =
+        file_name_offset
+            .checked_add(file_name_length)
+            .ok_or(UsnError::InvalidRecord {
+                offset: offset_usize as u64,
+                reason: "file name range overflowed",
+            })?;
     if file_name_end > record_len {
-        return Err(UsnError::InvalidRecordData(
-            "file name range exceeds record length",
-        ));
+        return Err(UsnError::InvalidRecord {
+            offset: offset_usize as u64,
+            reason: "file name range exceeds record length",
+        });
     }
 
     let next_offset = offset_usize
         .checked_add(record_len)
-        .ok_or(UsnError::InvalidRecordData("next record offset overflowed"))?;
+        .ok_or(UsnError::InvalidRecord {
+            offset: offset_usize as u64,
+            reason: "next record offset overflowed",
+        })?;
 
     *offset = next_offset as u32;
     Ok(Some(record))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn write_header(buf: &mut [u8], record_length: u32, major_version: u16) {
+        let header = USN_RECORD_COMMON_HEADER {
+            RecordLength: record_length,
+            MajorVersion: major_version,
+            MinorVersion: 0,
+        };
+        unsafe {
+            std::ptr::write_unaligned(buf.as_mut_ptr() as *mut USN_RECORD_COMMON_HEADER, header);
+        }
+    }
+
+    #[test]
+    fn cursor_read_rejects_too_large_bytes_read() {
+        let err = read_next_start_fid(&[0; 4], 8).unwrap_err();
+        assert!(matches!(
+            err,
+            UsnError::InvalidBytesRead {
+                bytes_read: 8,
+                buffer_len: 4
+            }
+        ));
+    }
+
+    #[test]
+    fn cursor_read_reports_truncated_cursor() {
+        let err = read_next_start_usn(&[0; 4], 4).unwrap_err();
+        assert!(matches!(
+            err,
+            UsnError::TruncatedRecord {
+                offset: 0,
+                needed: 8,
+                got: 4
+            }
+        ));
+    }
+
+    #[test]
+    fn record_parse_reports_truncated_header() {
+        let mut offset = 0;
+        let err = find_next_record(&[0; 2], 2, &mut offset).unwrap_err();
+        assert!(matches!(
+            err,
+            UsnError::TruncatedRecord {
+                offset: 0,
+                needed,
+                got: 2
+            } if needed == size_of::<USN_RECORD_COMMON_HEADER>()
+        ));
+    }
+
+    #[test]
+    fn record_parse_reports_invalid_record_length() {
+        let header_len = size_of::<USN_RECORD_COMMON_HEADER>();
+        let mut buf = vec![0u8; header_len];
+        write_header(&mut buf, (header_len - 1) as u32, 2);
+
+        let mut offset = 0;
+        let err = find_next_record(&buf, buf.len() as u32, &mut offset).unwrap_err();
+        assert!(matches!(
+            err,
+            UsnError::InvalidRecordLength {
+                offset: 0,
+                length,
+                reason: "record length is smaller than header"
+            } if length == (header_len - 1) as u32
+        ));
+    }
+
+    #[test]
+    fn record_parse_reports_unsupported_version() {
+        let header_len = size_of::<USN_RECORD_COMMON_HEADER>();
+        let mut buf = vec![0u8; header_len];
+        write_header(&mut buf, header_len as u32, 99);
+
+        let mut offset = 0;
+        let err = find_next_record(&buf, buf.len() as u32, &mut offset).unwrap_err();
+        assert!(matches!(
+            err,
+            UsnError::UnsupportedRecordVersion {
+                offset: 0,
+                major_version: 99
+            }
+        ));
+    }
 }
