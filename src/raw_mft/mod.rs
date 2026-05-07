@@ -48,6 +48,7 @@ mod work_plan;
 use std::io::{Read, Seek, SeekFrom};
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::thread;
@@ -156,10 +157,10 @@ pub struct RawMft<'a> {
     volume: &'a Volume,
     /// Parsed NTFS boot-sector geometry.
     boot: BootSector,
-    /// Extent map for the `$MFT` data stream.
-    extent_map: ExtentMap,
-    /// Contents of the `$MFT` bitmap stream when available.
-    bitmap: Vec<u8>,
+    /// Shared extent map for the `$MFT` data stream.
+    extent_map: Arc<ExtentMap>,
+    /// Shared contents of the `$MFT` bitmap stream when available.
+    bitmap: Arc<[u8]>,
 }
 
 impl<'a> RawMft<'a> {
@@ -231,13 +232,17 @@ impl<'a> RawMft<'a> {
         };
 
         let data_runs = data_runs.ok_or(UsnError::MftAttributeMissing("$MFT $DATA"))?;
-        let extent_map = ExtentMap::from_runs(&data_runs, boot.cluster_size, boot.file_record_size);
+        let extent_map = Arc::new(ExtentMap::from_runs(
+            &data_runs,
+            boot.cluster_size,
+            boot.file_record_size,
+        ));
 
-        let bitmap = if let Some(br) = bitmap_runs {
-            read_nonresident(&mut reader, &br, boot.cluster_size, bitmap_size)?
+        let bitmap: Arc<[u8]> = if let Some(br) = bitmap_runs {
+            read_nonresident(&mut reader, &br, boot.cluster_size, bitmap_size)?.into()
         } else {
             warn!("raw_mft: no $MFT $BITMAP; skip_unused will be ignored");
-            Vec::new()
+            Vec::new().into()
         };
 
         Ok(RawMft {
@@ -417,7 +422,7 @@ impl<'a> RawMft<'a> {
                     n,
                     &mut attr_reader,
                     &self.boot,
-                    &self.extent_map,
+                    self.extent_map.as_ref(),
                     build_options,
                 );
                 profile.attr_list_enrich_elapsed += enrich_start.elapsed();
@@ -444,7 +449,7 @@ impl<'a> RawMft<'a> {
         read_record_at(
             &mut reader,
             &self.boot,
-            &self.extent_map,
+            self.extent_map.as_ref(),
             number,
             EntryBuildOptions::full(),
         )
@@ -596,7 +601,7 @@ impl<'a> RawMft<'a> {
                     n,
                     attr_reader,
                     &self.boot,
-                    &self.extent_map,
+                    self.extent_map.as_ref(),
                     build_options,
                 );
             }
@@ -705,8 +710,8 @@ impl<'a> RawMft<'a> {
         let chunk_count = chunks.len();
         let chunks = chunks.into_boxed_slice();
         let boot = self.boot.clone();
-        let extent_map = self.extent_map.clone();
-        let bitmap = self.bitmap.clone();
+        let extent_map = Arc::clone(&self.extent_map);
+        let bitmap = Arc::clone(&self.bitmap);
 
         thread::scope(|scope| -> Result<(), UsnError> {
             let (tx, rx) = mpsc::channel::<Result<(usize, T), UsnError>>();
@@ -718,8 +723,8 @@ impl<'a> RawMft<'a> {
                 let options = options.clone();
                 let source = source.clone();
                 let boot = boot.clone();
-                let extent_map = extent_map.clone();
-                let bitmap = bitmap.clone();
+                let extent_map = Arc::clone(&extent_map);
+                let bitmap = Arc::clone(&bitmap);
                 let map_chunk = &map_chunk;
                 handles.push(scope.spawn(move || {
                     let volume = match open_parallel_volume(&source) {
@@ -841,8 +846,8 @@ impl<'a> RawMft<'a> {
         let chunk_count = chunks.len();
         let chunks = chunks.into_boxed_slice();
         let boot = self.boot.clone();
-        let extent_map = self.extent_map.clone();
-        let bitmap = self.bitmap.clone();
+        let extent_map = Arc::clone(&self.extent_map);
+        let bitmap = Arc::clone(&self.bitmap);
 
         thread::scope(|scope| -> Result<(), UsnError> {
             let (tx, rx) = mpsc::channel::<Result<(usize, T), UsnError>>();
@@ -854,8 +859,8 @@ impl<'a> RawMft<'a> {
                 let options = options.clone();
                 let source = source.clone();
                 let boot = boot.clone();
-                let extent_map = extent_map.clone();
-                let bitmap = bitmap.clone();
+                let extent_map = Arc::clone(&extent_map);
+                let bitmap = Arc::clone(&bitmap);
                 let init = &init;
                 let fold_entry = &fold_entry;
                 handles.push(scope.spawn(move || {
@@ -1067,7 +1072,7 @@ impl<'a> Iterator for RawMftIter<'a> {
                             n,
                             &mut self.attr_reader,
                             &self.mft.boot,
-                            &self.mft.extent_map,
+                            self.mft.extent_map.as_ref(),
                             build_options,
                         );
                     }
