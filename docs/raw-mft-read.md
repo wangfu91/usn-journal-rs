@@ -26,7 +26,7 @@ At a high level the implementation does this:
 1. Open the raw volume.
 2. Read and validate the NTFS boot sector.
 3. Read FILE record 0, which is the `$MFT` record.
-4. Decode `$MFT`'s unnamed `$DATA` runs into an `ExtentMap`.
+4. Decode `$MFT`'s unnamed `$DATA`(primary data stream) runs into an `ExtentMap`.
 5. Decode and materialize `$MFT`'s `$BITMAP` stream into memory.
 6. For each requested record number:
    - optionally consult the bitmap,
