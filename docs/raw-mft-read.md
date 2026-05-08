@@ -5,6 +5,12 @@ This document explains how the current `RawMft` implementation reads and parses 
 The relevant code lives in:
 
 - `src/raw_mft/mod.rs`
+- `src/raw_mft/init.rs`
+- `src/raw_mft/reader.rs`
+- `src/raw_mft/attr_list.rs`
+- `src/raw_mft/iter.rs`
+- `src/raw_mft/profile.rs`
+- `src/raw_mft/parallel.rs`
 - `src/raw_mft/io.rs`
 - `src/raw_mft/extent.rs`
 - `src/raw_mft/record.rs`
@@ -45,6 +51,9 @@ The same parsing path is reused for:
 - parallel folded parsing via `for_each_folded_chunk_parallel_with_options`.
 
 ## Core types and responsibilities
+
+![MFT Record Structure](./MFT.png)
+Screenshot from: [YouTube](https://www.youtube.com/watch?v=PQbGTP0bR9o&t=229s)
 
 ### `Volume`
 
