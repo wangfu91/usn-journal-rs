@@ -62,15 +62,24 @@ pub struct RawMftBatchEntry {
     pub links: Box<[RawMftLink]>,
 }
 
+/// Internal batch-entry shape that keeps the extra state needed during parse
+/// and `$ATTRIBUTE_LIST` enrichment.
 #[derive(Debug)]
 pub(crate) struct RawMftBatchScratch {
+    /// Lean batch entry being incrementally built from one FILE record.
     pub(crate) entry: RawMftBatchEntry,
+    /// Hard-link count used to decide whether extension records may carry
+    /// additional file-name links.
     pub(crate) hard_link_count: u16,
+    /// Whether the base record already supplied unnamed-data sizing metadata.
     pub(crate) have_unnamed_data: bool,
+    /// Whether the base record advertises a reparse point.
     pub(crate) is_reparse_point: bool,
 }
 
 impl RawMftBatchScratch {
+    /// Build a lean batch scratch entry plus any captured `$ATTRIBUTE_LIST`
+    /// payload from one parsed FILE record.
     pub(crate) fn from_record_with_attr_list(
         record: &FileRecord<'_>,
         collect_dos_file_name_links: bool,
@@ -83,6 +92,7 @@ impl RawMftBatchScratch {
         builder.build()
     }
 
+    /// Drop scratch-only bookkeeping and return the lean public batch entry.
     pub(crate) fn into_entry(self) -> RawMftBatchEntry {
         self.entry
     }

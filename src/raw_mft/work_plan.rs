@@ -1,3 +1,5 @@
+//! Deterministic logical work-chunk planning for raw-MFT scans.
+
 use std::num::NonZeroU64;
 
 use crate::raw_mft::record::FIRST_NORMAL_RECORD;

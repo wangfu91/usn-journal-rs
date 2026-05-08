@@ -3,11 +3,13 @@
 
 use crate::{errors::UsnError, raw_mft::data_run::DataRun};
 
+/// Cached segment index used to accelerate mostly-sequential extent lookups.
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct ExtentLookupCursor {
     segment_index: usize,
 }
 
+/// One contiguous VCN range in the `$MFT::$DATA` runlist.
 #[derive(Debug, Clone)]
 pub(crate) struct ExtentSegment {
     /// First VCN covered by this segment.
@@ -18,6 +20,8 @@ pub(crate) struct ExtentSegment {
     pub lcn: Option<u64>,
 }
 
+/// Runlist-derived mapping from logical FILE record numbers to absolute
+/// volume offsets.
 #[derive(Debug, Clone)]
 pub(crate) struct ExtentMap {
     /// Ordered list of VCN-to-LCN segments.
@@ -83,6 +87,8 @@ impl ExtentMap {
         self.record_offset_with_cursor(record_number, &mut cursor)
     }
 
+    /// Translate a record number to its absolute volume byte offset while
+    /// reusing a caller-owned lookup cursor across nearby queries.
     pub fn record_offset_with_cursor(
         &self,
         record_number: u64,
