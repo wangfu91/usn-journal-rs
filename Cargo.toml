@@ -44,6 +44,7 @@ features = [
 ]
 
 [dev-dependencies]
+criterion = "0.5"
 injectorpp = "0.5"
 divan = "0.1"
 
@@ -70,3 +71,6 @@ incremental = false
 
 [profile.bench]
 lto = "thin"
+
+[profile.release]
+debug = true
