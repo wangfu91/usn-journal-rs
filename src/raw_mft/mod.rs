@@ -60,6 +60,7 @@ use rustc_hash::FxHashSet;
 use crate::{
     errors::UsnError,
     raw_mft::{
+        batch::RawMftBatchScratch,
         attribute::{NtfsAttributeType, for_each_attr_list_entry, for_each_attribute},
         boot::BootSector,
         data_run::{DataRun, decode_runs},
@@ -84,6 +85,11 @@ pub const DEFAULT_BUFFER_BYTES: NonZeroUsize = unsafe {
     // SAFETY: `256 * 1024` is a non-zero constant.
     NonZeroUsize::new_unchecked(256 * 1024)
 };
+/// Default buffer size for `$ATTRIBUTE_LIST` and extension-record reads.
+///
+/// These reads are typically smaller and less sequential than the main `$MFT`
+/// scan, so the attribute buffer is tuned independently from
+/// [`DEFAULT_BUFFER_BYTES`].
 #[allow(clippy::useless_nonzero_new_unchecked)]
 pub const DEFAULT_ATTR_BUFFER_BYTES: NonZeroUsize = unsafe {
     // SAFETY: `64 * 1024` is a non-zero constant.
@@ -490,7 +496,7 @@ impl<'a> RawMft<'a> {
         self.read_chunk_with_reused_readers(chunk, &options, &mut reader, &mut attr_reader)
     }
 
-    /// Parse one logical work chunk and fold parsed entries into a caller-owned accumulator.
+    /// Parse one logical work chunk and fold lean batch entries into a caller-owned accumulator.
     pub fn fold_chunk_with_options<T, Init, Fold>(
         &self,
         chunk: RawMftWorkChunk,
@@ -500,7 +506,7 @@ impl<'a> RawMft<'a> {
     ) -> Result<T, UsnError>
     where
         Init: Fn(RawMftWorkChunk) -> T,
-        Fold: Fn(&mut T, RawMftEntry) -> Result<(), UsnError>,
+        Fold: Fn(&mut T, RawMftBatchEntry) -> Result<(), UsnError>,
     {
         let (mut reader, mut attr_reader) = self.buffered_readers_for_options(&options)?;
         self.fold_chunk_with_reused_readers(
@@ -530,15 +536,7 @@ impl<'a> RawMft<'a> {
         Ok((reader, attr_reader))
     }
 
-    fn entry_build_options(options: &RawMftIterOptions) -> EntryBuildOptions {
-        EntryBuildOptions {
-            collect_alternate_data_streams: options.collect_alternate_data_streams,
-            collect_data_run_summary: options.collect_data_run_summary,
-            collect_dos_file_name_links: options.collect_dos_file_name_links,
-        }
-    }
-
-    fn for_each_entry_in_range_with_readers<F>(
+    fn for_each_batch_entry_in_range_with_readers<F>(
         &self,
         start_record: u64,
         end_record: u64,
@@ -548,11 +546,10 @@ impl<'a> RawMft<'a> {
         mut visit: F,
     ) -> Result<(), UsnError>
     where
-        F: FnMut(RawMftEntry) -> Result<(), UsnError>,
+        F: FnMut(RawMftBatchEntry) -> Result<(), UsnError>,
     {
         let end_record = end_record.min(self.record_count());
         let record_size = self.boot.file_record_size as usize;
-        let build_options = Self::entry_build_options(options);
         let mut next_record = start_record;
         let mut offset_cursor = ExtentLookupCursor::default();
 
@@ -587,26 +584,26 @@ impl<'a> RawMft<'a> {
             };
 
             let (mut entry, attr_list) =
-                RawMftEntry::from_record_with_attr_list(&rec, build_options);
-            if options.skip_extension_records && entry.base_record_reference != 0 {
+                RawMftBatchScratch::from_record_with_attr_list(&rec, options.collect_dos_file_name_links);
+            if options.skip_extension_records && entry.entry.base_record_reference != 0 {
                 continue;
             }
 
             if let Some(attr_list) = attr_list
-                && should_enrich_from_attr_list(&entry)
+                && should_enrich_batch_from_attr_list(&entry)
             {
-                let _ = enrich_from_attr_list(
+                let _ = enrich_batch_from_attr_list(
                     &mut entry,
                     attr_list,
                     n,
                     attr_reader,
                     &self.boot,
                     self.extent_map.as_ref(),
-                    build_options,
+                    options.collect_dos_file_name_links,
                 );
             }
 
-            visit(entry)?;
+            visit(entry.into_entry())?;
         }
 
         Ok(())
@@ -620,7 +617,7 @@ impl<'a> RawMft<'a> {
         attr_reader: &mut VolumeReader,
     ) -> Result<Vec<RawMftBatchEntry>, UsnError> {
         let mut entries = Vec::with_capacity(chunk.record_len().min(usize::MAX as u64) as usize);
-        self.for_each_entry_in_range_with_readers(
+        self.for_each_batch_entry_in_range_with_readers(
             chunk.start_record,
             chunk.end_record,
             options,
@@ -645,10 +642,10 @@ impl<'a> RawMft<'a> {
     ) -> Result<T, UsnError>
     where
         Init: Fn(RawMftWorkChunk) -> T,
-        Fold: Fn(&mut T, RawMftEntry) -> Result<(), UsnError>,
+        Fold: Fn(&mut T, RawMftBatchEntry) -> Result<(), UsnError>,
     {
         let mut acc = init(chunk);
-        self.for_each_entry_in_range_with_readers(
+        self.for_each_batch_entry_in_range_with_readers(
             chunk.start_record,
             chunk.end_record,
             options,
@@ -807,7 +804,7 @@ impl<'a> RawMft<'a> {
         })
     }
 
-    /// Parse logical work chunks in parallel and fold entries on worker threads.
+    /// Parse logical work chunks in parallel and fold lean batch entries on worker threads.
     pub fn for_each_folded_chunk_parallel_with_options<Init, Fold, T, V>(
         &self,
         chunks: Vec<RawMftWorkChunk>,
@@ -819,7 +816,7 @@ impl<'a> RawMft<'a> {
     ) -> Result<(), UsnError>
     where
         Init: Fn(RawMftWorkChunk) -> T + Sync,
-        Fold: Fn(&mut T, RawMftEntry) -> Result<(), UsnError> + Sync,
+        Fold: Fn(&mut T, RawMftBatchEntry) -> Result<(), UsnError> + Sync,
         T: Send,
         V: FnMut(T) -> Result<(), UsnError>,
     {
@@ -1113,6 +1110,31 @@ fn read_record_raw(
     )))
 }
 
+/// Read a raw FILE record and return the parsed lean batch entry plus any `$ATTRIBUTE_LIST`.
+fn read_batch_record_raw(
+    reader: &mut VolumeReader,
+    boot: &BootSector,
+    extent_map: &ExtentMap,
+    record_number: u64,
+    collect_dos_file_name_links: bool,
+) -> Result<Option<(RawMftBatchScratch, Option<AttributeListInfo>)>, UsnError> {
+    let offset = match extent_map.record_offset(record_number)? {
+        Some(o) => o,
+        None => return Ok(None),
+    };
+    let buf = reader
+        .borrow_at(offset, boot.file_record_size as usize)
+        .map_err(io_err)?;
+    if !FileRecord::is_valid(buf) {
+        return Ok(None);
+    }
+    let rec = FileRecord::parse(record_number, Some(offset), buf)?;
+    Ok(Some(RawMftBatchScratch::from_record_with_attr_list(
+        &rec,
+        collect_dos_file_name_links,
+    )))
+}
+
 /// Read a record and perform one level of `$ATTRIBUTE_LIST` enrichment.
 fn read_record_at(
     reader: &mut VolumeReader,
@@ -1350,6 +1372,193 @@ fn merge_extension_data(
 /// Heuristic to decide whether to enrich a base record from its `$ATTRIBUTE_LIST` or not.
 fn should_enrich_from_attr_list(entry: &RawMftEntry) -> bool {
     attr_list_enrich_needs(entry).any()
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct AttrListBatchEnrichNeeds {
+    file_name: bool,
+    data: bool,
+    reparse: bool,
+}
+
+impl AttrListBatchEnrichNeeds {
+    fn any(self) -> bool {
+        self.file_name || self.data || self.reparse
+    }
+
+    fn wants_type(self, type_id: u32) -> bool {
+        (self.file_name && type_id == NtfsAttributeType::FileName as u32)
+            || (self.data && type_id == NtfsAttributeType::Data as u32)
+            || (self.reparse && type_id == NtfsAttributeType::ReparsePoint as u32)
+    }
+}
+
+fn attr_list_batch_enrich_needs(entry: &RawMftBatchScratch) -> AttrListBatchEnrichNeeds {
+    AttrListBatchEnrichNeeds {
+        file_name: entry.entry.file_name.is_empty()
+            || !matches!(
+                entry.entry.namespace,
+                FileNameNamespace::Win32 | FileNameNamespace::Win32AndDos
+            )
+            || entry.hard_link_count > 1,
+        data: !entry.entry.is_directory && !entry.have_unnamed_data,
+        reparse: entry.is_reparse_point && entry.entry.reparse_tag.is_none(),
+    }
+}
+
+fn merge_batch_extension_data(
+    entry: &mut RawMftBatchScratch,
+    ext_entry: &RawMftBatchScratch,
+    needs: AttrListBatchEnrichNeeds,
+) {
+    if needs.data
+        && (ext_entry.entry.real_size > entry.entry.real_size
+            || ext_entry.entry.allocated_size > entry.entry.allocated_size)
+    {
+        entry.entry.real_size = ext_entry.entry.real_size;
+        entry.entry.allocated_size = ext_entry.entry.allocated_size;
+        entry.have_unnamed_data = ext_entry.have_unnamed_data;
+    }
+    if needs.reparse {
+        entry.is_reparse_point |= ext_entry.is_reparse_point;
+        entry.entry.reparse_tag = ext_entry.entry.reparse_tag;
+    }
+}
+
+fn should_enrich_batch_from_attr_list(entry: &RawMftBatchScratch) -> bool {
+    attr_list_batch_enrich_needs(entry).any()
+}
+
+fn enrich_batch_from_attr_list(
+    entry: &mut RawMftBatchScratch,
+    attr_list: AttributeListInfo,
+    base_record_number: u64,
+    reader: &mut VolumeReader,
+    boot: &BootSector,
+    extent_map: &ExtentMap,
+    collect_dos_file_name_links: bool,
+) -> AttrListEnrichStats {
+    let mut stats = AttrListEnrichStats::default();
+    let needs = attr_list_batch_enrich_needs(entry);
+    if !needs.any() {
+        return stats;
+    }
+
+    let data: Vec<u8> = match attr_list {
+        AttributeListInfo::Resident(bytes) => bytes,
+        AttributeListInfo::NonResident {
+            runs_data,
+            data_size,
+        } => {
+            let runs = match decode_runs(&runs_data) {
+                Ok((runs, _)) => runs,
+                Err(e) => {
+                    warn!(
+                        "raw_mft: record {base_record_number}: \
+                         failed to decode $ATTRIBUTE_LIST data runs: {e}"
+                    );
+                    return stats;
+                }
+            };
+            match read_nonresident(reader, &runs, boot.cluster_size, data_size) {
+                Ok(bytes) => bytes,
+                Err(e) => {
+                    warn!(
+                        "raw_mft: record {base_record_number}: \
+                         failed to read non-resident $ATTRIBUTE_LIST: {e}"
+                    );
+                    return stats;
+                }
+            }
+        }
+    };
+
+    let mut ext_records: Vec<u64> = Vec::new();
+    let mut seen_ext_records = FxHashSet::default();
+    for_each_attr_list_entry(&data, |type_id, file_ref| {
+        if needs.wants_type(type_id) {
+            let rec_num = file_ref & 0x0000_FFFF_FFFF_FFFF;
+            if rec_num != base_record_number && seen_ext_records.insert(rec_num) {
+                ext_records.push(rec_num);
+            }
+        }
+    });
+    stats.extension_records_referenced = ext_records.len() as u64;
+
+    let mut best_score = if entry.entry.file_name.is_empty() {
+        -1
+    } else {
+        entry.entry.namespace.score()
+    };
+    for ext_num in ext_records {
+        let ext_entry = match read_batch_record_raw(
+            reader,
+            boot,
+            extent_map,
+            ext_num,
+            collect_dos_file_name_links,
+        ) {
+            Ok(Some((entry, _))) => {
+                stats.extension_records_loaded += 1;
+                entry
+            }
+            Ok(None) => continue,
+            Err(error) => {
+                debug!(
+                    "raw_mft: record {base_record_number}: \
+                     failed to load extension record {ext_num}: {error}"
+                );
+                continue;
+            }
+        };
+        if needs.file_name {
+            let score = ext_entry.entry.namespace.score();
+            let has_single_ext_link =
+                ext_entry.entry.links.is_empty() && !ext_entry.entry.file_name.is_empty();
+            if has_single_ext_link || !ext_entry.entry.links.is_empty() {
+                let base_link_count =
+                    usize::from(entry.entry.links.is_empty() && !entry.entry.file_name.is_empty());
+                let ext_link_count = if has_single_ext_link {
+                    1
+                } else {
+                    ext_entry.entry.links.len()
+                };
+                let mut links = Vec::with_capacity(
+                    entry.entry.links.len() + base_link_count + ext_link_count,
+                );
+                links.extend_from_slice(&entry.entry.links);
+                if links.is_empty() && !entry.entry.file_name.is_empty() {
+                    links.push(RawMftLink {
+                        parent_reference: entry.entry.parent_reference,
+                        namespace: entry.entry.namespace,
+                        file_name: entry.entry.file_name.clone(),
+                    });
+                }
+                if has_single_ext_link {
+                    links.push(RawMftLink {
+                        parent_reference: ext_entry.entry.parent_reference,
+                        namespace: ext_entry.entry.namespace,
+                        file_name: ext_entry.entry.file_name.clone(),
+                    });
+                } else {
+                    links.extend_from_slice(&ext_entry.entry.links);
+                }
+                entry.entry.links = links.into_boxed_slice();
+            }
+            if needs.data || needs.reparse {
+                merge_batch_extension_data(entry, &ext_entry, needs);
+            }
+            if score > best_score {
+                best_score = score;
+                entry.entry.namespace = ext_entry.entry.namespace;
+                entry.entry.file_name = ext_entry.entry.file_name;
+                entry.entry.parent_reference = ext_entry.entry.parent_reference;
+            }
+        } else if needs.data || needs.reparse {
+            merge_batch_extension_data(entry, &ext_entry, needs);
+        }
+    }
+    stats
 }
 
 /// Materialize the bytes of a non-resident attribute from its decoded runs.
