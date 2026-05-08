@@ -56,10 +56,7 @@ use std::sync::Arc;
 use crate::{
     errors::UsnError,
     raw_mft::{
-        boot::BootSector,
-        entry::EntryBuildOptions,
-        extent::ExtentMap,
-        io::VolumeReader,
+        boot::BootSector, entry::EntryBuildOptions, extent::ExtentMap, io::VolumeReader,
         reader::read_record_at,
     },
     volume::Volume,
