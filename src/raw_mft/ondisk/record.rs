@@ -7,7 +7,7 @@
 
 use std::mem::size_of;
 
-use crate::{errors::UsnError, raw_mft::fixup};
+use crate::{errors::UsnError, raw_mft::ondisk::fixup};
 
 /// `FILE` record signature.
 pub const FILE_RECORD_SIGNATURE: &[u8; 4] = b"FILE";

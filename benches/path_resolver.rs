@@ -66,7 +66,7 @@ fn collect_test_entries(volume: &Volume) -> Vec<MftEntry> {
     };
 
     let mut entries = Vec::new();
-    if let Ok(it) = mft.try_iter() {
+    if let Ok(it) = mft.iter() {
         for entry in it.flatten() {
             // Convert RawMftEntry to MftEntry for use with PathResolver
             let mft_entry = MftEntry {

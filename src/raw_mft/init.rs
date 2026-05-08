@@ -12,9 +12,7 @@ use log::debug;
 use crate::{
     errors::UsnError,
     raw_mft::{
-        boot::BootSector,
-        init_support::bootstrap_mft_state,
-        io::VolumeReader,
+        init_support::bootstrap_mft_state, io::VolumeReader, ondisk::boot::BootSector,
         reader::io_err,
     },
     volume::Volume,

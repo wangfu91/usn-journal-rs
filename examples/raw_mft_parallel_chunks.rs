@@ -7,7 +7,7 @@ use std::{
 };
 
 use usn_journal_rs::{
-    raw_mft::{RawMft, RawMftIterOptions, RawMftWorkPlanOptions},
+    raw_mft::{RawMft, RawMftChunkPlanOptions, RawMftScanOptions},
     volume::Volume,
 };
 
@@ -34,12 +34,11 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let volume = Volume::from_drive_letter(drive)?;
     let raw_mft = RawMft::new(&volume)?;
-    let work_plan = RawMftWorkPlanOptions {
-        max_records_per_chunk,
-        ..RawMftWorkPlanOptions::default()
-    };
-    let chunks = raw_mft.plan_work_chunks_with_options(work_plan);
-    let options = RawMftIterOptions::builder()
+    let work_plan = RawMftChunkPlanOptions::builder()
+        .max_records_per_chunk(max_records_per_chunk)
+        .build();
+    let chunks = raw_mft.plan_chunks_with_options(work_plan);
+    let options = RawMftScanOptions::builder()
         .collect_alternate_data_streams(false)
         .collect_data_run_summary(false)
         .build();
@@ -47,10 +46,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     let start = Instant::now();
     let chunk_count = chunks.len();
     let mut entry_count = 0usize;
-    raw_mft.for_each_chunk_parallel_with_options(chunks, options, worker_count, |batch| {
-        entry_count += batch.entries.len();
-        Ok(())
-    })?;
+    raw_mft
+        .parallel()
+        .chunks(chunks)
+        .scan_options(options)
+        .workers(worker_count)
+        .for_each_batch(|batch| {
+            entry_count += batch.entries.len();
+            Ok(())
+        })?;
     let elapsed = start.elapsed();
 
     println!("raw_mft parallel chunks");

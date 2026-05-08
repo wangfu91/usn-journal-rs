@@ -5,7 +5,9 @@ This document explains how the current `RawMft` implementation reads and parses 
 The relevant code lives in:
 
 - `src/raw_mft/mod.rs`
-- `src/raw_mft/builder_common.rs`
+- `src/raw_mft/attribute_capture.rs`
+- `src/raw_mft/attribute_fold.rs`
+- `src/raw_mft/name_selection.rs`
 - `src/raw_mft/init.rs`
 - `src/raw_mft/init_support.rs`
 - `src/raw_mft/reader.rs`
@@ -14,9 +16,9 @@ The relevant code lives in:
 - `src/raw_mft/profile.rs`
 - `src/raw_mft/parallel.rs`
 - `src/raw_mft/parallel_executor.rs`
+- `src/raw_mft/parallel_plan.rs`
 - `src/raw_mft/io.rs`
-- `src/raw_mft/extent.rs`
-- `src/raw_mft/record.rs`
+- `src/raw_mft/ondisk/`
 - `src/raw_mft/entry.rs`
 - `src/raw_mft/work_plan.rs`
 - `benches/raw_mft_ingest.rs`
@@ -48,10 +50,10 @@ At a high level the implementation does this:
 
 The same parsing path is reused for:
 
-- serial iteration via `RawMftIter`,
-- single-chunk parsing via `read_chunk_with_options`,
-- parallel batch parsing via `for_each_chunk_parallel_with_options`,
-- parallel folded parsing via `for_each_folded_chunk_parallel_with_options`.
+- serial scans via `RawMft::iter` / `RawMft::iter_with_options`,
+- single-chunk parsing via `RawMft::read_chunk`,
+- parallel batch parsing via `RawMft::parallel().for_each_batch`,
+- parallel folded parsing via `RawMft::parallel().fold_chunks`.
 
 ## Core types and responsibilities
 
@@ -69,7 +71,7 @@ That source information matters for parallel reads because each worker thread re
 
 ### `BootSector`
 
-`src/raw_mft/boot.rs` parses the first 512 bytes of the volume and extracts:
+`src/raw_mft/ondisk/boot.rs` parses the first 512 bytes of the volume and extracts:
 
 - `bytes_per_sector`,
 - `cluster_size`,
@@ -81,7 +83,7 @@ This is the geometry the rest of the reader uses.
 
 ### `ExtentMap`
 
-`src/raw_mft/extent.rs` converts the unnamed `$DATA` runs of `$MFT` into a mapping from logical record number to physical byte offset on disk.
+`src/raw_mft/ondisk/extent.rs` converts the unnamed `$DATA` runs of `$MFT` into a mapping from logical record number to physical byte offset on disk.
 
 The important detail is that the reader does not assume the `$MFT` is contiguous. The extent map can represent:
 
@@ -104,7 +106,7 @@ The main performance win is that the iterator can parse FILE records directly ou
 
 ### `FileRecord`
 
-`src/raw_mft/record.rs` validates and fixes up one FILE record.
+`src/raw_mft/ondisk/record.rs` validates and fixes up one FILE record.
 
 The flow is:
 
@@ -182,7 +184,7 @@ That state is cheap to clone into worker-local reader contexts later because the
 
 ## Serial read path
 
-The public serial path is `RawMft::try_iter_with_options`, which constructs `RawMftIter`.
+The public serial path is `RawMft::iter_with_options`, which constructs `RawMftIter`.
 
 ### Reader setup
 
@@ -350,7 +352,7 @@ That distinction matters because:
 
 ### Default planning behavior
 
-`RawMftWorkPlanOptions::default()` uses:
+`RawMftChunkPlanOptions::default()` uses:
 
 - `skip_unused = true`,
 - `start_record = FIRST_NORMAL_RECORD` (24),
@@ -384,12 +386,12 @@ This is useful when you want more even chunk sizes without paying to build chunk
 
 Parallel execution is layered on top of the exact same record parser used by serial iteration.
 
-The parallel APIs are:
+The public parallel facade is `RawMft::parallel()`. It exposes:
 
-- `read_chunks_parallel_with_options`
-- `for_each_chunk_parallel_with_options`
-- `for_each_mapped_chunk_parallel_with_options`
-- `for_each_folded_chunk_parallel_with_options`
+- `collect_batches`
+- `for_each_batch`
+- `map_chunks`
+- `fold_chunks`
 
 ### Serial fallback
 
@@ -475,13 +477,13 @@ There are two useful shapes above the common executor.
 
 #### Mapped chunk API
 
-`for_each_mapped_chunk_parallel_with_options` parses a chunk into `RawMftChunkBatch`, applies a worker-side mapping function, and emits the mapped result in deterministic order.
+`RawMft::parallel().map_chunks(...)` parses a chunk into `RawMftChunkBatch`, applies a worker-side mapping function, and emits the mapped result in deterministic order.
 
 Use this when the natural unit of work is still a chunk-sized batch.
 
 #### Folded chunk API
 
-`for_each_folded_chunk_parallel_with_options` creates a worker-local accumulator per chunk with `init(chunk)`, then folds each `RawMftEntry` into that accumulator with `fold_entry(&mut acc, entry)`.
+`RawMft::parallel().fold_chunks(...)` creates a worker-local accumulator per chunk with `init(chunk)`, then folds each `RawMftBatchEntry` into that accumulator with `fold_entry(&mut acc, entry)`.
 
 Use this when you want to avoid building a large intermediate `Vec<RawMftBatchEntry>` for every chunk.
 
@@ -509,7 +511,7 @@ It also tunes the reader buffers:
 
 ### Planner choices in the benchmark
 
-The benchmark's `RawMftWorkPlanOptions` use:
+The benchmark's `RawMftChunkPlanOptions` use:
 
 - `skip_unused: false`,
 - `start_record`: configurable, default 24,
@@ -518,7 +520,7 @@ The benchmark's `RawMftWorkPlanOptions` use:
 
 This is a subtle but important choice.
 
-The benchmark plans dense logical windows but still parses with `RawMftIterOptions::default()` for `skip_unused`, which remains true unless explicitly changed. In other words:
+The benchmark plans dense logical windows but still parses with `RawMftScanOptions::default()` for `skip_unused`, which remains true unless explicitly changed. In other words:
 
 - chunk planning does not split at unused-record gaps,
 - the parser inside each worker still skips unused records.

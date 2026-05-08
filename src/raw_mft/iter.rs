@@ -6,7 +6,7 @@ use crate::{
         attr_list::{enrich_from_attr_list, should_enrich_from_attr_list},
         entry::{EntryBuildOptions, RawMftEntry},
         io::VolumeReader,
-        options::RawMftIterOptions,
+        options::RawMftScanOptions,
         reader::entry_build_options,
         serial_driver::{SerialParseState, next_record_output_with_hooks},
     },
@@ -31,14 +31,14 @@ pub struct RawMftIter<'a> {
 
 impl<'a> RawMft<'a> {
     /// Begin iteration with default options.
-    pub fn try_iter(&self) -> Result<RawMftIter<'_>, UsnError> {
-        self.try_iter_with_options(RawMftIterOptions::default())
+    pub fn iter(&self) -> Result<RawMftIter<'_>, UsnError> {
+        self.iter_with_options(RawMftScanOptions::default())
     }
 
     /// Begin iteration with custom options.
-    pub fn try_iter_with_options(
+    pub fn iter_with_options(
         &self,
-        options: RawMftIterOptions,
+        options: RawMftScanOptions,
     ) -> Result<RawMftIter<'_>, UsnError> {
         let (reader, attr_reader) = self.buffered_readers_for_options(&options)?;
         let scan = SerialParseState::from_options(self, &options);

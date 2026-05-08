@@ -10,12 +10,14 @@ use crate::{Fid, FileAttributes, Filetime};
 
 use super::{
     FileNameNamespace, RawMftEntry, RawMftLink, RawMftWorkChunk,
-    attribute::{NtfsAttribute, NtfsAttributeType, file_attr_flags, for_each_attribute},
-    builder_common::{
-        FileNameTracker, capture_attribute_list, current_file_name, resident_reparse_tag,
-    },
+    attribute_capture::resident_reparse_tag,
+    attribute_fold::{AttributeConsumer, fold_record_attributes},
     entry::AttributeListInfo,
-    record::FileRecord,
+    name_selection::{FileNameSelector, current_file_name},
+    ondisk::{
+        attribute::{NtfsAttribute, file_attr_flags},
+        record::FileRecord,
+    },
 };
 
 /// Parsed batch result for one logical raw-MFT work chunk.
@@ -88,10 +90,7 @@ impl RawMftBatchScratch {
         collect_dos_file_name_links: bool,
     ) -> (Self, Option<AttributeListInfo>) {
         let mut builder = RawMftBatchEntryBuilder::new(record, collect_dos_file_name_links);
-        let (attrs_off, used) = record.attrs_range();
-        for_each_attribute(record.data, attrs_off, used, |attr| {
-            builder.consume_attribute(attr);
-        });
+        fold_record_attributes(record, &mut builder);
         builder.build()
     }
 
@@ -123,7 +122,7 @@ impl From<RawMftEntry> for RawMftBatchEntry {
 
 struct RawMftBatchEntryBuilder {
     scratch: RawMftBatchScratch,
-    file_names: FileNameTracker,
+    file_names: FileNameSelector,
     attr_list: Option<AttributeListInfo>,
 }
 
@@ -150,29 +149,8 @@ impl RawMftBatchEntryBuilder {
                 have_unnamed_data: false,
                 is_reparse_point: false,
             },
-            file_names: FileNameTracker::new(collect_dos_file_name_links),
+            file_names: FileNameSelector::new(collect_dos_file_name_links),
             attr_list: None,
-        }
-    }
-
-    fn consume_attribute(&mut self, attr: &NtfsAttribute<'_>) {
-        let type_id = attr.type_id();
-        if type_id == NtfsAttributeType::StandardInformation as u32 {
-            self.apply_standard_information(attr);
-        } else if type_id == NtfsAttributeType::FileName as u32 {
-            self.apply_file_name(attr);
-        } else if type_id == NtfsAttributeType::Data as u32 {
-            self.apply_data_attribute(attr);
-        } else if type_id == NtfsAttributeType::ReparsePoint as u32 {
-            self.apply_reparse_point_attribute(attr);
-        } else if type_id == NtfsAttributeType::AttributeList as u32 {
-            self.capture_attribute_list(attr);
-        }
-    }
-
-    fn capture_attribute_list(&mut self, attr: &NtfsAttribute<'_>) {
-        if let Some(attr_list) = capture_attribute_list(attr) {
-            self.attr_list = Some(attr_list);
         }
     }
 
@@ -248,5 +226,27 @@ impl RawMftBatchEntryBuilder {
         }
         self.scratch.entry.links = self.file_names.into_links();
         (self.scratch, self.attr_list)
+    }
+}
+
+impl AttributeConsumer for RawMftBatchEntryBuilder {
+    fn on_standard_information(&mut self, attr: &NtfsAttribute<'_>) {
+        self.apply_standard_information(attr);
+    }
+
+    fn on_file_name(&mut self, attr: &NtfsAttribute<'_>) {
+        self.apply_file_name(attr);
+    }
+
+    fn on_data(&mut self, attr: &NtfsAttribute<'_>) {
+        self.apply_data_attribute(attr);
+    }
+
+    fn on_reparse_point(&mut self, attr: &NtfsAttribute<'_>) {
+        self.apply_reparse_point_attribute(attr);
+    }
+
+    fn on_attribute_list(&mut self, attr_list: AttributeListInfo) {
+        self.attr_list = Some(attr_list);
     }
 }

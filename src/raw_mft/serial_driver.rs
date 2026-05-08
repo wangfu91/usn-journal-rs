@@ -8,11 +8,10 @@ use log::warn;
 use crate::{
     errors::UsnError,
     raw_mft::{
-        extent::ExtentLookupCursor,
         io::VolumeReader,
-        options::RawMftIterOptions,
+        ondisk::{extent::ExtentLookupCursor, record::FileRecord},
+        options::RawMftScanOptions,
         reader::io_err,
-        record::FileRecord,
     },
 };
 
@@ -84,16 +83,16 @@ pub(super) struct SerialParseState {
 
 impl SerialParseState {
     /// Create scan state that follows the logical range encoded in iterator options.
-    pub(super) fn from_options(mft: &RawMft<'_>, options: &RawMftIterOptions) -> Self {
+    pub(super) fn from_options(mft: &RawMft<'_>, options: &RawMftScanOptions) -> Self {
         let total = mft.record_count();
-        let end_record = options.end_record.unwrap_or(total).min(total);
-        Self::for_range(mft, options, options.start_record, end_record)
+        let end_record = options.range.end_record.unwrap_or(total).min(total);
+        Self::for_range(mft, options, options.range.start_record, end_record)
     }
 
     /// Create scan state for an explicit logical record range.
     pub(super) fn for_range(
         mft: &RawMft<'_>,
-        options: &RawMftIterOptions,
+        options: &RawMftScanOptions,
         start_record: u64,
         end_record: u64,
     ) -> Self {
@@ -152,7 +151,9 @@ where
         };
 
         let token = hooks.stage_start(SerialScanStage::Borrow);
-        let buf = reader.borrow_at(offset, state.record_size).map_err(io_err)?;
+        let buf = reader
+            .borrow_at(offset, state.record_size)
+            .map_err(io_err)?;
         hooks.stage_finish(SerialScanStage::Borrow, token);
 
         let token = hooks.stage_start(SerialScanStage::Validate);

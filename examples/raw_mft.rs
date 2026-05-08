@@ -40,7 +40,7 @@ fn run() -> Result<(), UsnError> {
     );
 
     let mut count = 0u64;
-    for result in mft.try_iter()? {
+    for result in mft.iter()? {
         match result {
             Ok(entry) => {
                 let path = resolver.resolve_path(&entry);

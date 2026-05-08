@@ -6,7 +6,7 @@ use crate::{
     errors::UsnError,
     raw_mft::{
         attr_list::{enrich_from_attr_list, should_enrich_from_attr_list},
-        options::RawMftIterOptions,
+        options::RawMftScanOptions,
         reader::entry_build_options,
         serial_driver::{
             SerialParseState, SerialScanHooks, SerialScanStage, accumulate_stage_elapsed,
@@ -132,25 +132,26 @@ impl SerialScanHooks for ProfileScanHooks<'_> {
 impl<'a> RawMft<'a> {
     /// Run the current serial parser and return stage-by-stage timings.
     pub fn profile(&self) -> Result<RawMftProfile, UsnError> {
-        self.profile_with_options(RawMftIterOptions::default())
+        self.profile_with_options(RawMftScanOptions::default())
     }
 
     /// Run the current serial parser with custom options and return stage timings.
     pub fn profile_with_options(
         &self,
-        options: RawMftIterOptions,
+        options: RawMftScanOptions,
     ) -> Result<RawMftProfile, UsnError> {
         let (mut reader, mut attr_reader) = self.buffered_readers_for_options(&options)?;
         let end = options
+            .range
             .end_record
             .unwrap_or(self.record_count())
             .min(self.record_count());
         let build_options = entry_build_options(&options);
         let mut scan = SerialParseState::from_options(self, &options);
         let mut profile = RawMftProfile {
-            start_record: options.start_record,
+            start_record: options.range.start_record,
             end_record: end,
-            buffer_bytes: options.buffer_bytes.get(),
+            buffer_bytes: options.buffers.main.get(),
             ..RawMftProfile::default()
         };
         let mut scan_stats = ProfileScanStats::default();
@@ -161,50 +162,44 @@ impl<'a> RawMft<'a> {
                 let mut hooks = ProfileScanHooks {
                     stats: &mut scan_stats,
                 };
-                next_record_output_with_hooks(
-                    self,
-                    &mut scan,
-                    &mut reader,
-                    &mut hooks,
-                    |record| {
-                        let record_number = record.number;
+                next_record_output_with_hooks(self, &mut scan, &mut reader, &mut hooks, |record| {
+                    let record_number = record.number;
 
-                        let entry_build_start = Instant::now();
-                        let (mut entry, attr_list) =
-                            crate::raw_mft::entry::RawMftEntry::from_record_with_attr_list(
-                                record,
-                                build_options,
-                            );
-                        profile.entry_build_elapsed += entry_build_start.elapsed();
+                    let entry_build_start = Instant::now();
+                    let (mut entry, attr_list) =
+                        crate::raw_mft::entry::RawMftEntry::from_record_with_attr_list(
+                            record,
+                            build_options,
+                        );
+                    profile.entry_build_elapsed += entry_build_start.elapsed();
 
-                        if let Some(attr_list) = attr_list
-                            && should_enrich_from_attr_list(&entry)
-                        {
-                            profile.attr_list_enrichments_attempted += 1;
-                            let enrich_start = Instant::now();
-                            let enrich_stats = enrich_from_attr_list(
-                                &mut entry,
-                                attr_list,
-                                record_number,
-                                &mut attr_reader,
-                                &self.boot,
-                                self.extent_map.as_ref(),
-                                build_options,
-                            );
-                            profile.attr_list_enrich_elapsed += enrich_start.elapsed();
-                            profile.attr_list_extension_records_referenced +=
-                                enrich_stats.extension_records_referenced;
-                            profile.attr_list_extension_records_loaded +=
-                                enrich_stats.extension_records_loaded;
-                            if enrich_stats.extension_records_loaded > 0 {
-                                profile.attr_list_enrichments_with_extension_loads += 1;
-                            }
+                    if let Some(attr_list) = attr_list
+                        && should_enrich_from_attr_list(&entry)
+                    {
+                        profile.attr_list_enrichments_attempted += 1;
+                        let enrich_start = Instant::now();
+                        let enrich_stats = enrich_from_attr_list(
+                            &mut entry,
+                            attr_list,
+                            record_number,
+                            &mut attr_reader,
+                            &self.boot,
+                            self.extent_map.as_ref(),
+                            build_options,
+                        );
+                        profile.attr_list_enrich_elapsed += enrich_start.elapsed();
+                        profile.attr_list_extension_records_referenced +=
+                            enrich_stats.extension_records_referenced;
+                        profile.attr_list_extension_records_loaded +=
+                            enrich_stats.extension_records_loaded;
+                        if enrich_stats.extension_records_loaded > 0 {
+                            profile.attr_list_enrichments_with_extension_loads += 1;
                         }
+                    }
 
-                        profile.records_yielded += 1;
-                        Ok(())
-                    },
-                )?
+                    profile.records_yielded += 1;
+                    Ok(())
+                })?
             };
 
             if next.is_none() {

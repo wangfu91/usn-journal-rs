@@ -14,7 +14,7 @@ use std::{
 
 use crate::{
     errors::UsnError,
-    raw_mft::{RawMft, io::VolumeReader, options::RawMftIterOptions, work_plan::RawMftWorkChunk},
+    raw_mft::{RawMft, io::VolumeReader, options::RawMftScanOptions, work_plan::RawMftWorkChunk},
     volume::Volume,
 };
 
@@ -29,7 +29,7 @@ enum ParallelVolumeSource {
 pub(super) fn run_parallel_chunks_in_order<T, Work, Visit>(
     mft: &RawMft<'_>,
     chunks: Vec<RawMftWorkChunk>,
-    options: RawMftIterOptions,
+    options: RawMftScanOptions,
     worker_count: NonZeroUsize,
     work_chunk: Work,
     mut visit: Visit,
@@ -38,7 +38,7 @@ where
     for<'m> Work: Fn(
             &RawMft<'m>,
             RawMftWorkChunk,
-            &RawMftIterOptions,
+            &RawMftScanOptions,
             &mut VolumeReader,
             &mut VolumeReader,
         ) -> Result<T, UsnError>
@@ -111,14 +111,9 @@ where
                     }
 
                     let chunk = chunks[index];
-                    let result = work_chunk(
-                        &worker_mft,
-                        chunk,
-                        &options,
-                        &mut reader,
-                        &mut attr_reader,
-                    )
-                    .map(|result| (index, result));
+                    let result =
+                        work_chunk(&worker_mft, chunk, &options, &mut reader, &mut attr_reader)
+                            .map(|result| (index, result));
                     if tx.send(result).is_err() {
                         break;
                     }
@@ -140,7 +135,7 @@ where
 }
 
 /// Build a stable error when available parallelism cannot be queried.
-pub(super) fn available_parallelism_error(error: io::Error) -> UsnError {
+pub(crate) fn available_parallelism_error(error: io::Error) -> UsnError {
     UsnError::Io(io::Error::other(format!(
         "failed to query available parallelism: {error}"
     )))

@@ -10,15 +10,14 @@ use crate::{
     file_attributes::FileAttributeView,
     path::PathResolvableEntry,
     raw_mft::{
-        attribute::{
-            FileNameNamespace, NtfsAttribute, NtfsAttributeType, file_attr_flags,
-            for_each_attribute,
+        attribute_capture::resident_reparse_tag,
+        attribute_fold::{AttributeConsumer, fold_record_attributes},
+        name_selection::{FileNameSelector, current_file_name},
+        ondisk::{
+            attribute::{FileNameNamespace, NtfsAttribute, file_attr_flags},
+            data_run::{DataRunSummary, summarize_runs},
+            record::FileRecord,
         },
-        builder_common::{
-            FileNameTracker, capture_attribute_list, current_file_name, resident_reparse_tag,
-        },
-        data_run::{DataRunSummary, summarize_runs},
-        record::FileRecord,
     },
 };
 
@@ -168,12 +167,7 @@ impl RawMftEntry {
         options: EntryBuildOptions,
     ) -> (Self, Option<AttributeListInfo>) {
         let mut builder = RawMftEntryBuilder::new(record, options);
-
-        let (attrs_off, used) = record.attrs_range();
-        for_each_attribute(record.data, attrs_off, used, |attr| {
-            builder.consume_attribute(attr);
-        });
-
+        fold_record_attributes(record, &mut builder);
         builder.build()
     }
 }
@@ -184,7 +178,7 @@ struct RawMftEntryBuilder {
     /// Alternate streams accumulated while walking attributes.
     alternate_data_streams: Vec<AdsInfo>,
     /// Shared `$FILE_NAME` selection and link-retention state.
-    file_names: FileNameTracker,
+    file_names: FileNameSelector,
     /// Whether the unnamed `$DATA` attribute has already been consumed.
     have_unnamed_data: bool,
     /// Captured `$ATTRIBUTE_LIST` data, if any.
@@ -234,29 +228,11 @@ impl RawMftEntryBuilder {
                 links: Box::default(),
             },
             alternate_data_streams: Vec::new(),
-            file_names: FileNameTracker::new(options.collect_dos_file_name_links),
+            file_names: FileNameSelector::new(options.collect_dos_file_name_links),
             have_unnamed_data: false,
             attr_list: None,
             collect_alternate_data_streams: options.collect_alternate_data_streams,
             collect_data_run_summary: options.collect_data_run_summary,
-        }
-    }
-
-    /// Dispatch a single attribute to the appropriate accumulator.
-    fn consume_attribute(&mut self, attr: &NtfsAttribute<'_>) {
-        let type_id = attr.type_id();
-        if type_id == NtfsAttributeType::StandardInformation as u32 {
-            self.apply_standard_information(attr);
-        } else if type_id == NtfsAttributeType::FileName as u32 {
-            self.apply_file_name(attr);
-        } else if type_id == NtfsAttributeType::Data as u32 {
-            self.apply_data_attribute(attr);
-        } else if type_id == NtfsAttributeType::ReparsePoint as u32 {
-            self.apply_reparse_point_attribute(attr);
-        } else if type_id == NtfsAttributeType::AttributeList as u32
-            && let Some(attr_list) = capture_attribute_list(attr)
-        {
-            self.attr_list = Some(attr_list);
         }
     }
 
@@ -446,6 +422,28 @@ impl RawMftEntryBuilder {
     }
 }
 
+impl AttributeConsumer for RawMftEntryBuilder {
+    fn on_standard_information(&mut self, attr: &NtfsAttribute<'_>) {
+        self.apply_standard_information(attr);
+    }
+
+    fn on_file_name(&mut self, attr: &NtfsAttribute<'_>) {
+        self.apply_file_name(attr);
+    }
+
+    fn on_data(&mut self, attr: &NtfsAttribute<'_>) {
+        self.apply_data_attribute(attr);
+    }
+
+    fn on_reparse_point(&mut self, attr: &NtfsAttribute<'_>) {
+        self.apply_reparse_point_attribute(attr);
+    }
+
+    fn on_attribute_list(&mut self, attr_list: AttributeListInfo) {
+        self.attr_list = Some(attr_list);
+    }
+}
+
 impl FileAttributeView for RawMftEntry {
     fn file_attributes(&self) -> FileAttributes {
         self.si_file_attributes
@@ -470,7 +468,7 @@ impl PathResolvableEntry for RawMftEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::raw_mft::{
+    use crate::raw_mft::ondisk::{
         attribute::{
             FileNameNamespace, NtfsAttributeHeader, NtfsAttributeType, NtfsFileNameHeader,
             NtfsResidentAttributeHeader, NtfsStandardInformation,

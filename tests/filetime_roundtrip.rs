@@ -26,7 +26,7 @@ fn get_seed_entry() -> Option<usn_journal_rs::raw_mft::RawMftEntry> {
     let volume = Volume::from_drive_letter('C').ok()?;
     let raw_mft = RawMft::new(&volume).ok()?;
     raw_mft
-        .try_iter()
+        .iter()
         .ok()?
         .filter_map(|r: Result<RawMftEntry, UsnError>| r.ok())
         .take(2_000)

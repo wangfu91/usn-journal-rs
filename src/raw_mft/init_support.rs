@@ -10,13 +10,15 @@ use log::warn;
 use crate::{
     errors::UsnError,
     raw_mft::{
-        attribute::{NtfsAttribute, NtfsAttributeType, for_each_attribute},
-        boot::BootSector,
-        data_run::{DataRun, decode_runs},
-        extent::ExtentMap,
         io::VolumeReader,
+        ondisk::{
+            attribute::{NtfsAttribute, NtfsAttributeType, for_each_attribute},
+            boot::BootSector,
+            data_run::{DataRun, decode_runs},
+            extent::ExtentMap,
+            record::{FileRecord, MFT_RECORD_NUMBER},
+        },
         reader::{io_err, read_nonresident},
-        record::{FileRecord, MFT_RECORD_NUMBER},
     },
     volume::Volume,
 };
@@ -44,7 +46,8 @@ pub(super) fn bootstrap_mft_state(
     let mut reader = VolumeReader::new(volume.handle, boot.bytes_per_sector as u64)?;
     let mut record0 = read_mft_record_zero(&mut reader, boot)?;
     let streams = {
-        let record = FileRecord::parse(MFT_RECORD_NUMBER, Some(boot.mft_byte_offset), &mut record0)?;
+        let record =
+            FileRecord::parse(MFT_RECORD_NUMBER, Some(boot.mft_byte_offset), &mut record0)?;
         discover_mft_stream_runs(&record)
     };
 

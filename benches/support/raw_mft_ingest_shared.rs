@@ -10,8 +10,8 @@ use rustc_hash::FxHashMap;
 use usn_journal_rs::{
     errors::UsnError,
     raw_mft::{
-        FileNameNamespace, RawMft, RawMftBatchEntry, RawMftEntry, RawMftIterOptions, RawMftLink,
-        RawMftWorkChunk, RawMftWorkPlanOptions,
+        FileNameNamespace, RawMft, RawMftBatchEntry, RawMftChunkPlanOptions, RawMftEntry,
+        RawMftLink, RawMftScanOptions, RawMftWorkChunk,
     },
     volume::Volume,
 };
@@ -62,8 +62,8 @@ impl BenchConfig {
         }
     }
 
-    fn iter_options(&self) -> RawMftIterOptions {
-        RawMftIterOptions::builder()
+    fn iter_options(&self) -> RawMftScanOptions {
+        RawMftScanOptions::builder()
             .buffer_bytes(self.main_buffer_bytes)
             .attr_buffer_bytes(self.attr_buffer_bytes)
             .skip_extension_records(true)
@@ -75,13 +75,13 @@ impl BenchConfig {
             .build()
     }
 
-    fn work_plan_options(&self) -> RawMftWorkPlanOptions {
-        RawMftWorkPlanOptions {
-            skip_unused: false,
-            start_record: self.start_record,
-            end_record: self.end_record,
-            max_records_per_chunk: self.chunk_records,
-        }
+    fn work_plan_options(&self) -> RawMftChunkPlanOptions {
+        RawMftChunkPlanOptions::builder()
+            .skip_unused(false)
+            .start_record(self.start_record)
+            .end_record(self.end_record)
+            .max_records_per_chunk(self.chunk_records)
+            .build()
     }
 }
 
@@ -144,7 +144,7 @@ pub fn run_parallel_ingest(
     mft: &RawMft<'_>,
     config: &BenchConfig,
 ) -> Result<BenchSummary, UsnError> {
-    let chunks = mft.plan_work_chunks_with_options(config.work_plan_options());
+    let chunks = mft.plan_chunks_with_options(config.work_plan_options());
     let iter_options = config.iter_options();
     let record_table_len = record_count_hint(mft, config);
     let mut records = Vec::with_capacity(record_table_len);
@@ -157,27 +157,28 @@ pub fn run_parallel_ingest(
             records: &mut records,
             children_by_parent: &mut children_by_parent,
         };
-        mft.for_each_folded_chunk_parallel_with_options(
-            chunks,
-            iter_options,
-            config.worker_count,
-            new_partial_ingest,
-            |partial, entry| {
-                ingest_raw_entry_partial(entry, partial);
-                Ok(())
-            },
-            |partial| {
-                merge_partial_ingest(partial, &mut targets);
-                Ok(())
-            },
-        )?;
+        mft.parallel()
+            .chunks(chunks)
+            .scan_options(iter_options)
+            .workers(config.worker_count)
+            .fold_chunks(
+                new_partial_ingest,
+                |partial, entry| {
+                    ingest_raw_entry_partial(entry, partial);
+                    Ok(())
+                },
+                |partial| {
+                    merge_partial_ingest(partial, &mut targets);
+                    Ok(())
+                },
+            )?;
     }
 
     Ok(summarize_targets(&records, &children_by_parent))
 }
 
 pub fn run_serial_ingest(mft: &RawMft<'_>, config: &BenchConfig) -> Result<BenchSummary, UsnError> {
-    let iter = mft.try_iter_with_options(config.iter_options())?;
+    let iter = mft.iter_with_options(config.iter_options())?;
     let record_table_len = record_count_hint(mft, config);
     let mut records = Vec::with_capacity(record_table_len);
     records.resize_with(record_table_len, || None);

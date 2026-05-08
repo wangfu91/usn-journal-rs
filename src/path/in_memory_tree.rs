@@ -47,7 +47,7 @@ impl InMemoryDirTree {
         };
         let mut entries =
             FxHashMap::with_capacity_and_hasher(estimated_used_records, Default::default());
-        for r in raw_mft.try_iter()? {
+        for r in raw_mft.iter()? {
             let entry = match r {
                 Ok(e) => e,
                 Err(_) => continue,

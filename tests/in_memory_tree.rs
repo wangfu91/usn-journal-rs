@@ -49,8 +49,8 @@ fn in_memory_tree_paths_exist_on_disk() {
     let mut matched = 0usize;
 
     for entry in raw_mft
-        .try_iter()
-        .expect("RawMft::try_iter failed")
+        .iter()
+        .expect("RawMft::iter failed")
         .filter_map(|r: Result<RawMftEntry, UsnError>| r.ok())
         .filter(|e| e.is_used && !e.file_name.is_empty())
         .take(200)

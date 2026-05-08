@@ -8,13 +8,10 @@ use crate::{
     raw_mft::{
         attr_list::{enrich_from_attr_list, should_enrich_from_attr_list},
         batch::RawMftBatchScratch,
-        boot::BootSector,
-        data_run::DataRun,
         entry::{AttributeListInfo, EntryBuildOptions, RawMftEntry},
-        extent::ExtentMap,
         io::VolumeReader,
-        options::RawMftIterOptions,
-        record::FileRecord,
+        ondisk::{boot::BootSector, data_run::DataRun, extent::ExtentMap, record::FileRecord},
+        options::RawMftScanOptions,
     },
 };
 
@@ -25,17 +22,17 @@ impl<'a> RawMft<'a> {
     /// one for the main sequential path and one for extension-record lookups.
     pub(super) fn buffered_readers_for_options(
         &self,
-        options: &RawMftIterOptions,
+        options: &RawMftScanOptions,
     ) -> Result<(VolumeReader, VolumeReader), UsnError> {
         let reader = VolumeReader::with_buffer_bytes(
             self.volume.handle,
             self.boot.bytes_per_sector as u64,
-            options.buffer_bytes.get(),
+            options.buffers.main.get(),
         )?;
         let attr_reader = VolumeReader::with_buffer_bytes(
             self.volume.handle,
             self.boot.bytes_per_sector as u64,
-            options.attr_buffer_bytes.get(),
+            options.buffers.attr.get(),
         )?;
         Ok((reader, attr_reader))
     }
@@ -43,11 +40,11 @@ impl<'a> RawMft<'a> {
 
 /// Convert iterator options into the entry-build options consumed by the
 /// rich entry builder.
-pub(super) fn entry_build_options(options: &RawMftIterOptions) -> EntryBuildOptions {
+pub(super) fn entry_build_options(options: &RawMftScanOptions) -> EntryBuildOptions {
     EntryBuildOptions {
-        collect_alternate_data_streams: options.collect_alternate_data_streams,
-        collect_data_run_summary: options.collect_data_run_summary,
-        collect_dos_file_name_links: options.collect_dos_file_name_links,
+        collect_alternate_data_streams: options.entry.collect_alternate_data_streams,
+        collect_data_run_summary: options.entry.collect_data_run_summary,
+        collect_dos_file_name_links: options.entry.collect_dos_file_name_links,
     }
 }
 

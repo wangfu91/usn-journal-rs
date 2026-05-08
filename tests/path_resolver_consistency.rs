@@ -46,8 +46,8 @@ fn all_three_resolvers_agree() {
 
     // Collect every 1 000th used entry with a non-empty name (up to 50).
     let entries: Vec<_> = raw_mft
-        .try_iter()
-        .expect("RawMft::try_iter failed")
+        .iter()
+        .expect("RawMft::iter failed")
         .filter_map(|r: Result<RawMftEntry, UsnError>| r.ok())
         .filter(|e| e.is_used && !e.file_name.is_empty())
         .enumerate()

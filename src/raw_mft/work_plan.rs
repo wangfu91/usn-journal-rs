@@ -2,7 +2,7 @@
 
 use std::num::NonZeroU64;
 
-use crate::raw_mft::record::FIRST_NORMAL_RECORD;
+use crate::raw_mft::{ondisk::record::FIRST_NORMAL_RECORD, options::RawMftRecordRange};
 
 /// A deterministic logical record range for raw `$MFT` parsing work.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -23,25 +23,92 @@ impl RawMftWorkChunk {
 
 /// Options controlling logical work-chunk planning for raw `$MFT` parsing.
 #[derive(Debug, Clone)]
-pub struct RawMftWorkPlanOptions {
+pub struct RawMftChunkPlanOptions {
     /// Whether unused records should be dropped using the `$MFT` bitmap.
-    pub skip_unused: bool,
-    /// Inclusive first record number to consider.
-    pub start_record: u64,
-    /// Exclusive end record number to consider. `None` means `record_count()`.
-    pub end_record: Option<u64>,
+    pub(crate) skip_unused: bool,
+    /// Logical record range to consider.
+    pub(crate) range: RawMftRecordRange,
     /// Maximum logical records per chunk.
-    pub max_records_per_chunk: NonZeroU64,
+    pub(crate) max_records_per_chunk: NonZeroU64,
 }
 
-impl Default for RawMftWorkPlanOptions {
+impl Default for RawMftChunkPlanOptions {
     fn default() -> Self {
         Self {
             skip_unused: true,
-            start_record: FIRST_NORMAL_RECORD,
+            range: RawMftRecordRange::new(FIRST_NORMAL_RECORD, None),
             max_records_per_chunk: NonZeroU64::new(16 * 1024).unwrap_or(NonZeroU64::MIN),
-            end_record: None,
         }
+    }
+}
+
+impl RawMftChunkPlanOptions {
+    /// Returns a fluent builder for [`RawMftChunkPlanOptions`].
+    pub fn builder() -> RawMftChunkPlanOptionsBuilder {
+        RawMftChunkPlanOptionsBuilder::default()
+    }
+
+    /// Whether unused records are dropped using the `$MFT` bitmap.
+    #[must_use]
+    pub const fn skip_unused(&self) -> bool {
+        self.skip_unused
+    }
+
+    /// Logical record range to consider.
+    #[must_use]
+    pub const fn range(&self) -> RawMftRecordRange {
+        self.range
+    }
+
+    /// Maximum logical records per chunk.
+    #[must_use]
+    pub const fn max_records_per_chunk(&self) -> NonZeroU64 {
+        self.max_records_per_chunk
+    }
+}
+
+/// Fluent builder for [`RawMftChunkPlanOptions`].
+#[derive(Debug, Default, Clone)]
+#[must_use]
+pub struct RawMftChunkPlanOptionsBuilder {
+    inner: RawMftChunkPlanOptions,
+}
+
+impl RawMftChunkPlanOptionsBuilder {
+    /// Whether unused records should be dropped using the `$MFT` bitmap.
+    pub fn skip_unused(mut self, v: bool) -> Self {
+        self.inner.skip_unused = v;
+        self
+    }
+
+    /// Set the logical record range to consider.
+    pub fn range(mut self, v: RawMftRecordRange) -> Self {
+        self.inner.range = v;
+        self
+    }
+
+    /// Set the inclusive first record number to consider.
+    pub fn start_record(mut self, v: u64) -> Self {
+        self.inner.range.start_record = v;
+        self
+    }
+
+    /// Set the exclusive end record number to consider.
+    pub fn end_record(mut self, v: Option<u64>) -> Self {
+        self.inner.range.end_record = v;
+        self
+    }
+
+    /// Set the maximum logical records per chunk.
+    pub fn max_records_per_chunk(mut self, v: NonZeroU64) -> Self {
+        self.inner.max_records_per_chunk = v;
+        self
+    }
+
+    /// Finalize the builder.
+    #[must_use]
+    pub fn build(self) -> RawMftChunkPlanOptions {
+        self.inner
     }
 }
 

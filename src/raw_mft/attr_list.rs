@@ -15,12 +15,14 @@ use crate::{
     Fid,
     errors::UsnError,
     raw_mft::{
-        attribute::{FileNameNamespace, NtfsAttributeType, for_each_attr_list_entry},
         batch::RawMftBatchScratch,
-        boot::BootSector,
         entry::{AttributeListInfo, EntryBuildOptions, RawMftEntry, RawMftLink},
-        extent::ExtentMap,
         io::VolumeReader,
+        ondisk::{
+            attribute::{FileNameNamespace, NtfsAttributeType, for_each_attr_list_entry},
+            boot::BootSector,
+            extent::ExtentMap,
+        },
         reader::{read_batch_record_raw, read_nonresident, read_record_raw},
     },
 };
@@ -36,7 +38,7 @@ pub(super) struct AttrListEnrichStats {
 
 /// The categories of metadata a base record is still missing.
 #[derive(Debug, Clone, Copy, Default)]
-struct AttrListEnrichNeeds {
+struct EnrichmentNeeds {
     /// The base record needs a better file name or additional hard-link names.
     file_name: bool,
     /// The base record needs unnamed-data metadata or ADS details.
@@ -45,7 +47,7 @@ struct AttrListEnrichNeeds {
     reparse: bool,
 }
 
-impl AttrListEnrichNeeds {
+impl EnrichmentNeeds {
     /// Whether any enrichment work remains for the current base record.
     fn any(self) -> bool {
         self.file_name || self.data || self.reparse
@@ -74,7 +76,7 @@ struct LinkView<'a> {
 
 /// Return `true` when a raw entry should consult its `$ATTRIBUTE_LIST`.
 pub(super) fn should_enrich_from_attr_list(entry: &RawMftEntry) -> bool {
-    attr_list_enrich_needs(entry).any()
+    raw_entry_enrichment_needs(entry).any()
 }
 
 /// Enrich a raw entry from one level of extension records referenced by its
@@ -88,7 +90,7 @@ pub(super) fn enrich_from_attr_list(
     extent_map: &ExtentMap,
     build_options: EntryBuildOptions,
 ) -> AttrListEnrichStats {
-    let needs = attr_list_enrich_needs(entry);
+    let needs = raw_entry_enrichment_needs(entry);
     if !needs.any() {
         return AttrListEnrichStats::default();
     }
@@ -136,7 +138,7 @@ pub(super) fn enrich_from_attr_list(
 /// Return `true` when a batch scratch entry should consult its
 /// `$ATTRIBUTE_LIST`.
 pub(super) fn should_enrich_batch_from_attr_list(entry: &RawMftBatchScratch) -> bool {
-    attr_list_batch_enrich_needs(entry).any()
+    batch_entry_enrichment_needs(entry).any()
 }
 
 /// Enrich a batch scratch entry from one level of extension records.
@@ -149,7 +151,7 @@ pub(super) fn enrich_batch_from_attr_list(
     extent_map: &ExtentMap,
     collect_dos_file_name_links: bool,
 ) -> AttrListEnrichStats {
-    let needs = attr_list_batch_enrich_needs(entry);
+    let needs = batch_entry_enrichment_needs(entry);
     if !needs.any() {
         return AttrListEnrichStats::default();
     }
@@ -210,7 +212,7 @@ fn materialize_attr_list(
             runs_data,
             data_size,
         } => {
-            let runs = match crate::raw_mft::data_run::decode_runs(&runs_data) {
+            let runs = match crate::raw_mft::ondisk::data_run::decode_runs(&runs_data) {
                 Ok((runs, _)) => runs,
                 Err(error) => {
                     warn!(
@@ -282,11 +284,7 @@ where
 
 /// Extract unique extension-record numbers from a materialized
 /// `$ATTRIBUTE_LIST` payload.
-fn collect_extension_records<F>(
-    data: &[u8],
-    base_record_number: u64,
-    wants_type: F,
-) -> Vec<u64>
+fn collect_extension_records<F>(data: &[u8], base_record_number: u64, wants_type: F) -> Vec<u64>
 where
     F: Fn(u32) -> bool,
 {
@@ -304,8 +302,8 @@ where
 }
 
 /// Compute the metadata categories missing from a rich raw entry.
-fn attr_list_enrich_needs(entry: &RawMftEntry) -> AttrListEnrichNeeds {
-    AttrListEnrichNeeds {
+fn raw_entry_enrichment_needs(entry: &RawMftEntry) -> EnrichmentNeeds {
+    EnrichmentNeeds {
         file_name: entry.file_name.is_empty()
             || !matches!(
                 entry.namespace,
@@ -318,8 +316,8 @@ fn attr_list_enrich_needs(entry: &RawMftEntry) -> AttrListEnrichNeeds {
 }
 
 /// Compute the metadata categories missing from a lean batch scratch entry.
-fn attr_list_batch_enrich_needs(entry: &RawMftBatchScratch) -> AttrListEnrichNeeds {
-    AttrListEnrichNeeds {
+fn batch_entry_enrichment_needs(entry: &RawMftBatchScratch) -> EnrichmentNeeds {
+    EnrichmentNeeds {
         file_name: entry.entry.file_name.is_empty()
             || !matches!(
                 entry.entry.namespace,
@@ -331,11 +329,7 @@ fn attr_list_batch_enrich_needs(entry: &RawMftBatchScratch) -> AttrListEnrichNee
     }
 }
 
-fn merge_extension_data(
-    entry: &mut RawMftEntry,
-    ext_entry: &RawMftEntry,
-    needs: AttrListEnrichNeeds,
-) {
+fn merge_extension_data(entry: &mut RawMftEntry, ext_entry: &RawMftEntry, needs: EnrichmentNeeds) {
     if needs.data
         && (ext_entry.real_size > entry.real_size
             || ext_entry.allocated_size > entry.allocated_size)
@@ -365,7 +359,7 @@ fn merge_extension_data(
 fn merge_batch_extension_data(
     entry: &mut RawMftBatchScratch,
     ext_entry: &RawMftBatchScratch,
-    needs: AttrListEnrichNeeds,
+    needs: EnrichmentNeeds,
 ) {
     if needs.data
         && (ext_entry.entry.real_size > entry.entry.real_size
@@ -423,17 +417,18 @@ fn merge_batch_extension_links(entry: &mut RawMftBatchScratch, ext_entry: &RawMf
 
 /// Build the merged set of file-name links contributed by a base record and
 /// one extension record.
-fn merged_links(
-    base: LinkView<'_>,
-    ext: LinkView<'_>,
-) -> Option<Box<[RawMftLink]>> {
+fn merged_links(base: LinkView<'_>, ext: LinkView<'_>) -> Option<Box<[RawMftLink]>> {
     let has_single_ext_link = ext.links.is_empty() && !ext.file_name.is_empty();
     if !has_single_ext_link && ext.links.is_empty() {
         return None;
     }
 
     let base_link_count = usize::from(base.links.is_empty() && !base.file_name.is_empty());
-    let ext_link_count = if has_single_ext_link { 1 } else { ext.links.len() };
+    let ext_link_count = if has_single_ext_link {
+        1
+    } else {
+        ext.links.len()
+    };
     let mut links = Vec::with_capacity(base.links.len() + base_link_count + ext_link_count);
     links.extend_from_slice(base.links);
     if links.is_empty() && !base.file_name.is_empty() {
@@ -453,4 +448,73 @@ fn merged_links(
         links.extend_from_slice(ext.links);
     }
     Some(links.into_boxed_slice())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::OsString;
+
+    use crate::raw_mft::ondisk::attribute::AttributeListEntryHeader;
+
+    fn attr_list_entry(type_id: u32, record_number: u64) -> Vec<u8> {
+        let header = AttributeListEntryHeader {
+            type_id,
+            record_length: std::mem::size_of::<AttributeListEntryHeader>() as u16,
+            attribute_name_length: 0,
+            attribute_name_offset: 0,
+            lowest_vcn: 0,
+            file_reference: record_number,
+            attribute_id: 0,
+        };
+        let mut bytes = vec![0u8; std::mem::size_of::<AttributeListEntryHeader>()];
+        unsafe {
+            std::ptr::write_unaligned(bytes.as_mut_ptr() as *mut AttributeListEntryHeader, header);
+        }
+        bytes
+    }
+
+    #[test]
+    fn collect_extension_records_filters_base_and_duplicates() {
+        let base_record = 42;
+        let mut data = Vec::new();
+        data.extend_from_slice(&attr_list_entry(
+            NtfsAttributeType::FileName as u32,
+            base_record,
+        ));
+        data.extend_from_slice(&attr_list_entry(NtfsAttributeType::FileName as u32, 100));
+        data.extend_from_slice(&attr_list_entry(NtfsAttributeType::Data as u32, 100));
+        data.extend_from_slice(&attr_list_entry(NtfsAttributeType::Data as u32, 101));
+
+        let records = collect_extension_records(&data, base_record, |type_id| {
+            type_id == NtfsAttributeType::FileName as u32
+        });
+
+        assert_eq!(records, vec![100]);
+    }
+
+    #[test]
+    fn merged_links_includes_inline_base_and_extension_names() {
+        let base_name = OsString::from("base.txt");
+        let ext_name = OsString::from("ext.txt");
+        let links = merged_links(
+            LinkView {
+                links: &[],
+                parent_reference: Fid::new(5),
+                namespace: FileNameNamespace::Win32,
+                file_name: base_name.as_os_str(),
+            },
+            LinkView {
+                links: &[],
+                parent_reference: Fid::new(9),
+                namespace: FileNameNamespace::Win32,
+                file_name: ext_name.as_os_str(),
+            },
+        )
+        .expect("extension name should produce merged links");
+
+        assert_eq!(links.len(), 2);
+        assert_eq!(links[0].parent_reference, Fid::new(5));
+        assert_eq!(links[1].parent_reference, Fid::new(9));
+    }
 }

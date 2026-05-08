@@ -1,13 +1,10 @@
-//! Shared helpers used by the rich and lean raw-MFT entry builders.
+//! File-name namespace selection and retained-link policy.
 
 use std::ffi::OsString;
 
 use crate::{
     Fid,
-    raw_mft::{
-        attribute::{FileNameNamespace, NtfsAttribute},
-        entry::{AttributeListInfo, RawMftLink},
-    },
+    raw_mft::{FileNameNamespace, RawMftLink},
 };
 
 /// Borrowed view of the currently selected `$FILE_NAME`.
@@ -21,16 +18,15 @@ pub(super) struct CurrentFileName<'a> {
     pub(super) file_name: &'a OsString,
 }
 
-/// Shared state for choosing the best `$FILE_NAME` and retaining any
-/// additional hard-link names.
-pub(super) struct FileNameTracker {
+/// Chooses the best `$FILE_NAME` and retains additional hard-link names.
+pub(super) struct FileNameSelector {
     best_namespace_score: i32,
     links: Vec<RawMftLink>,
     collect_dos_file_name_links: bool,
 }
 
-impl FileNameTracker {
-    /// Create a fresh tracker configured for the caller's DOS-link policy.
+impl FileNameSelector {
+    /// Create a selector configured for the caller's DOS-link policy.
     pub(super) fn new(collect_dos_file_name_links: bool) -> Self {
         Self {
             best_namespace_score: -1,
@@ -106,8 +102,6 @@ impl FileNameTracker {
         self.links.into_boxed_slice()
     }
 
-    /// Return `true` when the current best name or any retained link already
-    /// carries a non-DOS name for the same parent directory.
     fn has_non_dos_file_name_link(
         &self,
         current: Option<CurrentFileName<'_>>,
@@ -121,8 +115,6 @@ impl FileNameTracker {
         })
     }
 
-    /// Decide whether a specific link should be retained when DOS aliases are
-    /// being filtered.
     fn should_retain_file_name_link(
         &self,
         link_namespace: FileNameNamespace,
@@ -160,35 +152,56 @@ pub(super) fn current_file_name(
     }
 }
 
-/// Capture raw `$ATTRIBUTE_LIST` bytes from either a resident or non-resident
-/// attribute payload.
-pub(super) fn capture_attribute_list(attr: &NtfsAttribute<'_>) -> Option<AttributeListInfo> {
-    if attr.is_non_resident() {
-        let header = attr.nonresident_header()?;
-        let runs_offset = header.data_runs_offset as usize;
-        let attr_bytes = attr.data();
-        if runs_offset > attr_bytes.len() {
-            return None;
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-        Some(AttributeListInfo::NonResident {
-            runs_data: attr_bytes[runs_offset..].to_vec(),
-            data_size: header.data_size,
-        })
-    } else {
-        attr.resident_value()
-            .map(|value| AttributeListInfo::Resident(value.to_vec()))
+    fn name(value: &str) -> OsString {
+        OsString::from(value)
     }
-}
 
-/// Decode the reparse tag stored in a resident `$REPARSE_POINT` value.
-pub(super) fn resident_reparse_tag(attr: &NtfsAttribute<'_>) -> Option<u32> {
-    let value = attr.resident_value()?;
-    let tag_bytes = value.get(..4)?;
-    Some(u32::from_le_bytes([
-        tag_bytes[0],
-        tag_bytes[1],
-        tag_bytes[2],
-        tag_bytes[3],
-    ]))
+    #[test]
+    fn higher_namespace_score_replaces_selected_name() {
+        let parent = Fid::new(5);
+        let mut selector = FileNameSelector::new(true);
+        assert!(selector.consider(None, FileNameNamespace::Dos, parent, &name("FILE~1.TXT")));
+        let current_name = name("FILE~1.TXT");
+        assert!(selector.consider(
+            current_file_name(FileNameNamespace::Dos, parent, &current_name),
+            FileNameNamespace::Win32,
+            parent,
+            &name("file.txt"),
+        ));
+    }
+
+    #[test]
+    fn dos_link_is_suppressed_when_non_dos_same_parent_exists() {
+        let parent = Fid::new(5);
+        let current_name = name("file.txt");
+        let mut selector = FileNameSelector::new(false);
+        assert!(selector.consider(None, FileNameNamespace::Win32, parent, &current_name));
+        assert!(!selector.consider(
+            current_file_name(FileNameNamespace::Win32, parent, &current_name),
+            FileNameNamespace::Dos,
+            parent,
+            &name("FILE~1.TXT"),
+        ));
+        assert!(selector.into_links().is_empty());
+    }
+
+    #[test]
+    fn hard_link_candidates_are_retained() {
+        let first_parent = Fid::new(5);
+        let second_parent = Fid::new(9);
+        let current_name = name("first.txt");
+        let mut selector = FileNameSelector::new(true);
+        assert!(selector.consider(None, FileNameNamespace::Win32, first_parent, &current_name));
+        assert!(!selector.consider(
+            current_file_name(FileNameNamespace::Win32, first_parent, &current_name),
+            FileNameNamespace::Win32,
+            second_parent,
+            &name("second.txt"),
+        ));
+        assert_eq!(selector.into_links().len(), 2);
+    }
 }

@@ -13,7 +13,7 @@
 //!
 //! let volume = Volume::from_drive_letter('C').expect("open volume");
 //! let mft = RawMft::new(&volume).expect("read $MFT");
-//! for entry in mft.try_iter().expect("iter") {
+//! for entry in mft.iter().expect("iter") {
 //!     match entry {
 //!         Ok(e) if e.is_used => {
 //!             println!("{:>8}: {}", e.record_number, e.file_name.to_string_lossy());
@@ -31,24 +31,22 @@
 //! * Reading the volume requires Administrator privileges.
 
 mod attr_list;
-mod attribute;
+mod attribute_capture;
+mod attribute_fold;
 mod batch;
-mod builder_common;
-mod boot;
-mod data_run;
 mod entry;
-mod extent;
-mod fixup;
 mod init;
 mod init_support;
 mod io;
 mod iter;
+mod name_selection;
+mod ondisk;
 mod options;
 mod parallel;
 mod parallel_executor;
+mod parallel_plan;
 mod profile;
 mod reader;
-mod record;
 mod serial_driver;
 #[cfg(test)]
 mod tests;
@@ -60,20 +58,26 @@ use std::sync::Arc;
 use crate::{
     errors::UsnError,
     raw_mft::{
-        boot::BootSector, entry::EntryBuildOptions, extent::ExtentMap, io::VolumeReader,
+        entry::EntryBuildOptions,
+        io::VolumeReader,
+        ondisk::{boot::BootSector, extent::ExtentMap},
         reader::read_record_at,
     },
     volume::Volume,
 };
 
-pub use attribute::FileNameNamespace;
 pub use batch::{RawMftBatchEntry, RawMftChunkBatch};
-pub use data_run::{DataRun as DataRunInfo, DataRunSummary};
 pub use entry::{AdsInfo, RawMftEntry, RawMftLink};
 pub use iter::RawMftIter;
-pub use options::{RawMftIterOptions, RawMftIterOptionsBuilder};
+pub use ondisk::attribute::FileNameNamespace;
+pub use ondisk::data_run::{DataRun as DataRunInfo, DataRunSummary};
+pub use options::{
+    RawMftEntryOptions, RawMftReadBuffers, RawMftRecordRange, RawMftScanOptions,
+    RawMftScanOptionsBuilder,
+};
+pub use parallel_plan::RawMftParallelScan;
 pub use profile::RawMftProfile;
-pub use work_plan::{RawMftWorkChunk, RawMftWorkPlanOptions};
+pub use work_plan::{RawMftChunkPlanOptions, RawMftChunkPlanOptionsBuilder, RawMftWorkChunk};
 
 /// Default I/O buffer size for raw `$MFT` iteration.
 #[allow(clippy::useless_nonzero_new_unchecked)]
@@ -129,7 +133,7 @@ impl<'a> RawMft<'a> {
     /// Read a single record by number. Returns `Ok(None)` when the
     /// record falls in a sparse hole or is unused (and `skip_unused` is
     /// implied here).
-    pub fn get_record(&self, number: u64) -> Result<Option<RawMftEntry>, UsnError> {
+    pub fn read_record(&self, number: u64) -> Result<Option<RawMftEntry>, UsnError> {
         let mut reader = VolumeReader::new(self.volume.handle, self.boot.bytes_per_sector as u64)?;
         read_record_at(
             &mut reader,
