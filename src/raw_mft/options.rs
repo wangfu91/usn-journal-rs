@@ -126,7 +126,7 @@ impl RawMftEntryOptions {
     }
 }
 
-/// Options controlling raw `$MFT` scan behaviour.
+/// Options controlling raw `$MFT` scan behavior.
 ///
 /// Use [`RawMftScanOptions::builder`] for the fluent builder API.
 #[derive(Debug, Clone)]
@@ -137,7 +137,7 @@ pub struct RawMftScanOptions {
     pub(crate) range: RawMftRecordRange,
     /// Entry materialization choices.
     pub(crate) entry: RawMftEntryOptions,
-    /// Honour the `$MFT` `$BITMAP` to skip unused records.
+    /// Honor the `$MFT` `$BITMAP` to skip unused records.
     pub(crate) skip_unused: bool,
     /// When true, omit extension (non-base) records from the yielded stream.
     ///
@@ -234,7 +234,7 @@ impl RawMftScanOptionsBuilder {
         self
     }
 
-    /// Whether to honour the `$MFT` `$BITMAP` and skip unused records.
+    /// Whether to honor the `$MFT` `$BITMAP` and skip unused records.
     pub fn skip_unused(mut self, v: bool) -> Self {
         self.inner.skip_unused = v;
         self

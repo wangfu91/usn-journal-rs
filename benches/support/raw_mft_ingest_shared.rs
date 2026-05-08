@@ -1,3 +1,5 @@
+//! Shared helpers for the raw-MFT parallel ingest benchmark and profiling example.
+
 use std::{
     env,
     ffi::OsStr,
@@ -16,23 +18,36 @@ use usn_journal_rs::{
     volume::Volume,
 };
 
+/// Default main read buffer size for the parallel ingest path.
 const DEFAULT_MAIN_BUFFER_BYTES: usize = 512 * 1024;
+/// Default attribute-list read buffer size for the parallel ingest path.
 const DEFAULT_ATTR_BUFFER_BYTES: usize = 16 * 1024;
+/// Default number of logical records per chunk.
 const DEFAULT_CHUNK_RECORDS: u64 = 16 * 1024;
+/// First normal FILE record number in the NTFS `$MFT`.
 const FIRST_NORMAL_RECORD: u64 = 24;
 
+/// Environment-driven configuration for the ingest benchmark.
 #[derive(Debug, Clone)]
 pub struct BenchConfig {
+    /// Drive letter used for the raw volume.
     pub drive: char,
+    /// Number of worker threads used by the parallel path.
     pub worker_count: NonZeroUsize,
+    /// Main sequential read buffer size in bytes.
     pub main_buffer_bytes: NonZeroUsize,
+    /// Attribute-list read buffer size in bytes.
     pub attr_buffer_bytes: NonZeroUsize,
+    /// Maximum logical records per work chunk.
     pub chunk_records: NonZeroU64,
+    /// First logical record number to include.
     pub start_record: u64,
+    /// Optional exclusive end record number.
     pub end_record: Option<u64>,
 }
 
 impl BenchConfig {
+    /// Build a benchmark configuration from environment variables and defaults.
     fn from_env() -> Self {
         Self {
             drive: pick_drive(),
@@ -62,10 +77,12 @@ impl BenchConfig {
         }
     }
 
+    /// Build scan options for the serial ingest path.
     fn iter_options(&self) -> RawMftScanOptions {
         RawMftScanOptions::builder()
             .buffer_bytes(self.main_buffer_bytes)
             .attr_buffer_bytes(self.attr_buffer_bytes)
+            .skip_unused(true)
             .skip_extension_records(true)
             .collect_alternate_data_streams(false)
             .collect_data_run_summary(false)
@@ -75,6 +92,7 @@ impl BenchConfig {
             .build()
     }
 
+    /// Build chunk-planning options for the parallel ingest path.
     fn chunk_plan_options(&self) -> RawMftChunkPlanOptions {
         RawMftChunkPlanOptions::builder()
             .skip_unused(false)
@@ -85,41 +103,60 @@ impl BenchConfig {
     }
 }
 
+/// Compact metadata captured for one visible MFT node.
 #[derive(Debug, Clone)]
 struct BenchNodeMeta {
+    /// Logical file size in bytes.
     size: u64,
+    /// Allocated file size in bytes.
     allocated_size: u64,
 }
 
+/// Child link captured during the ingest walk.
 #[derive(Debug, Clone)]
 struct BenchChildLink {
+    /// Record number of the child entry.
     child_record: u64,
 }
 
+/// Final summary returned by the ingest helpers.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct BenchSummary {
+    /// Number of visible records captured.
     pub records: usize,
+    /// Number of parent buckets in the child-link map.
     pub parent_buckets: usize,
+    /// Total number of child links captured.
     pub child_links: usize,
+    /// Sum of logical sizes across visible records.
     pub logical_bytes: u64,
+    /// Sum of allocated sizes across visible records.
     pub allocated_bytes: u64,
 }
 
+/// Per-run mutable storage used while ingesting entries.
 struct BenchTargets<'a> {
+    /// Indexed table of visible records.
     records: &'a mut [Option<BenchNodeMeta>],
+    /// Child links grouped by parent record number.
     children_by_parent: &'a mut FxHashMap<u64, Vec<BenchChildLink>>,
 }
 
+/// Worker-local accumulator used by the parallel folded path.
 struct PartialIngest {
+    /// Records collected for the current chunk.
     records: Vec<(u64, BenchNodeMeta)>,
+    /// Child links collected for the current chunk.
     child_links: Vec<(u64, BenchChildLink)>,
 }
 
+/// Return the shared benchmark configuration singleton.
 pub fn bench_config() -> &'static BenchConfig {
     static CONFIG: OnceLock<BenchConfig> = OnceLock::new();
     CONFIG.get_or_init(BenchConfig::from_env)
 }
 
+/// Print the benchmark configuration to stderr.
 pub fn print_bench_config(config: &BenchConfig) {
     eprintln!(
         "raw_mft_ingest bench config: drive={} workers={} chunk_records={} main_buffer={} attr_buffer={} start_record={} end_record={}",
@@ -136,10 +173,12 @@ pub fn print_bench_config(config: &BenchConfig) {
     );
 }
 
+/// Return whether the serial ingest benchmark should also be run.
 pub fn include_serial_bench() -> bool {
     env::var_os("USN_RAW_MFT_BENCH_INCLUDE_SERIAL").is_some()
 }
 
+/// Run the parallel ingest workload and return a compact summary.
 pub fn run_parallel_ingest(
     mft: &RawMft<'_>,
     config: &BenchConfig,
@@ -162,11 +201,16 @@ pub fn run_parallel_ingest(
             .scan_options(iter_options)
             .workers(config.worker_count)
             .fold_chunks(
+                // Creates a fresh worker-local accumulator for each chunk.
                 new_partial_ingest,
+                // For every parsed batch entry in the chunk:
+                // - convert it into the compact benchmark representation
+                // - store it in the chunk-local accumulator
                 |partial, entry| {
                     ingest_raw_entry_partial(entry, partial);
                     Ok(())
                 },
+                // Once a worker finishes a chunk, its partial result is merged into the shared final tables.
                 |partial| {
                     merge_partial_ingest(partial, &mut targets);
                     Ok(())
@@ -177,6 +221,7 @@ pub fn run_parallel_ingest(
     Ok(summarize_targets(&records, &children_by_parent))
 }
 
+/// Run the same ingest workload serially for comparison.
 pub fn run_serial_ingest(mft: &RawMft<'_>, config: &BenchConfig) -> Result<BenchSummary, UsnError> {
     let iter = mft.iter_with_options(config.iter_options())?;
     let record_table_len = record_count_hint(mft, config);
@@ -198,6 +243,7 @@ pub fn run_serial_ingest(mft: &RawMft<'_>, config: &BenchConfig) -> Result<Bench
     Ok(summarize_targets(&records, &children_by_parent))
 }
 
+/// Open the requested drive, or report why the bench should be skipped.
 pub fn open_volume(drive: char) -> Option<Volume> {
     match Volume::from_drive_letter(drive) {
         Ok(volume) => Some(volume),
@@ -212,12 +258,14 @@ pub fn open_volume(drive: char) -> Option<Volume> {
     }
 }
 
+/// Estimate the record-table size for the configured scan range.
 fn record_count_hint(mft: &RawMft<'_>, config: &BenchConfig) -> usize {
     let total = mft.record_count();
     let end = config.end_record.unwrap_or(total).min(total);
     end.min(usize::MAX as u64) as usize
 }
 
+/// Summarize the captured record and child-link tables.
 fn summarize_targets(
     records: &[Option<BenchNodeMeta>],
     children_by_parent: &FxHashMap<u64, Vec<BenchChildLink>>,
@@ -242,6 +290,7 @@ fn summarize_targets(
     summary
 }
 
+/// Create an empty worker-local accumulator sized for one chunk.
 fn new_partial_ingest(chunk: RawMftWorkChunk) -> PartialIngest {
     let capacity = chunk.record_len().min(usize::MAX as u64) as usize;
     PartialIngest {
@@ -250,6 +299,7 @@ fn new_partial_ingest(chunk: RawMftWorkChunk) -> PartialIngest {
     }
 }
 
+/// Merge one worker-local chunk result into the shared benchmark targets.
 fn merge_partial_ingest(partial: PartialIngest, targets: &mut BenchTargets<'_>) {
     for (record_number, metadata) in partial.records {
         if let Some(record) = targets.records.get_mut(record_number as usize) {
@@ -274,6 +324,7 @@ fn merge_partial_ingest(partial: PartialIngest, targets: &mut BenchTargets<'_>) 
     }
 }
 
+/// Convert a batch entry into the compact benchmark representation.
 fn ingest_raw_entry_partial(entry: RawMftBatchEntry, partial: &mut PartialIngest) {
     if entry.base_record_reference != 0 {
         return;
@@ -313,6 +364,7 @@ fn ingest_raw_entry_partial(entry: RawMftBatchEntry, partial: &mut PartialIngest
     );
 }
 
+/// Convert a full iterator entry into the compact benchmark representation.
 fn ingest_iter_entry(entry: RawMftEntry, targets: &mut BenchTargets<'_>) {
     if entry.base_record_reference != 0 {
         return;
@@ -355,6 +407,7 @@ fn ingest_iter_entry(entry: RawMftEntry, targets: &mut BenchTargets<'_>) {
     );
 }
 
+/// Visit the visible file-name links for a record and suppress shadowed names.
 fn for_each_visible_link<F>(
     parent_reference: usn_journal_rs::Fid,
     _namespace: FileNameNamespace,
@@ -378,6 +431,7 @@ fn for_each_visible_link<F>(
     }
 }
 
+/// Return whether the link at `index` should be emitted.
 fn is_visible_link_at(index: usize, all_links: &[RawMftLink]) -> bool {
     let Some(link) = all_links.get(index) else {
         return false;
@@ -392,6 +446,7 @@ fn is_visible_link_at(index: usize, all_links: &[RawMftLink]) -> bool {
     })
 }
 
+/// Return whether a link namespace is visible for the current benchmark output.
 fn link_namespace_is_visible(link: &RawMftLink, all_links: &[RawMftLink]) -> bool {
     if link.file_name.is_empty() {
         return false;
@@ -418,6 +473,7 @@ fn link_namespace_is_visible(link: &RawMftLink, all_links: &[RawMftLink]) -> boo
     true
 }
 
+/// Pick the default drive from the environment, falling back to `C:`.
 fn pick_drive() -> char {
     env::var("USN_RAW_MFT_BENCH_DRIVE")
         .ok()
@@ -427,6 +483,7 @@ fn pick_drive() -> char {
         .unwrap_or('C')
 }
 
+/// Choose the default worker count for the benchmark.
 fn default_worker_count() -> NonZeroUsize {
     let available = thread::available_parallelism()
         .ok()
@@ -435,6 +492,7 @@ fn default_worker_count() -> NonZeroUsize {
     nonzero_usize(available.clamp(1, 10))
 }
 
+/// Parse a non-zero `usize` from an environment variable.
 fn parse_env_nonzero_usize(name: &str, default: NonZeroUsize) -> NonZeroUsize {
     env::var(name)
         .ok()
@@ -443,6 +501,7 @@ fn parse_env_nonzero_usize(name: &str, default: NonZeroUsize) -> NonZeroUsize {
         .unwrap_or(default)
 }
 
+/// Parse a non-zero `u64` from an environment variable.
 fn parse_env_nonzero_u64(name: &str, default: NonZeroU64) -> NonZeroU64 {
     env::var(name)
         .ok()
@@ -451,10 +510,12 @@ fn parse_env_nonzero_u64(name: &str, default: NonZeroU64) -> NonZeroU64 {
         .unwrap_or(default)
 }
 
+/// Convert a `usize` into a non-zero `usize`, clamping zero to one.
 fn nonzero_usize(value: usize) -> NonZeroUsize {
     NonZeroUsize::new(value).unwrap_or(NonZeroUsize::MIN)
 }
 
+/// Convert a `u64` into a non-zero `u64`, clamping zero to one.
 fn nonzero_u64(value: u64) -> NonZeroU64 {
     NonZeroU64::new(value).unwrap_or(NonZeroU64::MIN)
 }

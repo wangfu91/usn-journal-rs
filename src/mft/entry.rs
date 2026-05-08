@@ -62,7 +62,7 @@ impl FileAttributeView for MftEntry {
 
 impl fmt::Display for MftEntry {
     /// One-line, compact summary suitable for logging. For a multi-line
-    /// "pretty" rendering see `examples/pretty_print.rs`.
+    /// "pretty" rendering see `examples/journal_pretty_print`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,

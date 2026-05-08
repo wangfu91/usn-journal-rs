@@ -1,4 +1,4 @@
-//! Shared low-level read helpers reused by the raw-MFT iterator, profiler,
+//! Shared low-level read helpers reused by the raw-MFT iterator,
 //! single-record access path, and `$ATTRIBUTE_LIST` enrichment code.
 
 use std::io::{Read, Seek, SeekFrom};

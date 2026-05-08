@@ -121,12 +121,14 @@ impl<'m, 'v> RawMftParallelScan<'m, 'v> {
         )
     }
 
+    /// Resolve the work chunks for this scan, either from explicit chunks or by planning them from the chunk plan options.
     fn resolved_chunks(&self) -> Vec<RawMftWorkChunk> {
         self.chunks
             .clone()
             .unwrap_or_else(|| self.mft.plan_chunks_with_options(self.chunk_plan.clone()))
     }
 
+    /// Resolve the worker count for this scan, either from an explicit value or from `thread::available_parallelism()`.
     fn resolved_worker_count(&self) -> Result<NonZeroUsize, UsnError> {
         match self.worker_count {
             Some(worker_count) => Ok(worker_count),

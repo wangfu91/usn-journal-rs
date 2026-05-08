@@ -66,7 +66,7 @@ pub use options::{
     RawMftScanOptionsBuilder,
 };
 pub use parallel::RawMftParallelScan;
-pub use serial::{RawMftIter, RawMftProfile};
+pub use serial::RawMftIter;
 
 /// Default I/O buffer size for raw `$MFT` iteration.
 #[allow(clippy::useless_nonzero_new_unchecked)]

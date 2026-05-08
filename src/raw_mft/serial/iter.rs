@@ -12,7 +12,7 @@ use crate::{
     },
 };
 
-use super::engine::{SerialParseState, next_record_output_with_hooks};
+use super::engine::{SerialParseState, next_record_output};
 
 /// Streaming iterator over MFT records.
 pub struct RawMftIter<'a> {
@@ -58,12 +58,10 @@ impl<'a> Iterator for RawMftIter<'a> {
     type Item = Result<RawMftEntry, UsnError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut hooks = ();
-        match next_record_output_with_hooks(
+        match next_record_output(
             self.mft,
             &mut self.scan,
             &mut self.reader,
-            &mut hooks,
             |record| {
                 let record_number = record.number;
                 let (mut entry, attr_list) =

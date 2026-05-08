@@ -257,24 +257,6 @@ If the record carries an attribute list and `should_enrich_from_attr_list(&entry
 
 That path is described in detail below.
 
-### `profile_with_options`
-
-`RawMft::profile_with_options` mirrors the same serial parser but records stage-by-stage counters and timings such as:
-
-- records examined,
-- unused records skipped,
-- invalid records,
-- parse errors,
-- records yielded,
-- time spent in bitmap checks,
-- extent translation,
-- buffer borrow,
-- validation,
-- parsing,
-- entry building,
-- attribute-list enrichment.
-
-That is useful when tuning buffer sizes or validating a change in the parse pipeline.
 
 ## Entry materialization and attribute-list enrichment
 

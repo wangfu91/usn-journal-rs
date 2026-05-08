@@ -39,8 +39,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         .build();
     let chunks = raw_mft.plan_chunks_with_options(chunk_plan);
     let options = RawMftScanOptions::builder()
+        .skip_extension_records(true)
+        .skip_unused(true)
         .collect_alternate_data_streams(false)
         .collect_data_run_summary(false)
+        .collect_dos_file_name_links(false)
         .build();
 
     let start = Instant::now();

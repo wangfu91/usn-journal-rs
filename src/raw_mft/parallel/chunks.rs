@@ -11,7 +11,7 @@ use crate::{
         entry_build::{RawMftBatchEntry, RawMftBatchScratch, RawMftChunkBatch},
         io::VolumeReader,
         options::RawMftScanOptions,
-        serial::engine::{SerialParseState, next_record_output_with_hooks},
+        serial::engine::{SerialParseState, next_record_output},
     },
 };
 
@@ -92,10 +92,9 @@ impl<'a> RawMft<'a> {
         F: FnMut(RawMftBatchEntry) -> Result<(), UsnError>,
     {
         let mut scan = SerialParseState::for_range(self, options, start_record, end_record);
-        let mut hooks = ();
 
         while let Some(entry) =
-            next_record_output_with_hooks(self, &mut scan, reader, &mut hooks, |record| {
+            next_record_output(self, &mut scan, reader, |record| {
                 let record_number = record.number;
 
                 let (mut entry, attr_list) = RawMftBatchScratch::from_record_with_attr_list(
