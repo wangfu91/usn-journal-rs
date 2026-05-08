@@ -253,10 +253,10 @@ impl RawMftEntryBuilder {
             self.apply_data_attribute(attr);
         } else if type_id == NtfsAttributeType::ReparsePoint as u32 {
             self.apply_reparse_point_attribute(attr);
-        } else if type_id == NtfsAttributeType::AttributeList as u32 {
-            if let Some(attr_list) = capture_attribute_list(attr) {
-                self.attr_list = Some(attr_list);
-            }
+        } else if type_id == NtfsAttributeType::AttributeList as u32
+            && let Some(attr_list) = capture_attribute_list(attr)
+        {
+            self.attr_list = Some(attr_list);
         }
     }
 
