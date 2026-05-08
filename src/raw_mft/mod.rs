@@ -34,6 +34,9 @@ mod attr_list;
 mod bootstrap;
 mod chunk_plan;
 mod entry_build;
+/// Hidden support helpers shared by the raw-MFT ingest benchmark and tooling examples.
+#[doc(hidden)]
+pub mod ingest_support;
 mod io;
 mod ondisk;
 mod options;

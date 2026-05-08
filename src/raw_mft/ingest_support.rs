@@ -9,13 +9,16 @@ use std::{
 };
 
 use rustc_hash::FxHashMap;
-use usn_journal_rs::{
+
+use crate::{
+    Fid,
     errors::UsnError,
-    raw_mft::{
-        FileNameNamespace, RawMft, RawMftBatchEntry, RawMftChunkPlanOptions, RawMftEntry,
-        RawMftLink, RawMftScanOptions, RawMftWorkChunk,
-    },
     volume::Volume,
+};
+
+use super::{
+    FileNameNamespace, RawMft, RawMftBatchEntry, RawMftChunkPlanOptions, RawMftEntry,
+    RawMftLink, RawMftScanOptions, RawMftWorkChunk,
 };
 
 /// Default main read buffer size for the parallel ingest path.
@@ -201,16 +204,11 @@ pub fn run_parallel_ingest(
             .scan_options(iter_options)
             .workers(config.worker_count)
             .fold_chunks(
-                // Creates a fresh worker-local accumulator for each chunk.
                 new_partial_ingest,
-                // For every parsed batch entry in the chunk:
-                // - convert it into the compact benchmark representation
-                // - store it in the chunk-local accumulator
                 |partial, entry| {
                     ingest_raw_entry_partial(entry, partial);
                     Ok(())
                 },
-                // Once a worker finishes a chunk, its partial result is merged into the shared final tables.
                 |partial| {
                     merge_partial_ingest(partial, &mut targets);
                     Ok(())
@@ -331,11 +329,7 @@ fn ingest_raw_entry_partial(entry: RawMftBatchEntry, partial: &mut PartialIngest
     }
 
     let metadata = BenchNodeMeta {
-        size: if entry.is_directory {
-            0
-        } else {
-            entry.real_size
-        },
+        size: if entry.is_directory { 0 } else { entry.real_size },
         allocated_size: if entry.is_directory {
             0
         } else {
@@ -371,11 +365,7 @@ fn ingest_iter_entry(entry: RawMftEntry, targets: &mut BenchTargets<'_>) {
     }
 
     let metadata = BenchNodeMeta {
-        size: if entry.is_directory {
-            0
-        } else {
-            entry.real_size
-        },
+        size: if entry.is_directory { 0 } else { entry.real_size },
         allocated_size: if entry.is_directory {
             0
         } else {
@@ -409,13 +399,13 @@ fn ingest_iter_entry(entry: RawMftEntry, targets: &mut BenchTargets<'_>) {
 
 /// Visit the visible file-name links for a record and suppress shadowed names.
 fn for_each_visible_link<F>(
-    parent_reference: usn_journal_rs::Fid,
+    parent_reference: Fid,
     _namespace: FileNameNamespace,
     file_name: &OsStr,
     all_links: &[RawMftLink],
     mut visit: F,
 ) where
-    F: FnMut(usn_journal_rs::Fid, &OsStr),
+    F: FnMut(Fid, &OsStr),
 {
     let mut emitted_any = false;
     for (index, link) in all_links.iter().enumerate() {
@@ -519,3 +509,5 @@ fn nonzero_usize(value: usize) -> NonZeroUsize {
 fn nonzero_u64(value: u64) -> NonZeroU64 {
     NonZeroU64::new(value).unwrap_or(NonZeroU64::MIN)
 }
+
+

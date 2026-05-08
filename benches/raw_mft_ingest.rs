@@ -30,14 +30,12 @@
 use std::time::Duration;
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use usn_journal_rs::raw_mft::RawMft;
-
-#[path = "support\\raw_mft_ingest_shared.rs"]
-mod raw_mft_ingest_shared;
-
-use raw_mft_ingest_shared::{
-    bench_config, include_serial_bench, open_volume, print_bench_config, run_parallel_ingest,
-    run_serial_ingest,
+use usn_journal_rs::raw_mft::{
+    RawMft,
+    ingest_support::{
+        self, bench_config, include_serial_bench, open_volume, print_bench_config,
+        run_parallel_ingest, run_serial_ingest,
+    },
 };
 
 fn raw_mft_ingest_benchmarks(c: &mut Criterion) {
@@ -61,7 +59,7 @@ fn raw_mft_ingest_benchmarks(c: &mut Criterion) {
                 Ok(summary) => summary,
                 Err(error) => {
                     eprintln!("parallel ingest bench failed: {error}");
-                    raw_mft_ingest_shared::BenchSummary::default()
+                    ingest_support::BenchSummary::default()
                 }
             };
             std::hint::black_box(summary)
@@ -75,7 +73,7 @@ fn raw_mft_ingest_benchmarks(c: &mut Criterion) {
                     Ok(summary) => summary,
                     Err(error) => {
                         eprintln!("serial ingest bench failed: {error}");
-                        raw_mft_ingest_shared::BenchSummary::default()
+                        ingest_support::BenchSummary::default()
                     }
                 };
                 std::hint::black_box(summary)
