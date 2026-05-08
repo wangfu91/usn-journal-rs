@@ -2,18 +2,14 @@
 
 use std::{num::NonZeroUsize, thread};
 
-use log::warn;
-
 use crate::{
     errors::UsnError,
     raw_mft::{
         attr_list::{enrich_batch_from_attr_list, should_enrich_batch_from_attr_list},
         batch::{RawMftBatchEntry, RawMftBatchScratch, RawMftChunkBatch},
-        extent::ExtentLookupCursor,
         io::VolumeReader,
         options::RawMftIterOptions,
-        reader::io_err,
-        record::FileRecord,
+        serial_driver::{SerialParseState, next_record_output_with_hooks},
         work_plan::{self, RawMftWorkChunk, RawMftWorkPlanOptions},
     },
 };
@@ -93,65 +89,40 @@ impl<'a> RawMft<'a> {
     where
         F: FnMut(RawMftBatchEntry) -> Result<(), UsnError>,
     {
-        let end_record = end_record.min(self.record_count());
-        let record_size = self.boot.file_record_size as usize;
-        let mut next_record = start_record;
-        let mut offset_cursor = ExtentLookupCursor::default();
+        let mut scan = SerialParseState::for_range(self, options, start_record, end_record);
+        let mut hooks = ();
 
-        while next_record < end_record {
-            let record_number = next_record;
-            next_record += 1;
+        while let Some(entry) = next_record_output_with_hooks(
+            self,
+            &mut scan,
+            reader,
+            &mut hooks,
+            |record| {
+                let record_number = record.number;
 
-            if options.skip_unused && !self.bitmap_used(record_number) {
-                continue;
-            }
-
-            let offset = match self
-                .extent_map
-                .record_offset_with_cursor(record_number, &mut offset_cursor)
-            {
-                Ok(Some(offset)) => offset,
-                Ok(None) => continue,
-                Err(error) => return Err(error),
-            };
-
-            let buf = reader.borrow_at(offset, record_size).map_err(io_err)?;
-            if !FileRecord::is_valid(buf) {
-                continue;
-            }
-
-            let record = match FileRecord::parse(record_number, Some(offset), buf) {
-                Ok(record) => record,
-                Err(error) => {
-                    warn!("raw_mft: failed to parse record {record_number}: {error}");
-                    continue;
-                }
-            };
-
-            if options.skip_extension_records && record.base_reference() != 0 {
-                continue;
-            }
-
-            let (mut entry, attr_list) = RawMftBatchScratch::from_record_with_attr_list(
-                &record,
-                options.collect_dos_file_name_links,
-            );
-
-            if let Some(attr_list) = attr_list
-                && should_enrich_batch_from_attr_list(&entry)
-            {
-                let _ = enrich_batch_from_attr_list(
-                    &mut entry,
-                    attr_list,
-                    record_number,
-                    attr_reader,
-                    &self.boot,
-                    self.extent_map.as_ref(),
+                let (mut entry, attr_list) = RawMftBatchScratch::from_record_with_attr_list(
+                    record,
                     options.collect_dos_file_name_links,
                 );
-            }
 
-            visit(entry.into_entry())?;
+                if let Some(attr_list) = attr_list
+                    && should_enrich_batch_from_attr_list(&entry)
+                {
+                    let _ = enrich_batch_from_attr_list(
+                        &mut entry,
+                        attr_list,
+                        record_number,
+                        attr_reader,
+                        &self.boot,
+                        self.extent_map.as_ref(),
+                        options.collect_dos_file_name_links,
+                    );
+                }
+
+                Ok(entry.into_entry())
+            },
+        )? {
+            visit(entry)?;
         }
 
         Ok(())

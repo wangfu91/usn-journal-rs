@@ -49,6 +49,7 @@ mod parallel_executor;
 mod profile;
 mod reader;
 mod record;
+mod serial_driver;
 #[cfg(test)]
 mod tests;
 mod work_plan;

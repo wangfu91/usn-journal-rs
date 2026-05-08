@@ -89,8 +89,8 @@ criterion_group! {
     name = benches;
     config = Criterion::default()
         .sample_size(10)
-        .warm_up_time(Duration::from_secs(3))
-        .measurement_time(Duration::from_secs(30))
+        .warm_up_time(Duration::from_secs(5))
+        .measurement_time(Duration::from_secs(60))
         .configure_from_args();
     targets = raw_mft_ingest_benchmarks
 }

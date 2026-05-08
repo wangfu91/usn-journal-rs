@@ -2,16 +2,16 @@
 
 use std::time::{Duration, Instant};
 
-use log::warn;
-
 use crate::{
     errors::UsnError,
     raw_mft::{
         attr_list::{enrich_from_attr_list, should_enrich_from_attr_list},
-        extent::ExtentLookupCursor,
         options::RawMftIterOptions,
-        reader::{entry_build_options, io_err},
-        record::FileRecord,
+        reader::entry_build_options,
+        serial_driver::{
+            SerialParseState, SerialScanHooks, SerialScanStage, accumulate_stage_elapsed,
+            next_record_output_with_hooks,
+        },
     },
 };
 
@@ -66,6 +66,69 @@ pub struct RawMftProfile {
     pub attr_list_enrich_elapsed: Duration,
 }
 
+struct ProfileScanHooks<'a> {
+    stats: &'a mut ProfileScanStats,
+}
+
+#[derive(Default)]
+struct ProfileScanStats {
+    records_examined: u64,
+    records_skipped_unused: u64,
+    sparse_holes: u64,
+    invalid_records: u64,
+    extension_records_skipped: u64,
+    parse_errors: u64,
+    bitmap_check_elapsed: Duration,
+    record_offset_elapsed: Duration,
+    borrow_elapsed: Duration,
+    validate_elapsed: Duration,
+    parse_elapsed: Duration,
+}
+
+impl SerialScanHooks for ProfileScanHooks<'_> {
+    type StageToken = Instant;
+
+    fn stage_start(&mut self, _stage: SerialScanStage) -> Self::StageToken {
+        Instant::now()
+    }
+
+    fn stage_finish(&mut self, stage: SerialScanStage, token: Self::StageToken) {
+        accumulate_stage_elapsed(
+            &mut self.stats.bitmap_check_elapsed,
+            &mut self.stats.record_offset_elapsed,
+            &mut self.stats.borrow_elapsed,
+            &mut self.stats.validate_elapsed,
+            &mut self.stats.parse_elapsed,
+            stage,
+            token.elapsed(),
+        );
+    }
+
+    fn on_record_examined(&mut self, _record_number: u64) {
+        self.stats.records_examined += 1;
+    }
+
+    fn on_skipped_unused(&mut self, _record_number: u64) {
+        self.stats.records_skipped_unused += 1;
+    }
+
+    fn on_sparse_hole(&mut self, _record_number: u64) {
+        self.stats.sparse_holes += 1;
+    }
+
+    fn on_invalid_record(&mut self, _record_number: u64) {
+        self.stats.invalid_records += 1;
+    }
+
+    fn on_parse_error(&mut self, _record_number: u64, _error: &UsnError) {
+        self.stats.parse_errors += 1;
+    }
+
+    fn on_extension_record_skipped(&mut self, _record_number: u64) {
+        self.stats.extension_records_skipped += 1;
+    }
+}
+
 impl<'a> RawMft<'a> {
     /// Run the current serial parser and return stage-by-stage timings.
     pub fn profile(&self) -> Result<RawMftProfile, UsnError> {
@@ -82,111 +145,84 @@ impl<'a> RawMft<'a> {
             .end_record
             .unwrap_or(self.record_count())
             .min(self.record_count());
-        let record_size = self.boot.file_record_size as usize;
         let build_options = entry_build_options(&options);
-        let mut offset_cursor = ExtentLookupCursor::default();
+        let mut scan = SerialParseState::from_options(self, &options);
         let mut profile = RawMftProfile {
             start_record: options.start_record,
             end_record: end,
             buffer_bytes: options.buffer_bytes.get(),
             ..RawMftProfile::default()
         };
+        let mut scan_stats = ProfileScanStats::default();
         let total_start = Instant::now();
 
-        let mut next_record = options.start_record;
-        while next_record < end {
-            let record_number = next_record;
-            next_record += 1;
-            profile.records_examined += 1;
+        loop {
+            let next = {
+                let mut hooks = ProfileScanHooks {
+                    stats: &mut scan_stats,
+                };
+                next_record_output_with_hooks(
+                    self,
+                    &mut scan,
+                    &mut reader,
+                    &mut hooks,
+                    |record| {
+                        let record_number = record.number;
 
-            if options.skip_unused {
-                let bitmap_start = Instant::now();
-                let is_used = self.bitmap_used(record_number);
-                profile.bitmap_check_elapsed += bitmap_start.elapsed();
-                if !is_used {
-                    profile.records_skipped_unused += 1;
-                    continue;
-                }
-            }
+                        let entry_build_start = Instant::now();
+                        let (mut entry, attr_list) =
+                            crate::raw_mft::entry::RawMftEntry::from_record_with_attr_list(
+                                record,
+                                build_options,
+                            );
+                        profile.entry_build_elapsed += entry_build_start.elapsed();
 
-            let offset_start = Instant::now();
-            let offset = match self
-                .extent_map
-                .record_offset_with_cursor(record_number, &mut offset_cursor)
-            {
-                Ok(Some(offset)) => offset,
-                Ok(None) => {
-                    profile.record_offset_elapsed += offset_start.elapsed();
-                    profile.sparse_holes += 1;
-                    continue;
-                }
-                Err(error) => return Err(error),
+                        if let Some(attr_list) = attr_list
+                            && should_enrich_from_attr_list(&entry)
+                        {
+                            profile.attr_list_enrichments_attempted += 1;
+                            let enrich_start = Instant::now();
+                            let enrich_stats = enrich_from_attr_list(
+                                &mut entry,
+                                attr_list,
+                                record_number,
+                                &mut attr_reader,
+                                &self.boot,
+                                self.extent_map.as_ref(),
+                                build_options,
+                            );
+                            profile.attr_list_enrich_elapsed += enrich_start.elapsed();
+                            profile.attr_list_extension_records_referenced +=
+                                enrich_stats.extension_records_referenced;
+                            profile.attr_list_extension_records_loaded +=
+                                enrich_stats.extension_records_loaded;
+                            if enrich_stats.extension_records_loaded > 0 {
+                                profile.attr_list_enrichments_with_extension_loads += 1;
+                            }
+                        }
+
+                        profile.records_yielded += 1;
+                        Ok(())
+                    },
+                )?
             };
-            profile.record_offset_elapsed += offset_start.elapsed();
 
-            let borrow_start = Instant::now();
-            let buf = reader.borrow_at(offset, record_size).map_err(io_err)?;
-            profile.borrow_elapsed += borrow_start.elapsed();
-
-            let validate_start = Instant::now();
-            let is_valid = FileRecord::is_valid(buf);
-            profile.validate_elapsed += validate_start.elapsed();
-            if !is_valid {
-                profile.invalid_records += 1;
-                continue;
+            if next.is_none() {
+                break;
             }
-
-            let parse_start = Instant::now();
-            let record = match FileRecord::parse(record_number, Some(offset), buf) {
-                Ok(record) => record,
-                Err(error) => {
-                    profile.parse_elapsed += parse_start.elapsed();
-                    warn!("raw_mft: failed to parse record {record_number}: {error}");
-                    profile.parse_errors += 1;
-                    continue;
-                }
-            };
-            profile.parse_elapsed += parse_start.elapsed();
-
-            if options.skip_extension_records && record.base_reference() != 0 {
-                profile.extension_records_skipped += 1;
-                continue;
-            }
-
-            let entry_build_start = Instant::now();
-            let (mut entry, attr_list) =
-                crate::raw_mft::entry::RawMftEntry::from_record_with_attr_list(
-                    &record,
-                    build_options,
-                );
-            profile.entry_build_elapsed += entry_build_start.elapsed();
-
-            if let Some(attr_list) = attr_list
-                && should_enrich_from_attr_list(&entry)
-            {
-                profile.attr_list_enrichments_attempted += 1;
-                let enrich_start = Instant::now();
-                let enrich_stats = enrich_from_attr_list(
-                    &mut entry,
-                    attr_list,
-                    record_number,
-                    &mut attr_reader,
-                    &self.boot,
-                    self.extent_map.as_ref(),
-                    build_options,
-                );
-                profile.attr_list_enrich_elapsed += enrich_start.elapsed();
-                profile.attr_list_extension_records_referenced +=
-                    enrich_stats.extension_records_referenced;
-                profile.attr_list_extension_records_loaded +=
-                    enrich_stats.extension_records_loaded;
-                if enrich_stats.extension_records_loaded > 0 {
-                    profile.attr_list_enrichments_with_extension_loads += 1;
-                }
-            }
-
-            profile.records_yielded += 1;
         }
+
+        profile.records_examined = scan_stats.records_examined;
+        profile.records_skipped_unused = scan_stats.records_skipped_unused;
+        profile.sparse_holes = scan_stats.sparse_holes;
+        profile.invalid_records = scan_stats.invalid_records;
+        profile.extension_records_skipped = scan_stats.extension_records_skipped;
+        profile.parse_errors = scan_stats.parse_errors;
+        profile.bitmap_check_elapsed = scan_stats.bitmap_check_elapsed;
+        profile.record_offset_elapsed = scan_stats.record_offset_elapsed;
+        profile.borrow_elapsed = scan_stats.borrow_elapsed;
+        profile.validate_elapsed = scan_stats.validate_elapsed;
+        profile.parse_elapsed = scan_stats.parse_elapsed;
 
         profile.total_elapsed = total_start.elapsed();
         Ok(profile)
