@@ -3,16 +3,16 @@
 use crate::{
     errors::UsnError,
     raw_mft::{
+        RawMft,
         attr_list::{enrich_from_attr_list, should_enrich_from_attr_list},
-        entry::{EntryBuildOptions, RawMftEntry},
+        entry_build::{EntryBuildOptions, RawMftEntry},
         io::VolumeReader,
         options::RawMftScanOptions,
         reader::entry_build_options,
-        serial_driver::{SerialParseState, next_record_output_with_hooks},
     },
 };
 
-use super::RawMft;
+use super::engine::{SerialParseState, next_record_output_with_hooks};
 
 /// Streaming iterator over MFT records.
 pub struct RawMftIter<'a> {

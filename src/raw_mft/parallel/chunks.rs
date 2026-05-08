@@ -1,20 +1,21 @@
-//! Logical work-chunk APIs layered on top of the raw-MFT parser.
+//! Chunk planning and chunk-local operations for parallel raw-MFT scans.
 
 use std::num::NonZeroUsize;
 
 use crate::{
     errors::UsnError,
     raw_mft::{
+        RawMft,
         attr_list::{enrich_batch_from_attr_list, should_enrich_batch_from_attr_list},
-        batch::{RawMftBatchEntry, RawMftBatchScratch, RawMftChunkBatch},
+        chunk_plan::{self, RawMftChunkPlanOptions, RawMftWorkChunk},
+        entry_build::{RawMftBatchEntry, RawMftBatchScratch, RawMftChunkBatch},
         io::VolumeReader,
         options::RawMftScanOptions,
-        serial_driver::{SerialParseState, next_record_output_with_hooks},
-        work_plan::{self, RawMftChunkPlanOptions, RawMftWorkChunk},
+        serial::engine::{SerialParseState, next_record_output_with_hooks},
     },
 };
 
-use super::{RawMft, parallel_executor};
+use super::executor;
 
 impl<'a> RawMft<'a> {
     /// Build deterministic logical work chunks for raw `$MFT` parsing.
@@ -34,7 +35,7 @@ impl<'a> RawMft<'a> {
             .end_record()
             .unwrap_or(self.record_count())
             .min(self.record_count());
-        work_plan::build_work_chunks(
+        chunk_plan::build_work_chunks(
             range.start_record(),
             end_record,
             options.max_records_per_chunk(),
@@ -189,7 +190,7 @@ impl<'a> RawMft<'a> {
         T: Send,
         V: FnMut(T) -> Result<(), UsnError>,
     {
-        parallel_executor::run_parallel_chunks_in_order(
+        executor::run_parallel_chunks_in_order(
             self,
             chunks,
             options,
@@ -218,7 +219,7 @@ impl<'a> RawMft<'a> {
         T: Send,
         V: FnMut(T) -> Result<(), UsnError>,
     {
-        parallel_executor::run_parallel_chunks_in_order(
+        executor::run_parallel_chunks_in_order(
             self,
             chunks,
             options,

@@ -14,7 +14,7 @@ use std::{
 
 use crate::{
     errors::UsnError,
-    raw_mft::{RawMft, io::VolumeReader, options::RawMftScanOptions, work_plan::RawMftWorkChunk},
+    raw_mft::{RawMft, RawMftWorkChunk, io::VolumeReader, options::RawMftScanOptions},
     volume::Volume,
 };
 

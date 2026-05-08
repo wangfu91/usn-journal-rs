@@ -5,17 +5,18 @@ use std::time::{Duration, Instant};
 use crate::{
     errors::UsnError,
     raw_mft::{
+        RawMft,
         attr_list::{enrich_from_attr_list, should_enrich_from_attr_list},
+        entry_build::RawMftEntry,
         options::RawMftScanOptions,
         reader::entry_build_options,
-        serial_driver::{
-            SerialParseState, SerialScanHooks, SerialScanStage, accumulate_stage_elapsed,
-            next_record_output_with_hooks,
-        },
     },
 };
 
-use super::RawMft;
+use super::engine::{
+    SerialParseState, SerialScanHooks, SerialScanStage, accumulate_stage_elapsed,
+    next_record_output_with_hooks,
+};
 
 /// Stage-by-stage timing and counters for raw `$MFT` parsing.
 #[derive(Debug, Clone, Default)]
@@ -167,10 +168,7 @@ impl<'a> RawMft<'a> {
 
                     let entry_build_start = Instant::now();
                     let (mut entry, attr_list) =
-                        crate::raw_mft::entry::RawMftEntry::from_record_with_attr_list(
-                            record,
-                            build_options,
-                        );
+                        RawMftEntry::from_record_with_attr_list(record, build_options);
                     profile.entry_build_elapsed += entry_build_start.elapsed();
 
                     if let Some(attr_list) = attr_list

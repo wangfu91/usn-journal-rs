@@ -1,4 +1,4 @@
-//! Helper layer for raw-MFT constructor bootstrapping.
+//! Stream-discovery helpers for raw-MFT constructor bootstrapping.
 
 use std::{
     io::{Read, Seek, SeekFrom},

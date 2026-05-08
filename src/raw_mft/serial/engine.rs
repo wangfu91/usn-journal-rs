@@ -1,4 +1,4 @@
-//! Shared serial scan driver for the raw-MFT iterator, profiler, and
+//! Shared serial scan engine for the raw-MFT iterator, profiler, and
 //! serial chunk walkers.
 
 use std::time::Duration;
@@ -8,6 +8,7 @@ use log::warn;
 use crate::{
     errors::UsnError,
     raw_mft::{
+        RawMft,
         io::VolumeReader,
         ondisk::{extent::ExtentLookupCursor, record::FileRecord},
         options::RawMftScanOptions,
@@ -15,11 +16,9 @@ use crate::{
     },
 };
 
-use super::RawMft;
-
 /// Pre-entry-build stages shared by the serial raw-MFT scan paths.
 #[derive(Debug, Clone, Copy)]
-pub(super) enum SerialScanStage {
+pub(in crate::raw_mft) enum SerialScanStage {
     /// `$MFT::$BITMAP` in-use check.
     BitmapCheck,
     /// Logical-record to byte-offset resolution.
@@ -32,8 +31,8 @@ pub(super) enum SerialScanStage {
     Parse,
 }
 
-/// Hook points used by the shared serial scan driver.
-pub(super) trait SerialScanHooks {
+/// Hook points used by the shared serial scan engine.
+pub(in crate::raw_mft) trait SerialScanHooks {
     /// Per-stage token used by the hook implementation.
     type StageToken;
 
@@ -72,7 +71,7 @@ impl SerialScanHooks for () {
 }
 
 /// Mutable state for one serial walk over logical raw-MFT record numbers.
-pub(super) struct SerialParseState {
+pub(in crate::raw_mft) struct SerialParseState {
     next_record: u64,
     end_record: u64,
     offset_cursor: ExtentLookupCursor,
@@ -83,14 +82,14 @@ pub(super) struct SerialParseState {
 
 impl SerialParseState {
     /// Create scan state that follows the logical range encoded in iterator options.
-    pub(super) fn from_options(mft: &RawMft<'_>, options: &RawMftScanOptions) -> Self {
+    pub(in crate::raw_mft) fn from_options(mft: &RawMft<'_>, options: &RawMftScanOptions) -> Self {
         let total = mft.record_count();
         let end_record = options.range.end_record.unwrap_or(total).min(total);
         Self::for_range(mft, options, options.range.start_record, end_record)
     }
 
     /// Create scan state for an explicit logical record range.
-    pub(super) fn for_range(
+    pub(in crate::raw_mft) fn for_range(
         mft: &RawMft<'_>,
         options: &RawMftScanOptions,
         start_record: u64,
@@ -110,7 +109,7 @@ impl SerialParseState {
 }
 
 /// Yield the next owned output produced from a parsed base FILE record.
-pub(super) fn next_record_output_with_hooks<H, F, T>(
+pub(in crate::raw_mft) fn next_record_output_with_hooks<H, F, T>(
     mft: &RawMft<'_>,
     state: &mut SerialParseState,
     reader: &mut VolumeReader,
@@ -188,7 +187,7 @@ where
 }
 
 /// Add elapsed time to the stage accumulator selected by the caller.
-pub(super) fn accumulate_stage_elapsed(
+pub(in crate::raw_mft) fn accumulate_stage_elapsed(
     bitmap_check_elapsed: &mut Duration,
     record_offset_elapsed: &mut Duration,
     borrow_elapsed: &mut Duration,

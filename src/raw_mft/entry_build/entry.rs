@@ -5,19 +5,20 @@ use std::os::windows::ffi::OsStringExt;
 
 use log::warn;
 
+use super::{
+    capture::resident_reparse_tag,
+    fold::{AttributeConsumer, fold_record_attributes},
+    names::{FileNameSelector, current_file_name},
+};
+
 use crate::{
     Fid, FileAttributes, Filetime,
     file_attributes::FileAttributeView,
     path::PathResolvableEntry,
-    raw_mft::{
-        attribute_capture::resident_reparse_tag,
-        attribute_fold::{AttributeConsumer, fold_record_attributes},
-        name_selection::{FileNameSelector, current_file_name},
-        ondisk::{
-            attribute::{FileNameNamespace, NtfsAttribute, file_attr_flags},
-            data_run::{DataRunSummary, summarize_runs},
-            record::FileRecord,
-        },
+    raw_mft::ondisk::{
+        attribute::{FileNameNamespace, NtfsAttribute, file_attr_flags},
+        data_run::{DataRunSummary, summarize_runs},
+        record::FileRecord,
     },
 };
 

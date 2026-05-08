@@ -5,22 +5,15 @@ This document explains how the current `RawMft` implementation reads and parses 
 The relevant code lives in:
 
 - `src/raw_mft/mod.rs`
-- `src/raw_mft/attribute_capture.rs`
-- `src/raw_mft/attribute_fold.rs`
-- `src/raw_mft/name_selection.rs`
-- `src/raw_mft/init.rs`
-- `src/raw_mft/init_support.rs`
+- `src/raw_mft/bootstrap/`
+- `src/raw_mft/entry_build/`
 - `src/raw_mft/reader.rs`
 - `src/raw_mft/attr_list.rs`
-- `src/raw_mft/iter.rs`
-- `src/raw_mft/profile.rs`
-- `src/raw_mft/parallel.rs`
-- `src/raw_mft/parallel_executor.rs`
-- `src/raw_mft/parallel_plan.rs`
+- `src/raw_mft/serial/`
+- `src/raw_mft/parallel/`
 - `src/raw_mft/io.rs`
 - `src/raw_mft/ondisk/`
-- `src/raw_mft/entry.rs`
-- `src/raw_mft/work_plan.rs`
+- `src/raw_mft/chunk_plan.rs`
 - `benches/raw_mft_ingest.rs`
 - `examples/raw_mft_parallel_chunks.rs`
 
@@ -121,7 +114,7 @@ The flow is:
 
 ### `RawMftEntry`
 
-`src/raw_mft/entry.rs` turns one parsed FILE record into the public high-level entry type.
+`src/raw_mft/entry_build/entry.rs` turns one parsed FILE record into the public high-level entry type.
 
 It collects:
 
@@ -141,7 +134,7 @@ It also captures `$ATTRIBUTE_LIST` information for later enrichment.
 
 `RawMft::new` performs all one-time setup needed for later scans, with the
 FILE record 0 stream discovery and bitmap loading split into
-`src/raw_mft/init_support.rs`.
+`src/raw_mft/bootstrap/discovery.rs`.
 
 ### 1. Open a temporary reader and parse the boot sector
 
@@ -338,7 +331,7 @@ Two design details matter here:
 
 ## Chunk planning
 
-Chunk planning lives in `src/raw_mft/work_plan.rs` and produces a deterministic vector of `RawMftWorkChunk { start_record, end_record }` values.
+Chunk planning lives in `src/raw_mft/chunk_plan.rs` and produces a deterministic vector of `RawMftWorkChunk { start_record, end_record }` values.
 
 ### What a chunk represents
 

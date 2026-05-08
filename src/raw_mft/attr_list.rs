@@ -15,8 +15,9 @@ use crate::{
     Fid,
     errors::UsnError,
     raw_mft::{
-        batch::RawMftBatchScratch,
-        entry::{AttributeListInfo, EntryBuildOptions, RawMftEntry, RawMftLink},
+        entry_build::{
+            AttributeListInfo, EntryBuildOptions, RawMftBatchScratch, RawMftEntry, RawMftLink,
+        },
         io::VolumeReader,
         ondisk::{
             attribute::{FileNameNamespace, NtfsAttributeType, for_each_attr_list_entry},

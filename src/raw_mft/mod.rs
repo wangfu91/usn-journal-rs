@@ -31,26 +31,17 @@
 //! * Reading the volume requires Administrator privileges.
 
 mod attr_list;
-mod attribute_capture;
-mod attribute_fold;
-mod batch;
-mod entry;
-mod init;
-mod init_support;
+mod bootstrap;
+mod chunk_plan;
+mod entry_build;
 mod io;
-mod iter;
-mod name_selection;
 mod ondisk;
 mod options;
 mod parallel;
-mod parallel_executor;
-mod parallel_plan;
-mod profile;
 mod reader;
-mod serial_driver;
+mod serial;
 #[cfg(test)]
 mod tests;
-mod work_plan;
 
 use std::num::NonZeroUsize;
 use std::sync::Arc;
@@ -58,7 +49,7 @@ use std::sync::Arc;
 use crate::{
     errors::UsnError,
     raw_mft::{
-        entry::EntryBuildOptions,
+        entry_build::EntryBuildOptions,
         io::VolumeReader,
         ondisk::{boot::BootSector, extent::ExtentMap},
         reader::read_record_at,
@@ -66,18 +57,16 @@ use crate::{
     volume::Volume,
 };
 
-pub use batch::{RawMftBatchEntry, RawMftChunkBatch};
-pub use entry::{AdsInfo, RawMftEntry, RawMftLink};
-pub use iter::RawMftIter;
+pub use chunk_plan::{RawMftChunkPlanOptions, RawMftChunkPlanOptionsBuilder, RawMftWorkChunk};
+pub use entry_build::{AdsInfo, RawMftBatchEntry, RawMftChunkBatch, RawMftEntry, RawMftLink};
 pub use ondisk::attribute::FileNameNamespace;
 pub use ondisk::data_run::{DataRun as DataRunInfo, DataRunSummary};
 pub use options::{
     RawMftEntryOptions, RawMftReadBuffers, RawMftRecordRange, RawMftScanOptions,
     RawMftScanOptionsBuilder,
 };
-pub use parallel_plan::RawMftParallelScan;
-pub use profile::RawMftProfile;
-pub use work_plan::{RawMftChunkPlanOptions, RawMftChunkPlanOptionsBuilder, RawMftWorkChunk};
+pub use parallel::RawMftParallelScan;
+pub use serial::{RawMftIter, RawMftProfile};
 
 /// Default I/O buffer size for raw `$MFT` iteration.
 #[allow(clippy::useless_nonzero_new_unchecked)]

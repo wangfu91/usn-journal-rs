@@ -6,18 +6,22 @@
 use std::ffi::OsString;
 use std::os::windows::ffi::OsStringExt;
 
-use crate::{Fid, FileAttributes, Filetime};
+use crate::{
+    Fid, FileAttributes, Filetime,
+    raw_mft::{
+        RawMftWorkChunk,
+        ondisk::{
+            attribute::{FileNameNamespace, NtfsAttribute, file_attr_flags},
+            record::FileRecord,
+        },
+    },
+};
 
 use super::{
-    FileNameNamespace, RawMftEntry, RawMftLink, RawMftWorkChunk,
-    attribute_capture::resident_reparse_tag,
-    attribute_fold::{AttributeConsumer, fold_record_attributes},
-    entry::AttributeListInfo,
-    name_selection::{FileNameSelector, current_file_name},
-    ondisk::{
-        attribute::{NtfsAttribute, file_attr_flags},
-        record::FileRecord,
-    },
+    capture::resident_reparse_tag,
+    entry::{AttributeListInfo, RawMftEntry, RawMftLink},
+    fold::{AttributeConsumer, fold_record_attributes},
+    names::{FileNameSelector, current_file_name},
 };
 
 /// Parsed batch result for one logical raw-MFT work chunk.

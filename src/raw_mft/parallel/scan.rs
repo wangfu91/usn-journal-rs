@@ -6,9 +6,11 @@ use crate::{
     errors::UsnError,
     raw_mft::{
         RawMft, RawMftBatchEntry, RawMftChunkBatch, RawMftChunkPlanOptions, RawMftScanOptions,
-        RawMftWorkChunk, parallel_executor,
+        RawMftWorkChunk,
     },
 };
+
+use super::executor;
 
 /// Configured parallel raw `$MFT` scan.
 #[derive(Clone)]
@@ -128,8 +130,7 @@ impl<'m, 'v> RawMftParallelScan<'m, 'v> {
     fn resolved_worker_count(&self) -> Result<NonZeroUsize, UsnError> {
         match self.worker_count {
             Some(worker_count) => Ok(worker_count),
-            None => thread::available_parallelism()
-                .map_err(parallel_executor::available_parallelism_error),
+            None => thread::available_parallelism().map_err(executor::available_parallelism_error),
         }
     }
 }

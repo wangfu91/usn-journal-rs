@@ -1,13 +1,11 @@
 //! Shared FILE-record attribute dispatch for raw-MFT entry builders.
 
-use crate::raw_mft::{
-    attribute_capture::capture_attribute_list,
-    entry::AttributeListInfo,
-    ondisk::{
-        attribute::{NtfsAttribute, NtfsAttributeType, for_each_attribute},
-        record::FileRecord,
-    },
+use crate::raw_mft::ondisk::{
+    attribute::{NtfsAttribute, NtfsAttributeType, for_each_attribute},
+    record::FileRecord,
 };
+
+use super::{capture::capture_attribute_list, entry::AttributeListInfo};
 
 /// Consumer of typed NTFS attributes from one FILE record.
 pub(super) trait AttributeConsumer {

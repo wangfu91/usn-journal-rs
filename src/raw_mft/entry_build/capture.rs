@@ -1,6 +1,8 @@
 //! Small attribute payload helpers used during entry construction.
 
-use crate::raw_mft::{entry::AttributeListInfo, ondisk::attribute::NtfsAttribute};
+use crate::raw_mft::ondisk::attribute::NtfsAttribute;
+
+use super::entry::AttributeListInfo;
 
 /// Capture raw `$ATTRIBUTE_LIST` bytes from either a resident or non-resident
 /// attribute payload.

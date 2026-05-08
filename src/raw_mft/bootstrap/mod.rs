@@ -5,16 +5,17 @@
 //! `$MFT::$DATA` extent map, and materializing `$MFT::$BITMAP` for later
 //! in-memory record filtering.
 
+mod discovery;
+
 use std::io::{Read, Seek, SeekFrom};
 
 use log::debug;
 
+use self::discovery::bootstrap_mft_state;
+
 use crate::{
     errors::UsnError,
-    raw_mft::{
-        init_support::bootstrap_mft_state, io::VolumeReader, ondisk::boot::BootSector,
-        reader::io_err,
-    },
+    raw_mft::{io::VolumeReader, ondisk::boot::BootSector, reader::io_err},
     volume::Volume,
 };
 

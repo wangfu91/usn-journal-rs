@@ -34,10 +34,10 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let volume = Volume::from_drive_letter(drive)?;
     let raw_mft = RawMft::new(&volume)?;
-    let work_plan = RawMftChunkPlanOptions::builder()
+    let chunk_plan = RawMftChunkPlanOptions::builder()
         .max_records_per_chunk(max_records_per_chunk)
         .build();
-    let chunks = raw_mft.plan_chunks_with_options(work_plan);
+    let chunks = raw_mft.plan_chunks_with_options(chunk_plan);
     let options = RawMftScanOptions::builder()
         .collect_alternate_data_streams(false)
         .collect_data_run_summary(false)
