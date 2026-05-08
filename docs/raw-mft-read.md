@@ -5,12 +5,15 @@ This document explains how the current `RawMft` implementation reads and parses 
 The relevant code lives in:
 
 - `src/raw_mft/mod.rs`
+- `src/raw_mft/builder_common.rs`
 - `src/raw_mft/init.rs`
+- `src/raw_mft/init_support.rs`
 - `src/raw_mft/reader.rs`
 - `src/raw_mft/attr_list.rs`
 - `src/raw_mft/iter.rs`
 - `src/raw_mft/profile.rs`
 - `src/raw_mft/parallel.rs`
+- `src/raw_mft/parallel_executor.rs`
 - `src/raw_mft/io.rs`
 - `src/raw_mft/extent.rs`
 - `src/raw_mft/record.rs`
@@ -134,7 +137,9 @@ It also captures `$ATTRIBUTE_LIST` information for later enrichment.
 
 ## Initialization path: `RawMft::new`
 
-`RawMft::new` performs all one-time setup needed for later scans.
+`RawMft::new` performs all one-time setup needed for later scans, with the
+FILE record 0 stream discovery and bitmap loading split into
+`src/raw_mft/init_support.rs`.
 
 ### 1. Open a temporary reader and parse the boot sector
 

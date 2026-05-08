@@ -14,6 +14,9 @@ use crate::{
             FileNameNamespace, NtfsAttribute, NtfsAttributeType, file_attr_flags,
             for_each_attribute,
         },
+        builder_common::{
+            FileNameTracker, capture_attribute_list, current_file_name, resident_reparse_tag,
+        },
         data_run::{DataRunSummary, summarize_runs},
         record::FileRecord,
     },
@@ -180,10 +183,8 @@ struct RawMftEntryBuilder {
     entry: RawMftEntry,
     /// Alternate streams accumulated while walking attributes.
     alternate_data_streams: Vec<AdsInfo>,
-    /// `$FILE_NAME` links accumulated while walking attributes.
-    links: Vec<RawMftLink>,
-    /// Score of the best `$FILE_NAME` namespace chosen so far.
-    best_namespace_score: i32,
+    /// Shared `$FILE_NAME` selection and link-retention state.
+    file_names: FileNameTracker,
     /// Whether the unnamed `$DATA` attribute has already been consumed.
     have_unnamed_data: bool,
     /// Captured `$ATTRIBUTE_LIST` data, if any.
@@ -192,8 +193,6 @@ struct RawMftEntryBuilder {
     collect_alternate_data_streams: bool,
     /// Whether to compute non-resident data run summaries.
     collect_data_run_summary: bool,
-    /// Whether to retain DOS 8.3 aliases shadowed by better same-parent names.
-    collect_dos_file_name_links: bool,
 }
 
 impl RawMftEntryBuilder {
@@ -235,13 +234,11 @@ impl RawMftEntryBuilder {
                 links: Box::default(),
             },
             alternate_data_streams: Vec::new(),
-            links: Vec::new(),
-            best_namespace_score: -1,
+            file_names: FileNameTracker::new(options.collect_dos_file_name_links),
             have_unnamed_data: false,
             attr_list: None,
             collect_alternate_data_streams: options.collect_alternate_data_streams,
             collect_data_run_summary: options.collect_data_run_summary,
-            collect_dos_file_name_links: options.collect_dos_file_name_links,
         }
     }
 
@@ -257,22 +254,8 @@ impl RawMftEntryBuilder {
         } else if type_id == NtfsAttributeType::ReparsePoint as u32 {
             self.apply_reparse_point_attribute(attr);
         } else if type_id == NtfsAttributeType::AttributeList as u32 {
-            if attr.is_non_resident() {
-                // Store the data-run bytes so the caller can load the
-                // list from disk and enrich this entry with the
-                // best-namespace $FILE_NAME from extension records.
-                if let Some(h) = attr.nonresident_header() {
-                    let runs_off = h.data_runs_offset as usize;
-                    let attr_bytes = attr.data();
-                    if runs_off <= attr_bytes.len() {
-                        self.attr_list = Some(AttributeListInfo::NonResident {
-                            runs_data: attr_bytes[runs_off..].to_vec(),
-                            data_size: h.data_size,
-                        });
-                    }
-                }
-            } else if let Some(value) = attr.resident_value() {
-                self.attr_list = Some(AttributeListInfo::Resident(value.to_vec()));
+            if let Some(attr_list) = capture_attribute_list(attr) {
+                self.attr_list = Some(attr_list);
             }
         }
     }
@@ -292,46 +275,19 @@ impl RawMftEntryBuilder {
     fn apply_file_name(&mut self, attr: &NtfsAttribute<'_>) {
         if let Some((header, name_units)) = attr.as_file_name() {
             let ns = FileNameNamespace::from_u8(header.namespace);
-            let score = ns.score();
             let parent_reference = Fid::new(header.parent_directory_reference);
-            if !self.collect_dos_file_name_links
-                && ns == FileNameNamespace::Dos
-                && self.has_non_dos_file_name_link(parent_reference)
-            {
-                return;
-            }
             let file_name = OsString::from_wide(name_units);
-            if !self.collect_dos_file_name_links && ns != FileNameNamespace::Dos {
-                self.links.retain(|link| {
-                    link.namespace != FileNameNamespace::Dos
-                        || link.parent_reference != parent_reference
-                });
-            }
-            if self.best_namespace_score >= 0 {
-                if self.links.is_empty()
-                    && self.should_retain_file_name_link(
-                        self.entry.namespace,
-                        self.entry.parent_reference,
-                        ns,
-                        parent_reference,
-                    )
-                {
-                    self.links.push(RawMftLink {
-                        parent_reference: self.entry.parent_reference,
-                        namespace: self.entry.namespace,
-                        file_name: self.entry.file_name.clone(),
-                    });
-                }
-                if self.should_retain_file_name_link(ns, parent_reference, ns, parent_reference) {
-                    self.links.push(RawMftLink {
-                        parent_reference,
-                        namespace: ns,
-                        file_name: file_name.clone(),
-                    });
-                }
-            }
-            if score > self.best_namespace_score {
-                self.best_namespace_score = score;
+            let should_replace = self.file_names.consider(
+                current_file_name(
+                    self.entry.namespace,
+                    self.entry.parent_reference,
+                    &self.entry.file_name,
+                ),
+                ns,
+                parent_reference,
+                &file_name,
+            );
+            if should_replace {
                 self.entry.namespace = ns;
                 self.entry.file_name = file_name;
                 self.entry.parent_reference = parent_reference;
@@ -346,34 +302,6 @@ impl RawMftEntryBuilder {
                 }
             }
         }
-    }
-
-    fn has_non_dos_file_name_link(&self, parent_reference: Fid) -> bool {
-        (self.best_namespace_score >= 0
-            && self.entry.parent_reference == parent_reference
-            && self.entry.namespace != FileNameNamespace::Dos)
-            || self.links.iter().any(|link| {
-                link.parent_reference == parent_reference
-                    && link.namespace != FileNameNamespace::Dos
-            })
-    }
-
-    fn should_retain_file_name_link(
-        &self,
-        link_namespace: FileNameNamespace,
-        link_parent: Fid,
-        current_namespace: FileNameNamespace,
-        current_parent: Fid,
-    ) -> bool {
-        if self.collect_dos_file_name_links || link_namespace != FileNameNamespace::Dos {
-            return true;
-        }
-        let current_shadows_link =
-            current_namespace != FileNameNamespace::Dos && current_parent == link_parent;
-        let existing_link_shadows = self.links.iter().any(|link| {
-            link.parent_reference == link_parent && link.namespace != FileNameNamespace::Dos
-        });
-        !current_shadows_link && !existing_link_shadows
     }
 
     /// Fold a `$DATA` attribute into the unnamed stream or ADS list.
@@ -436,14 +364,9 @@ impl RawMftEntryBuilder {
 
     /// Fold a resident `$REPARSE_POINT` attribute into the entry.
     fn apply_reparse_point_attribute(&mut self, attr: &NtfsAttribute<'_>) {
-        let Some(value) = attr.resident_value() else {
+        let Some(reparse_tag) = resident_reparse_tag(attr) else {
             return;
         };
-        let Some(tag_bytes) = value.get(..4) else {
-            return;
-        };
-        let reparse_tag =
-            u32::from_le_bytes([tag_bytes[0], tag_bytes[1], tag_bytes[2], tag_bytes[3]]);
         self.entry.is_reparse_point = true;
         self.entry.reparse_tag = Some(reparse_tag);
     }
@@ -499,7 +422,7 @@ impl RawMftEntryBuilder {
     fn build(mut self) -> (RawMftEntry, Option<AttributeListInfo>) {
         self.fold_si_flags();
         self.entry.alternate_data_streams = self.alternate_data_streams.into_boxed_slice();
-        self.entry.links = self.links.into_boxed_slice();
+        self.entry.links = self.file_names.into_links();
         (self.entry, self.attr_list)
     }
 

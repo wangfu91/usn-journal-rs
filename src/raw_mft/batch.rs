@@ -11,6 +11,9 @@ use crate::{Fid, FileAttributes, Filetime};
 use super::{
     FileNameNamespace, RawMftEntry, RawMftLink, RawMftWorkChunk,
     attribute::{NtfsAttribute, NtfsAttributeType, file_attr_flags, for_each_attribute},
+    builder_common::{
+        FileNameTracker, capture_attribute_list, current_file_name, resident_reparse_tag,
+    },
     entry::AttributeListInfo,
     record::FileRecord,
 };
@@ -120,10 +123,8 @@ impl From<RawMftEntry> for RawMftBatchEntry {
 
 struct RawMftBatchEntryBuilder {
     scratch: RawMftBatchScratch,
-    links: Vec<RawMftLink>,
-    best_namespace_score: i32,
+    file_names: FileNameTracker,
     attr_list: Option<AttributeListInfo>,
-    collect_dos_file_name_links: bool,
 }
 
 impl RawMftBatchEntryBuilder {
@@ -149,10 +150,8 @@ impl RawMftBatchEntryBuilder {
                 have_unnamed_data: false,
                 is_reparse_point: false,
             },
-            links: Vec::new(),
-            best_namespace_score: -1,
+            file_names: FileNameTracker::new(collect_dos_file_name_links),
             attr_list: None,
-            collect_dos_file_name_links,
         }
     }
 
@@ -172,19 +171,8 @@ impl RawMftBatchEntryBuilder {
     }
 
     fn capture_attribute_list(&mut self, attr: &NtfsAttribute<'_>) {
-        if attr.is_non_resident() {
-            if let Some(h) = attr.nonresident_header() {
-                let runs_off = h.data_runs_offset as usize;
-                let attr_bytes = attr.data();
-                if runs_off <= attr_bytes.len() {
-                    self.attr_list = Some(AttributeListInfo::NonResident {
-                        runs_data: attr_bytes[runs_off..].to_vec(),
-                        data_size: h.data_size,
-                    });
-                }
-            }
-        } else if let Some(value) = attr.resident_value() {
-            self.attr_list = Some(AttributeListInfo::Resident(value.to_vec()));
+        if let Some(attr_list) = capture_attribute_list(attr) {
+            self.attr_list = Some(attr_list);
         }
     }
 
@@ -199,51 +187,19 @@ impl RawMftBatchEntryBuilder {
     fn apply_file_name(&mut self, attr: &NtfsAttribute<'_>) {
         if let Some((header, name_units)) = attr.as_file_name() {
             let namespace = FileNameNamespace::from_u8(header.namespace);
-            let score = namespace.score();
             let parent_reference = Fid::new(header.parent_directory_reference);
-            if !self.collect_dos_file_name_links
-                && namespace == FileNameNamespace::Dos
-                && self.has_non_dos_file_name_link(parent_reference)
-            {
-                return;
-            }
             let file_name = OsString::from_wide(name_units);
-            if !self.collect_dos_file_name_links && namespace != FileNameNamespace::Dos {
-                self.links.retain(|link| {
-                    link.namespace != FileNameNamespace::Dos
-                        || link.parent_reference != parent_reference
-                });
-            }
-            if self.best_namespace_score >= 0 {
-                if self.links.is_empty()
-                    && self.should_retain_file_name_link(
-                        self.scratch.entry.namespace,
-                        self.scratch.entry.parent_reference,
-                        namespace,
-                        parent_reference,
-                    )
-                {
-                    self.links.push(RawMftLink {
-                        parent_reference: self.scratch.entry.parent_reference,
-                        namespace: self.scratch.entry.namespace,
-                        file_name: self.scratch.entry.file_name.clone(),
-                    });
-                }
-                if self.should_retain_file_name_link(
-                    namespace,
-                    parent_reference,
-                    namespace,
-                    parent_reference,
-                ) {
-                    self.links.push(RawMftLink {
-                        parent_reference,
-                        namespace,
-                        file_name: file_name.clone(),
-                    });
-                }
-            }
-            if score > self.best_namespace_score {
-                self.best_namespace_score = score;
+            let should_replace = self.file_names.consider(
+                current_file_name(
+                    self.scratch.entry.namespace,
+                    self.scratch.entry.parent_reference,
+                    &self.scratch.entry.file_name,
+                ),
+                namespace,
+                parent_reference,
+                &file_name,
+            );
+            if should_replace {
                 self.scratch.entry.namespace = namespace;
                 self.scratch.entry.file_name = file_name;
                 self.scratch.entry.parent_reference = parent_reference;
@@ -253,33 +209,6 @@ impl RawMftBatchEntryBuilder {
                 }
             }
         }
-    }
-
-    fn has_non_dos_file_name_link(&self, parent_reference: Fid) -> bool {
-        (self.best_namespace_score >= 0
-            && self.scratch.entry.parent_reference == parent_reference
-            && self.scratch.entry.namespace != FileNameNamespace::Dos)
-            || self.links.iter().any(|link| {
-                link.parent_reference == parent_reference && link.namespace != FileNameNamespace::Dos
-            })
-    }
-
-    fn should_retain_file_name_link(
-        &self,
-        link_namespace: FileNameNamespace,
-        link_parent: Fid,
-        current_namespace: FileNameNamespace,
-        current_parent: Fid,
-    ) -> bool {
-        if self.collect_dos_file_name_links || link_namespace != FileNameNamespace::Dos {
-            return true;
-        }
-        let current_shadows_link =
-            current_namespace != FileNameNamespace::Dos && current_parent == link_parent;
-        let existing_link_shadows = self.links.iter().any(|link| {
-            link.parent_reference == link_parent && link.namespace != FileNameNamespace::Dos
-        });
-        !current_shadows_link && !existing_link_shadows
     }
 
     fn apply_data_attribute(&mut self, attr: &NtfsAttribute<'_>) {
@@ -306,26 +235,18 @@ impl RawMftBatchEntryBuilder {
     }
 
     fn apply_reparse_point_attribute(&mut self, attr: &NtfsAttribute<'_>) {
-        let Some(value) = attr.resident_value() else {
-            return;
-        };
-        let Some(tag_bytes) = value.get(..4) else {
+        let Some(reparse_tag) = resident_reparse_tag(attr) else {
             return;
         };
         self.scratch.is_reparse_point = true;
-        self.scratch.entry.reparse_tag = Some(u32::from_le_bytes([
-            tag_bytes[0],
-            tag_bytes[1],
-            tag_bytes[2],
-            tag_bytes[3],
-        ]));
+        self.scratch.entry.reparse_tag = Some(reparse_tag);
     }
 
     fn build(mut self) -> (RawMftBatchScratch, Option<AttributeListInfo>) {
         if self.scratch.entry.si_file_attributes.bits() & file_attr_flags::REPARSE_POINT != 0 {
             self.scratch.is_reparse_point = true;
         }
-        self.scratch.entry.links = self.links.into_boxed_slice();
+        self.scratch.entry.links = self.file_names.into_links();
         (self.scratch, self.attr_list)
     }
 }
