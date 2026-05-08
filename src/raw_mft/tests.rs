@@ -6,7 +6,7 @@ fn options_defaults_are_sensible() {
     assert_eq!(o.buffer_bytes, DEFAULT_BUFFER_BYTES);
     assert_eq!(o.attr_buffer_bytes, DEFAULT_ATTR_BUFFER_BYTES);
     assert!(o.skip_unused);
-    assert!(!o.skip_extension_records);
+    assert!(o.skip_extension_records);
     assert!(o.collect_alternate_data_streams);
     assert!(o.collect_data_run_summary);
     assert!(o.collect_dos_file_name_links);

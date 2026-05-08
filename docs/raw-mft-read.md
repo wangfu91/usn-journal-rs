@@ -219,7 +219,19 @@ If that succeeds, it calls `FileRecord::parse`, which applies the USA fixup in p
 
 Parse failures are logged and skipped. They do not terminate the whole scan.
 
-#### 5. Build the high-level entry
+#### 5. Reject extension records early (when `skip_extension_records` is true)
+
+Before building the high-level entry, the iterator reads `base_reference` from the
+parsed FILE record header.
+
+If `skip_extension_records` is true (the default) and `base_reference != 0`, the
+iterator discards the record immediately.  No attribute walk is performed.
+
+Extension records are explained in detail in the
+[Record filtering for Explorer-like output](#record-filtering-for-explorer-like-output)
+section.
+
+#### 6. Build the high-level entry
 
 The iterator calls `RawMftEntry::from_record_with_attr_list(&rec, build_options)`.
 
@@ -229,12 +241,6 @@ This produces:
 - optional `AttributeListInfo` when the record carries `$ATTRIBUTE_LIST`.
 
 The builder collects attributes from the base record only at this stage.
-
-#### 6. Optionally skip extension records
-
-If `skip_extension_records` is true and `entry.base_record_reference != 0`, the iterator drops that record from the output.
-
-This does not disable enrichment of base records. It only suppresses yielding extension records as standalone entries.
 
 #### 7. Optionally enrich from `$ATTRIBUTE_LIST`
 
@@ -533,7 +539,118 @@ The current reader gets most of its performance from a small number of deliberat
 - Deterministic ordered merge at chunk granularity instead of record granularity.
 - Folded parallel ingestion when the consumer does not need to retain full batch objects.
 
-## Caveats and limits
+## Record filtering for Explorer-like output
+
+The raw-MFT reader exposes two independent filters that together produce a
+"current live filesystem" view — the same set of entries Windows Explorer shows.
+
+### In-use filtering (`skip_unused`, default `true`)
+
+When `skip_unused` is true, the reader consults the `$MFT` `$BITMAP` loaded during
+`RawMft::new` before touching a FILE record on disk.
+
+- The `$BITMAP` is loaded once into memory (`Arc<[u8]>`) at construction time.
+- Each lookup is an in-memory bit test: byte `n / 8`, bit `n % 8`.
+- Records whose bit is clear are skipped before the extent translation, buffer
+  borrow, validation, and parse steps, making the check essentially free.
+
+If `$BITMAP` is unavailable, `bitmap_used` returns `true` for all records and the
+reader falls back to the header `IN_USE` flag as a secondary guard; in that case
+every record is fully parsed and only records with `flags & 0x0001 == 0` are
+discarded.
+
+### Extension-record filtering (`skip_extension_records`, default `true`)
+
+#### What extension records are
+
+An NTFS FILE record is exactly 1 KB.  Most files fit in a single record — the
+**base record**.  Some files cannot:
+
+- files with many hard links generate many `$FILE_NAME` attributes,
+- highly fragmented files generate long data-run lists,
+- files with many alternate data streams accumulate many `$DATA` attributes.
+
+When the base record overflows, NTFS allocates one or more additional FILE records
+called **extension records** to hold the surplus attributes.  The base record then
+carries a `$ATTRIBUTE_LIST` attribute that lists which attribute lives in which record.
+
+Extension records can be identified by a single header field: the 8-byte
+`base_reference` at offset 0x20.
+
+- **Base record**: `base_reference == 0`.
+- **Extension record**: `base_reference` holds the full file reference (record
+  number in the lower 48 bits, sequence number in the upper 16 bits) of the base
+  record.
+
+#### Why filtering matters
+
+Extension records are *overflow storage*, not separate files.  A 5,000-link file
+still represents one logical entry, even if its `$FILE_NAME` attributes span three
+or four MFT records.
+
+If extension records are not filtered, the iterator yields one entry per FILE
+record, so the same file appears multiple times — once as the base entry and once
+(or more) as partial, attribute-incomplete extension views.
+
+With `skip_extension_records = true` (the default) the reader rejects each
+extension record immediately after the USA fixup and before the expensive attribute
+walk, keeping one output entry per unique file or directory.
+
+#### Interaction with `$ATTRIBUTE_LIST` enrichment
+
+Skipping extension records from the *output stream* does not affect enrichment.
+When the base record carries a `$ATTRIBUTE_LIST` attribute, the enrichment path
+still reads the relevant extension records, merges better file names or missing
+data attributes back into the base entry, and then discards the extension record
+without returning it to the caller.
+
+### Sequence numbers
+
+Every FILE record header carries a 16-bit `sequence_value`.  NTFS increments this
+value each time a record is reused for a new file.
+
+NTFS directory-index entries and `$ATTRIBUTE_LIST` entries reference files using
+a 64-bit file reference:
+
+- **lower 48 bits**: MFT record number,
+- **upper 16 bits**: sequence number at the time the reference was written.
+
+A sequence-number mismatch between a stored reference and the current record header
+means the record has been reused — the original file was deleted and a new one now
+occupies that slot.
+
+The current `PathResolver::with_in_memory_tree` implementation intentionally
+discards the sequence bits when keying the directory tree by record number.  A
+stale file reference therefore resolves to the *current occupant* of that record
+number rather than returning `None`.  This is a deliberate trade-off: the in-memory
+tree is built from a single-point-in-time MFT scan so internal references are
+always consistent within that snapshot, and the simpler lookup avoids a separate
+sequence-validation step per path component.
+
+If you need strict sequence validation (for example, to detect reused records in a
+diff against an older snapshot), call `Fid::sequence()` and compare it against
+`FileRecord::sequence_value()` before accepting the resolved path.
+
+### Summary: default filter chain
+
+With factory defaults, each record number passes through these gates in order:
+
+1. **Bitmap check** (`skip_unused = true`): skip if bit clear → most deleted
+   records are rejected here, before any disk I/O on the record itself.
+2. **Extent translation**: skip sparse holes.
+3. **Buffer borrow**: bring record bytes into the aligned reader buffer.
+4. **Signature check** (`FileRecord::is_valid`): reject non-FILE records.
+5. **USA fixup** (`FileRecord::parse`): verify and repair sector trailers.
+6. **Extension-record check** (`skip_extension_records = true`): reject records
+   whose `base_reference != 0` before the attribute walk.
+7. **Attribute walk + entry build**: produce one `RawMftEntry` per base record.
+8. **`$ATTRIBUTE_LIST` enrichment** (when needed): load overflow attributes from
+   extension records and merge them into the base entry.
+
+The result is one entry per currently live file or directory, matching the view
+that Windows Explorer presents.
+
+
 
 - Chunk boundaries are logical record ranges, not physical extent boundaries.
 - Invalid FILE records are skipped unless the error is fatal to the scan itself.

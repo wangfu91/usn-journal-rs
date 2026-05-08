@@ -407,15 +407,15 @@ impl<'a> RawMft<'a> {
             };
             profile.parse_elapsed += parse_start.elapsed();
 
+            if options.skip_extension_records && rec.base_reference() != 0 {
+                profile.extension_records_skipped += 1;
+                continue;
+            }
+
             let entry_build_start = Instant::now();
             let (mut entry, attr_list) =
                 RawMftEntry::from_record_with_attr_list(&rec, build_options);
             profile.entry_build_elapsed += entry_build_start.elapsed();
-
-            if options.skip_extension_records && entry.base_record_reference != 0 {
-                profile.extension_records_skipped += 1;
-                continue;
-            }
 
             if let Some(attr_list) = attr_list
                 && should_enrich_from_attr_list(&entry)
@@ -583,11 +583,15 @@ impl<'a> RawMft<'a> {
                 }
             };
 
-            let (mut entry, attr_list) =
-                RawMftBatchScratch::from_record_with_attr_list(&rec, options.collect_dos_file_name_links);
-            if options.skip_extension_records && entry.entry.base_record_reference != 0 {
+            // Reject extension records before the expensive attribute walk.
+            // Extension records have a non-zero base_reference pointing back to
+            // their base record; base records have base_reference == 0.
+            if options.skip_extension_records && rec.base_reference() != 0 {
                 continue;
             }
+
+            let (mut entry, attr_list) =
+                RawMftBatchScratch::from_record_with_attr_list(&rec, options.collect_dos_file_name_links);
 
             if let Some(attr_list) = attr_list
                 && should_enrich_batch_from_attr_list(&entry)
@@ -1047,6 +1051,10 @@ impl<'a> Iterator for RawMftIter<'a> {
             }
             match FileRecord::parse(n, Some(offset), buf) {
                 Ok(rec) => {
+                    // Reject extension records before the expensive attribute walk.
+                    if self.options.skip_extension_records && rec.base_reference() != 0 {
+                        continue;
+                    }
                     let build_options = EntryBuildOptions {
                         collect_alternate_data_streams: self.options.collect_alternate_data_streams,
                         collect_data_run_summary: self.options.collect_data_run_summary,
@@ -1054,9 +1062,6 @@ impl<'a> Iterator for RawMftIter<'a> {
                     };
                     let (mut entry, attr_list) =
                         RawMftEntry::from_record_with_attr_list(&rec, build_options);
-                    if self.options.skip_extension_records && entry.base_record_reference != 0 {
-                        continue;
-                    }
                     // `rec` is last used above; NLL ends the borrow on
                     // the reader's internal buffer here, so self.reader
                     // is free for the extension-record reads below.

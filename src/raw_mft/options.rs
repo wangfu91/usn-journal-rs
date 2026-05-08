@@ -17,7 +17,16 @@ pub struct RawMftIterOptions {
     pub(crate) attr_buffer_bytes: NonZeroUsize,
     /// Honour the `$MFT` `$BITMAP` to skip unused records.
     pub(crate) skip_unused: bool,
-    /// When true, omit extension records from the yielded stream.
+    /// When true, omit extension (non-base) records from the yielded stream.
+    ///
+    /// An extension record is an overflow FILE record whose `base_reference`
+    /// header field points back to the base record.  A base record has
+    /// `base_reference == 0` and represents one unique file or directory.
+    /// Filtering out extension records yields exactly one entry per file or
+    /// directory — the same view Windows Explorer shows.
+    ///
+    /// Defaults to `true`.  Set to `false` only if you explicitly need to
+    /// inspect raw extension record contents.
     pub(crate) skip_extension_records: bool,
     /// When false, skip collecting named alternate data streams.
     pub(crate) collect_alternate_data_streams: bool,
@@ -38,7 +47,7 @@ impl Default for RawMftIterOptions {
             buffer_bytes: DEFAULT_BUFFER_BYTES,
             attr_buffer_bytes: DEFAULT_ATTR_BUFFER_BYTES,
             skip_unused: true,
-            skip_extension_records: false,
+            skip_extension_records: true,
             collect_alternate_data_streams: true,
             collect_data_run_summary: true,
             collect_dos_file_name_links: true,
@@ -82,7 +91,9 @@ impl RawMftIterOptionsBuilder {
         self
     }
 
-    /// Whether extension records should be omitted from the yielded stream.
+    /// Whether extension (non-base) records should be omitted from the yielded stream.
+    ///
+    /// Defaults to `true`.  See [`RawMftIterOptions::skip_extension_records`] for details.
     pub fn skip_extension_records(mut self, v: bool) -> Self {
         self.inner.skip_extension_records = v;
         self
