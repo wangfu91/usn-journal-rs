@@ -158,8 +158,8 @@ impl Default for RawMftScanOptions {
             buffers: RawMftReadBuffers::default(),
             range: RawMftRecordRange::default(),
             entry: RawMftEntryOptions::default(),
-            skip_unused: true,
-            skip_extension_records: true,
+            skip_unused: false,
+            skip_extension_records: false,
         }
     }
 }
