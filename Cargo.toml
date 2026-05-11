@@ -44,7 +44,7 @@ features = [
 ]
 
 [dev-dependencies]
-criterion = "0.5"
+criterion = "0.8.2"
 injectorpp = "0.5"
 divan = "0.1"
 

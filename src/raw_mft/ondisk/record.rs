@@ -7,7 +7,7 @@
 
 use std::mem::size_of;
 
-use crate::{errors::UsnError, raw_mft::ondisk::fixup};
+use crate::{errors::UsnError, raw_mft::ondisk::usa_fixup};
 
 /// `FILE` record signature.
 pub const FILE_RECORD_SIGNATURE: &[u8; 4] = b"FILE";
@@ -118,7 +118,7 @@ impl<'a> FileRecord<'a> {
                 h.update_sequence_length as usize,
             )
         };
-        fixup::apply_fixup(number, data, usa_offset, usa_count)?;
+        usa_fixup::apply_usa_fixup(number, data, usa_offset, usa_count)?;
         // SAFETY: Same as above. `apply_fixup` did not shrink the buffer
         // (it only writes inside it), so `data` still covers the header.
         let header = unsafe { &*(data.as_ptr() as *const FileRecordHeader) };

@@ -1,11 +1,12 @@
 //! Update Sequence Array (USA) "fixup" handling for NTFS multi-sector
 //! transfer-protected records.
 //!
-//! Every NTFS multi-sector record (FILE record, INDX block, …) ends every
-//! 512-byte sector with a 2-byte "USN" sentinel. The real values that
-//! belong at those positions are stored in the Update Sequence Array at
-//! the start of the record. After validating that every sector trailer
-//! matches the sentinel we substitute the real values back in.
+//! Every NTFS multi-sector record (FILE record, INDX block, …) ends each
+//! 512-byte sector with a 2-byte sentinel value. The real bytes that used
+//! to live in those trailer positions are stored in the Update Sequence
+//! Array (USA) near the start of the record. Fixup is therefore a two-step
+//! process: first verify that every sector trailer still contains the
+//! sentinel, then copy the saved replacement bytes back into place.
 
 use crate::errors::UsnError;
 
@@ -16,13 +17,13 @@ pub const USA_SECTOR_SIZE: usize = 512;
 /// Apply the Update Sequence Array fixup to a multi-sector record buffer.
 ///
 /// `usa_offset` and `usa_count` come from the record header. `usa_count`
-/// is the count of `u16` entries: a leading 2-byte sentinel followed by
-/// one replacement word per protected sector.
+/// is the count of `u16` entries stored in the USA: one leading sentinel
+/// word plus one saved trailer word for each protected sector.
 ///
 /// Returns [`UsnError::FixupMismatch`] if any sector trailer doesn't
 /// match the sentinel, and [`UsnError::InvalidMftRecord`] if the offsets
 /// or counts are nonsensical.
-pub(crate) fn apply_fixup(
+pub(crate) fn apply_usa_fixup(
     record_number: u64,
     data: &mut [u8],
     usa_offset: usize,
@@ -50,6 +51,10 @@ pub(crate) fn apply_fixup(
             reason: "USA extends past record",
         });
     }
+    // The USA claims that `sectors` protected 512-byte sectors exist in
+    // this record. That implies the buffer must be large enough to reach
+    // every sector trailer; otherwise the header is inconsistent or the
+    // record was truncated before we finished reading it.
     let needed = sectors
         .checked_mul(USA_SECTOR_SIZE)
         .ok_or(UsnError::InvalidMftRecord {
@@ -63,11 +68,21 @@ pub(crate) fn apply_fixup(
         });
     }
 
+    // The first USA word is the sentinel/USN. NTFS copies that same
+    // 2-byte value into the last two bytes of every protected sector so
+    // we can verify that the record was written as a complete unit before
+    // trusting any of the attribute data inside it.
     let sentinel = [data[usa_offset], data[usa_offset + 1]];
 
     for i in 0..sectors {
+        // USA layout: word 0 is the sentinel, words 1..N are the original
+        // trailer bytes for sectors 0..N-1. Each loop iteration restores
+        // one sector trailer from the matching USA entry.
         let entry_off = usa_offset + 2 + i * 2;
         let replacement = [data[entry_off], data[entry_off + 1]];
+        // Sector trailers sit at the last two bytes of each 512-byte
+        // protected sector, so the offset is predictable once we know the
+        // sector index.
         let trailer_off = (i + 1) * USA_SECTOR_SIZE - 2;
         if trailer_off + 2 > data.len() {
             return Err(UsnError::InvalidMftRecord {
@@ -98,13 +113,15 @@ mod tests {
         replacements: &[[u8; 2]],
     ) -> Vec<u8> {
         let mut buf = vec![0u8; record_size];
-        // USA layout: sentinel + replacements
+        // Lay out the USA exactly as NTFS does in a real record:
+        // [sentinel][saved trailer word for sector 0][saved trailer word for sector 1]...
         buf[usa_offset..usa_offset + 2].copy_from_slice(&sentinel);
         for (i, r) in replacements.iter().enumerate() {
             let off = usa_offset + 2 + i * 2;
             buf[off..off + 2].copy_from_slice(r);
         }
-        // Place sentinel at every sector trailer
+        // Pretend each protected sector already has the USA sentinel in
+        // its trailer so the fixup logic can validate and restore it.
         for i in 0..replacements.len() {
             let trailer = (i + 1) * USA_SECTOR_SIZE - 2;
             buf[trailer..trailer + 2].copy_from_slice(&sentinel);
@@ -116,7 +133,7 @@ mod tests {
     fn applies_fixup_for_two_sectors() {
         let replacements = [[0xAA, 0xBB], [0xCC, 0xDD]];
         let mut buf = build_record(1024, 42, [0x01, 0x00], &replacements);
-        apply_fixup(7, &mut buf, 42, 3).expect("fixup ok");
+        apply_usa_fixup(7, &mut buf, 42, 3).expect("fixup ok");
         assert_eq!(&buf[510..512], &replacements[0]);
         assert_eq!(&buf[1022..1024], &replacements[1]);
     }
@@ -127,7 +144,7 @@ mod tests {
         let mut buf = build_record(1024, 42, [0x01, 0x00], &replacements);
         // Corrupt sector trailer.
         buf[1022] = 0xFF;
-        match apply_fixup(7, &mut buf, 42, 3) {
+        match apply_usa_fixup(7, &mut buf, 42, 3) {
             Err(UsnError::FixupMismatch { number: 7 }) => {}
             other => panic!("expected FixupMismatch, got {:?}", other),
         }
@@ -137,7 +154,7 @@ mod tests {
     fn rejects_too_small_usa_count() {
         let mut buf = vec![0u8; 1024];
         assert!(matches!(
-            apply_fixup(1, &mut buf, 0, 1),
+            apply_usa_fixup(1, &mut buf, 0, 1),
             Err(UsnError::InvalidMftRecord { .. })
         ));
     }
@@ -146,7 +163,7 @@ mod tests {
     fn rejects_usa_past_buffer() {
         let mut buf = vec![0u8; 1024];
         assert!(matches!(
-            apply_fixup(1, &mut buf, 1020, 5),
+            apply_usa_fixup(1, &mut buf, 1020, 5),
             Err(UsnError::InvalidMftRecord { .. })
         ));
     }
