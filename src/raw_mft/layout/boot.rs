@@ -81,10 +81,18 @@ impl BootSector {
             ));
         }
 
+        // NTFS also stores sectors-per-cluster as a signed byte. Positive
+        // values are the common case and mean exactly that many sectors per
+        // cluster. Negative values encode the cluster size as `2^abs(value)`
+        // bytes, which we then convert back into a sector count relative to
+        // `bytes_per_sector`.
         let sectors_per_cluster_raw = buf[SECTORS_PER_CLUSTER_OFFSET] as i8;
         let sectors_per_cluster: u32 = if sectors_per_cluster_raw > 0 {
             sectors_per_cluster_raw as u32
         } else if sectors_per_cluster_raw < 0 {
+            // Negative values describe a power-of-two byte size directly.
+            // This is less common than the positive form, but it is part of
+            // the NTFS on-disk encoding and therefore must be handled.
             let exp = (-(sectors_per_cluster_raw as i32)) as u32;
             if exp >= 32 {
                 return Err(UsnError::InvalidBootSector(
@@ -108,12 +116,20 @@ impl BootSector {
             .checked_mul(sectors_per_cluster as u64)
             .ok_or(UsnError::InvalidBootSector("cluster size overflow"))?;
 
+        // NTFS stores this field as a signed byte, not a raw byte count:
+        //   * positive  => FILE record size is `value * cluster_size`
+        //   * negative  => FILE record size is `2^abs(value)` bytes
+        // The negative encoding is common on real systems; for example
+        // `-10` means `2^10 == 1024` bytes per FILE record.
         let file_record_size_info = buf[FILE_RECORD_SIZE_INFO_OFFSET] as i8;
         let file_record_size: u64 = if file_record_size_info > 0 {
             (file_record_size_info as u64)
                 .checked_mul(cluster_size)
                 .ok_or(UsnError::InvalidBootSector("file_record_size overflow"))?
         } else if file_record_size_info < 0 {
+            // Negative values encode a power-of-two byte size directly,
+            // which lets NTFS represent record sizes smaller than a full
+            // cluster (for example 1024-byte records on 4096-byte clusters).
             let exp = (-(file_record_size_info as i32)) as u32;
             if exp >= 32 {
                 return Err(UsnError::InvalidBootSector(
