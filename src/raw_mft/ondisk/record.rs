@@ -25,6 +25,7 @@ pub mod flags {
     pub const IS_DIRECTORY: u16 = 0x0002;
 }
 
+/// On-disk FILE record header, as found at the start of every MFT record.
 #[repr(C, packed)]
 pub(crate) struct FileRecordHeader {
     /// Four-byte `FILE` signature.
@@ -64,17 +65,25 @@ pub(crate) struct FileRecord<'a> {
 }
 
 impl<'a> FileRecord<'a> {
+    /// Interpret the start of `data` as a FILE record header.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure `data` is at least `size_of::<FileRecordHeader>()`
+    /// bytes long and represents an NTFS FILE record header laid out with
+    /// `#[repr(C, packed)]`.
+    fn header_from_bytes(data: &[u8]) -> &FileRecordHeader {
+        // SAFETY: The caller guarantees that `data` is large enough and
+        // points at a `#[repr(C, packed)]` FILE record header.
+        unsafe { &*(data.as_ptr() as *const FileRecordHeader) }
+    }
+
     /// Validate that `data` starts with a plausible FILE record header.
     pub fn is_valid(data: &[u8]) -> bool {
         if data.len() < size_of::<FileRecordHeader>() {
             return false;
         }
-        // SAFETY: We have just verified `data.len() >= sizeof(FileRecordHeader)`.
-        // `FileRecordHeader` is `#[repr(C, packed)]`, i.e. has alignment 1,
-        // so any byte pointer is sufficiently aligned to form a reference;
-        // Rust's packed-struct field access performs unaligned reads.
-        // The reference is bound to the borrow of `data`.
-        let h = unsafe { &*(data.as_ptr() as *const FileRecordHeader) };
+        let h = Self::header_from_bytes(data);
         if &h.signature != FILE_RECORD_SIGNATURE {
             return false;
         }
@@ -108,20 +117,13 @@ impl<'a> FileRecord<'a> {
                 "FILE signature or header invalid",
             ));
         }
-        let (usa_offset, usa_count) = {
-            // SAFETY: `is_valid(data)` returned true, so the buffer is at
-            // least `sizeof(FileRecordHeader)` bytes long. The header is
-            // `#[repr(C, packed)]` so any pointer is suitably aligned.
-            let h = unsafe { &*(data.as_ptr() as *const FileRecordHeader) };
-            (
-                h.update_sequence_offset as usize,
-                h.update_sequence_length as usize,
-            )
-        };
+        let h = Self::header_from_bytes(data);
+        let (usa_offset, usa_count) = (
+            h.update_sequence_offset as usize,
+            h.update_sequence_length as usize,
+        );
         usa_fixup::apply_usa_fixup(number, data, usa_offset, usa_count)?;
-        // SAFETY: Same as above. `apply_fixup` did not shrink the buffer
-        // (it only writes inside it), so `data` still covers the header.
-        let header = unsafe { &*(data.as_ptr() as *const FileRecordHeader) };
+        let header = Self::header_from_bytes(data);
         Ok(FileRecord {
             data,
             header,
