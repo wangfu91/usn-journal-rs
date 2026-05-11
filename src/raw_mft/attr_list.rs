@@ -455,6 +455,7 @@ fn merged_links(base: LinkView<'_>, ext: LinkView<'_>) -> Option<Box<[RawMftLink
 mod tests {
     use super::*;
     use std::ffi::OsString;
+    use zerocopy::IntoBytes;
 
     use crate::raw_mft::layout::attribute::AttributeListEntryHeader;
 
@@ -469,9 +470,7 @@ mod tests {
             attribute_id: 0,
         };
         let mut bytes = vec![0u8; std::mem::size_of::<AttributeListEntryHeader>()];
-        unsafe {
-            std::ptr::write_unaligned(bytes.as_mut_ptr() as *mut AttributeListEntryHeader, header);
-        }
+        bytes.copy_from_slice(header.as_bytes());
         bytes
     }
 

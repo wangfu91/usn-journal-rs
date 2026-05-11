@@ -1,3 +1,9 @@
+//! Iteration helpers for walking NTFS attribute records and `$ATTRIBUTE_LIST` entries.
+//!
+//! These helpers operate on already-bounded byte slices from a fixed-up FILE
+//! record and stop cleanly on malformed trailing data instead of panicking or
+//! reading past the validated region.
+
 use std::mem::size_of;
 
 use zerocopy::FromBytes;

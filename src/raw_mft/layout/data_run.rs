@@ -39,6 +39,20 @@ pub struct DataRunSummary {
 /// Maximum byte width of an NTFS run length or offset field.
 const MAX_FIELD_BYTES: usize = 8;
 
+fn read_var_u64_le(bytes: &[u8]) -> u64 {
+    let mut buf = [0u8; MAX_FIELD_BYTES];
+    buf[..bytes.len()].copy_from_slice(bytes);
+    u64::from_le_bytes(buf)
+}
+
+fn read_var_i64_le(bytes: &[u8]) -> i64 {
+    let mut buf = [0u8; MAX_FIELD_BYTES];
+    buf[..bytes.len()].copy_from_slice(bytes);
+    let raw = i64::from_le_bytes(buf);
+    let empty_bits = (MAX_FIELD_BYTES - bytes.len()) * 8;
+    (raw << empty_bits) >> empty_bits
+}
+
 /// Decode a sequence of data-run records starting at `runs`.
 ///
 /// Returns the sequence of runs alongside a [`DataRunSummary`].
@@ -89,9 +103,7 @@ where
         if cursor + length_bytes > runs.len() {
             return Err(UsnError::InvalidDataRun("truncated run length field"));
         }
-        let mut len_buf = [0u8; MAX_FIELD_BYTES];
-        len_buf[..length_bytes].copy_from_slice(&runs[cursor..cursor + length_bytes]);
-        let clusters = u64::from_le_bytes(len_buf);
+        let clusters = read_var_u64_le(&runs[cursor..cursor + length_bytes]);
         if clusters == 0 {
             return Err(UsnError::InvalidDataRun("zero-length run"));
         }
@@ -103,12 +115,7 @@ where
             if cursor + offset_bytes > runs.len() {
                 return Err(UsnError::InvalidDataRun("truncated run offset field"));
             }
-            let mut off_buf = [0u8; MAX_FIELD_BYTES];
-            off_buf[..offset_bytes].copy_from_slice(&runs[cursor..cursor + offset_bytes]);
-            let raw = i64::from_le_bytes(off_buf);
-            // Sign-extend from offset_bytes*8 bits.
-            let empty_bits = (MAX_FIELD_BYTES - offset_bytes) * 8;
-            let delta = (raw << empty_bits) >> empty_bits;
+            let delta = read_var_i64_le(&runs[cursor..cursor + offset_bytes]);
             cursor += offset_bytes;
             let new_lcn = prev_lcn
                 .checked_add(delta as i128)

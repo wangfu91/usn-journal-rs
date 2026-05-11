@@ -1,3 +1,10 @@
+//! NTFS attribute on-disk layouts, enums, and flags.
+//!
+//! This submodule contains the packed structs that mirror bytes stored in
+//! FILE record attribute streams plus the small enums/constants used to
+//! classify them. Parsing logic lives in `view.rs`, while record traversal
+//! lives in `iter.rs`.
+
 use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
 /// Attribute type identifiers used by NTFS.

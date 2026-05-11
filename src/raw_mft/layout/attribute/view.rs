@@ -1,3 +1,10 @@
+//! Borrowing views and typed decoders for individual NTFS attributes.
+//!
+//! `NtfsAttribute` validates a single attribute record, keeps a compact copy
+//! of its common header, and exposes helpers for resident/non-resident
+//! payload access plus typed decoding of the attribute payloads the crate
+//! currently cares about.
+
 use std::mem::size_of;
 
 use zerocopy::FromBytes;
