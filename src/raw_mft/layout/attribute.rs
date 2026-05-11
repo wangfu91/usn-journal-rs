@@ -7,7 +7,7 @@
 
 use std::mem::size_of;
 
-use crate::unaligned::read_unaligned_at;
+use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
 /// Attribute type identifiers used by NTFS.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,6 +32,7 @@ pub(crate) enum NtfsAttributeType {
 /// Raw on-disk attribute header common to both resident and non-resident
 /// attributes.
 #[repr(C, packed)]
+#[derive(Copy, Clone, FromBytes, Immutable, IntoBytes, KnownLayout)]
 pub(crate) struct NtfsAttributeHeader {
     /// Attribute type code.
     pub type_id: u32,
@@ -50,6 +51,7 @@ pub(crate) struct NtfsAttributeHeader {
 }
 
 #[repr(C, packed)]
+#[derive(Copy, Clone, FromBytes, Immutable, IntoBytes, KnownLayout)]
 pub(crate) struct NtfsResidentAttributeHeader {
     /// Common attribute header.
     pub attribute_header: NtfsAttributeHeader,
@@ -64,6 +66,7 @@ pub(crate) struct NtfsResidentAttributeHeader {
 }
 
 #[repr(C, packed)]
+#[derive(Copy, Clone, FromBytes, Immutable, IntoBytes, KnownLayout)]
 pub(crate) struct NtfsNonResidentAttributeHeader {
     /// Common attribute header.
     pub attribute_header: NtfsAttributeHeader,
@@ -87,6 +90,7 @@ pub(crate) struct NtfsNonResidentAttributeHeader {
 
 /// Standard information attribute (`$STANDARD_INFORMATION`, 0x10).
 #[repr(C, packed)]
+#[derive(Copy, Clone, FromBytes, Immutable, IntoBytes, KnownLayout)]
 pub(crate) struct NtfsStandardInformation {
     /// FILETIME creation timestamp.
     pub creation_time: u64,
@@ -147,6 +151,7 @@ impl FileNameNamespace {
 /// `file_reference` refers to a different record than the base record,
 /// the attribute lives in an extension record.
 #[repr(C, packed)]
+#[derive(Copy, Clone, FromBytes, Immutable, IntoBytes, KnownLayout)]
 pub(crate) struct AttributeListEntryHeader {
     /// Attribute type code (same values as [`NtfsAttributeType`]).
     pub type_id: u32,
@@ -177,10 +182,11 @@ where
 {
     let mut offset = 0usize;
     while offset + ATTR_LIST_ENTRY_MIN_SIZE <= data.len() {
-        // SAFETY: We just verified at least `ATTR_LIST_ENTRY_MIN_SIZE` bytes
-        // remain at `offset`.  `AttributeListEntryHeader` is `#[repr(C, packed)]`
-        // (alignment 1), so any byte pointer is suitably aligned.
-        let h = unsafe { &*(data[offset..].as_ptr() as *const AttributeListEntryHeader) };
+        let bytes = &data[offset..offset + ATTR_LIST_ENTRY_MIN_SIZE];
+        let h = match AttributeListEntryHeader::read_from_bytes(bytes) {
+            Ok(h) => h,
+            Err(_) => break,
+        };
         let len = h.record_length as usize;
         if len < ATTR_LIST_ENTRY_MIN_SIZE {
             break;
@@ -195,7 +201,7 @@ where
 
 /// File-name attribute fixed header.
 #[repr(C, packed)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, FromBytes, Immutable, IntoBytes, KnownLayout)]
 pub(crate) struct NtfsFileNameHeader {
     /// Parent directory file reference.
     pub parent_directory_reference: u64,
@@ -233,27 +239,55 @@ pub mod file_attr_flags {
     pub const ENCRYPTED: u32 = 0x4000;
 }
 
+/// Borrow a UTF-16 view directly from little-endian on-disk bytes.
+///
+/// NTFS stores names as UTF-16LE. This crate is Windows-only, so native
+/// `u16` endianness matches the on-disk representation. We still require
+/// natural 2-byte alignment before forming a borrowed `&[u16]` view.
+fn utf16_slice_from_le_bytes(bytes: &[u8]) -> Option<&[u16]> {
+    if !(bytes.as_ptr() as usize).is_multiple_of(2) || !bytes.len().is_multiple_of(2) {
+        return None;
+    }
+    let units = bytes.len() / 2;
+    // SAFETY: the caller provides a byte slice whose length is an exact
+    // multiple of 2 and whose start address is 2-byte aligned, so the
+    // buffer can be viewed as `[u16]` without reallocating or copying.
+    Some(unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const u16, units) })
+}
+
 /// A view into a single attribute record borrowed from a FILE record's
 /// buffer.
 pub(crate) struct NtfsAttribute<'a> {
     /// Full attribute-record byte slice.
     data: &'a [u8],
-    /// Borrowed fixed header.
-    pub header: &'a NtfsAttributeHeader,
+    /// Parsed fixed header copied out of the attribute bytes.
+    pub header: NtfsAttributeHeader,
     /// Valid byte length of this attribute record.
     length: usize,
 }
 
 impl<'a> NtfsAttribute<'a> {
+    /// Read the common attribute header from the start of `data`.
+    fn header_from_bytes(data: &[u8]) -> Option<NtfsAttributeHeader> {
+        let bytes = data.get(..size_of::<NtfsAttributeHeader>())?;
+        NtfsAttributeHeader::read_from_bytes(bytes).ok()
+    }
+
+    /// Read the resident attribute header from the start of `data`.
+    fn resident_header_from_bytes(data: &[u8]) -> Option<NtfsResidentAttributeHeader> {
+        let bytes = data.get(..size_of::<NtfsResidentAttributeHeader>())?;
+        NtfsResidentAttributeHeader::read_from_bytes(bytes).ok()
+    }
+
+    /// Read the non-resident attribute header from the start of `data`.
+    fn nonresident_header_from_bytes(data: &[u8]) -> Option<NtfsNonResidentAttributeHeader> {
+        let bytes = data.get(..size_of::<NtfsNonResidentAttributeHeader>())?;
+        NtfsNonResidentAttributeHeader::read_from_bytes(bytes).ok()
+    }
+
     /// Validate and borrow an attribute record from the start of `data`.
     pub fn new(data: &'a [u8]) -> Option<Self> {
-        if data.len() < size_of::<NtfsAttributeHeader>() {
-            return None;
-        }
-        // SAFETY: We have just verified `data.len() >= sizeof(NtfsAttributeHeader)`.
-        // The header is `#[repr(C, packed)]` (alignment 1), so any byte
-        // pointer is suitably aligned to form a reference.
-        let header = unsafe { &*(data.as_ptr() as *const NtfsAttributeHeader) };
+        let header = Self::header_from_bytes(data)?;
         let length = header.length as usize;
         if length < size_of::<NtfsAttributeHeader>() || length > data.len() {
             return None;
@@ -304,39 +338,25 @@ impl<'a> NtfsAttribute<'a> {
             return None;
         }
         let bytes = &self.data()[off..end];
-        if !(bytes.as_ptr() as usize).is_multiple_of(2) {
-            return None;
-        }
-        // SAFETY: aligned and length is `n * 2` bytes.
-        Some(unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const u16, n) })
+        let units = utf16_slice_from_le_bytes(bytes)?;
+        debug_assert_eq!(units.len(), n);
+        Some(units)
     }
 
-    /// Borrow the resident header when this attribute is resident.
-    pub fn resident_header(&self) -> Option<&'a NtfsResidentAttributeHeader> {
+    /// Read the resident header when this attribute is resident.
+    pub fn resident_header(&self) -> Option<NtfsResidentAttributeHeader> {
         if self.is_non_resident() {
             return None;
         }
-        if self.length < size_of::<NtfsResidentAttributeHeader>() {
-            return None;
-        }
-        // SAFETY: `is_non_resident == 0` (resident) and we just verified
-        // `self.length >= sizeof(NtfsResidentAttributeHeader)`. The
-        // header is packed (alignment 1).
-        Some(unsafe { &*(self.data.as_ptr() as *const NtfsResidentAttributeHeader) })
+        Self::resident_header_from_bytes(self.data())
     }
 
-    /// Borrow the non-resident header when this attribute is non-resident.
-    pub fn nonresident_header(&self) -> Option<&'a NtfsNonResidentAttributeHeader> {
+    /// Read the non-resident header when this attribute is non-resident.
+    pub fn nonresident_header(&self) -> Option<NtfsNonResidentAttributeHeader> {
         if !self.is_non_resident() {
             return None;
         }
-        if self.length < size_of::<NtfsNonResidentAttributeHeader>() {
-            return None;
-        }
-        // SAFETY: `is_non_resident != 0` and we just verified
-        // `self.length >= sizeof(NtfsNonResidentAttributeHeader)`. The
-        // header is packed (alignment 1).
-        Some(unsafe { &*(self.data.as_ptr() as *const NtfsNonResidentAttributeHeader) })
+        Self::nonresident_header_from_bytes(self.data())
     }
 
     /// Borrow the resident value payload.
@@ -351,17 +371,13 @@ impl<'a> NtfsAttribute<'a> {
     }
 
     /// Interpret the resident payload as `$STANDARD_INFORMATION`.
-    pub fn as_standard_info(&self) -> Option<&'a NtfsStandardInformation> {
+    pub fn as_standard_info(&self) -> Option<NtfsStandardInformation> {
         if self.type_id() != NtfsAttributeType::StandardInformation as u32 {
             return None;
         }
         let v = self.resident_value()?;
-        if v.len() < size_of::<NtfsStandardInformation>() {
-            return None;
-        }
-        // SAFETY: We have just verified `v.len() >= sizeof(NtfsStandardInformation)`.
-        // The struct is packed (alignment 1).
-        Some(unsafe { &*(v.as_ptr() as *const NtfsStandardInformation) })
+        let bytes = v.get(..size_of::<NtfsStandardInformation>())?;
+        NtfsStandardInformation::read_from_bytes(bytes).ok()
     }
 
     /// Returns `(header, name_utf16_units)` for a `$FILE_NAME` attribute.
@@ -374,22 +390,16 @@ impl<'a> NtfsAttribute<'a> {
             return None;
         }
         let v = self.resident_value()?;
-        if v.len() < size_of::<NtfsFileNameHeader>() {
-            return None;
-        }
-        let header = read_unaligned_at::<NtfsFileNameHeader>(v, 0)?;
+        let header_bytes = v.get(..size_of::<NtfsFileNameHeader>())?;
+        let header = NtfsFileNameHeader::read_from_bytes(header_bytes).ok()?;
         let n = header.name_length as usize;
         let needed = size_of::<NtfsFileNameHeader>().checked_add(n.checked_mul(2)?)?;
         if needed > v.len() || n > 255 {
             return None;
         }
         let bytes = &v[size_of::<NtfsFileNameHeader>()..needed];
-        if !(bytes.as_ptr() as usize).is_multiple_of(2) {
-            // Pathological alignment — extremely unlikely on disk.
-            return None;
-        }
-        // SAFETY: aligned and length is `n * 2` bytes.
-        let units = unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const u16, n) };
+        let units = utf16_slice_from_le_bytes(bytes)?;
+        debug_assert_eq!(units.len(), n);
         Some((header, units))
     }
 }
@@ -460,9 +470,7 @@ mod tests {
             indexed_flag: 0,
             _pad: 0,
         };
-        unsafe {
-            std::ptr::write_unaligned(buf.as_mut_ptr() as *mut NtfsResidentAttributeHeader, header);
-        }
+        buf[..header_size].copy_from_slice(header.as_bytes());
         buf[header_size..].copy_from_slice(value);
         buf
     }
@@ -477,9 +485,7 @@ mod tests {
             file_attributes: 0x20,
         };
         let mut value = vec![0u8; size_of::<NtfsStandardInformation>()];
-        unsafe {
-            std::ptr::write_unaligned(value.as_mut_ptr() as *mut NtfsStandardInformation, si);
-        }
+        value.copy_from_slice(si.as_bytes());
         let buf = build_resident_attr(NtfsAttributeType::StandardInformation as u32, &value);
         let attr = NtfsAttribute::new(&buf).expect("attr");
         let parsed = attr.as_standard_info().expect("std info");
@@ -507,9 +513,7 @@ mod tests {
             name_length: name.len() as u8,
             namespace: FileNameNamespace::Win32 as u8,
         };
-        unsafe {
-            std::ptr::write_unaligned(value.as_mut_ptr() as *mut NtfsFileNameHeader, h);
-        }
+        value[..header_size].copy_from_slice(h.as_bytes());
         for (i, &u) in name.iter().enumerate() {
             let off = header_size + i * 2;
             value[off..off + 2].copy_from_slice(&u.to_le_bytes());
