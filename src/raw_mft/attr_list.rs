@@ -19,7 +19,7 @@ use crate::{
             AttributeListInfo, EntryBuildOptions, RawMftBatchScratch, RawMftEntry, RawMftLink,
         },
         io::VolumeReader,
-        ondisk::{
+        layout::{
             attribute::{FileNameNamespace, NtfsAttributeType, for_each_attr_list_entry},
             boot::BootSector,
             extent::ExtentMap,
@@ -213,7 +213,7 @@ fn materialize_attr_list(
             runs_data,
             data_size,
         } => {
-            let runs = match crate::raw_mft::ondisk::data_run::decode_runs(&runs_data) {
+            let runs = match crate::raw_mft::layout::data_run::decode_runs(&runs_data) {
                 Ok((runs, _)) => runs,
                 Err(error) => {
                     warn!(
@@ -456,7 +456,7 @@ mod tests {
     use super::*;
     use std::ffi::OsString;
 
-    use crate::raw_mft::ondisk::attribute::AttributeListEntryHeader;
+    use crate::raw_mft::layout::attribute::AttributeListEntryHeader;
 
     fn attr_list_entry(type_id: u32, record_number: u64) -> Vec<u8> {
         let header = AttributeListEntryHeader {

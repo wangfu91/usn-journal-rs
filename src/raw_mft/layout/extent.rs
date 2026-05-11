@@ -1,7 +1,7 @@
 //! Extent map mapping virtual cluster numbers (VCNs) of the `$MFT`
 //! `$DATA` attribute to volume byte offsets.
 
-use crate::{errors::UsnError, raw_mft::ondisk::data_run::DataRun};
+use crate::{errors::UsnError, raw_mft::layout::data_run::DataRun};
 
 /// Cached segment index used to accelerate mostly-sequential extent lookups.
 #[derive(Debug, Clone, Copy, Default)]

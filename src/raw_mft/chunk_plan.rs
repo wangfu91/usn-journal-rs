@@ -2,7 +2,7 @@
 
 use std::num::NonZeroU64;
 
-use crate::raw_mft::{ondisk::record::FIRST_NORMAL_RECORD, options::RawMftRecordRange};
+use crate::raw_mft::{layout::record::FIRST_NORMAL_RECORD, options::RawMftRecordRange};
 
 /// A deterministic logical record range for raw `$MFT` parsing work.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

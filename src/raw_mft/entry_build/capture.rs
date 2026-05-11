@@ -1,6 +1,6 @@
 //! Small attribute payload helpers used during entry construction.
 
-use crate::raw_mft::ondisk::attribute::NtfsAttribute;
+use crate::raw_mft::layout::attribute::NtfsAttribute;
 
 use super::entry::AttributeListInfo;
 

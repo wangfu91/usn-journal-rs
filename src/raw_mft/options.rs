@@ -3,7 +3,7 @@
 use std::num::NonZeroUsize;
 
 use crate::raw_mft::{
-    DEFAULT_ATTR_BUFFER_BYTES, DEFAULT_BUFFER_BYTES, ondisk::record::FIRST_NORMAL_RECORD,
+    DEFAULT_ATTR_BUFFER_BYTES, DEFAULT_BUFFER_BYTES, layout::record::FIRST_NORMAL_RECORD,
 };
 
 /// Inclusive/exclusive logical record range for a raw `$MFT` scan.

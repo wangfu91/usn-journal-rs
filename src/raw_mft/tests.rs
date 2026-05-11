@@ -12,7 +12,7 @@ fn options_defaults_are_sensible() {
     assert!(o.entry().collect_dos_file_name_links());
     assert_eq!(
         o.range().start_record(),
-        super::ondisk::record::FIRST_NORMAL_RECORD
+        super::layout::record::FIRST_NORMAL_RECORD
     );
     assert!(o.range().end_record().is_none());
 }

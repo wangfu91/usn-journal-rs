@@ -2,7 +2,7 @@
 
 use std::ffi::OsString;
 
-use crate::{Fid, raw_mft::ondisk::attribute::FileNameNamespace};
+use crate::{Fid, raw_mft::layout::attribute::FileNameNamespace};
 
 use super::entry::RawMftLink;
 

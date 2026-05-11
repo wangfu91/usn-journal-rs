@@ -7,7 +7,7 @@
 
 use std::mem::size_of;
 
-use crate::{errors::UsnError, raw_mft::ondisk::usa_fixup};
+use crate::{errors::UsnError, raw_mft::layout::usa_fixup};
 use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
 /// `FILE` record signature.

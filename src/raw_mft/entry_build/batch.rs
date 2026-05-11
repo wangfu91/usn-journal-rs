@@ -10,7 +10,7 @@ use crate::{
     Fid, FileAttributes, Filetime,
     raw_mft::{
         RawMftWorkChunk,
-        ondisk::{
+        layout::{
             attribute::{FileNameNamespace, NtfsAttribute, file_attr_flags},
             record::FileRecord,
         },

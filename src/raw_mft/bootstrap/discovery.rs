@@ -11,7 +11,7 @@ use crate::{
     errors::UsnError,
     raw_mft::{
         io::VolumeReader,
-        ondisk::{
+        layout::{
             attribute::{NtfsAttribute, NtfsAttributeType, for_each_attribute},
             boot::BootSector,
             data_run::{DataRun, decode_runs},

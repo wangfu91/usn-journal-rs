@@ -38,7 +38,7 @@ mod entry_build;
 #[doc(hidden)]
 pub mod ingest_support;
 mod io;
-mod ondisk;
+mod layout;
 mod options;
 mod parallel;
 mod reader;
@@ -54,7 +54,7 @@ use crate::{
     raw_mft::{
         entry_build::EntryBuildOptions,
         io::VolumeReader,
-        ondisk::{boot::BootSector, extent::ExtentMap},
+        layout::{boot::BootSector, extent::ExtentMap},
         reader::read_record_at,
     },
     volume::Volume,
@@ -62,8 +62,8 @@ use crate::{
 
 pub use chunk_plan::{RawMftChunkPlanOptions, RawMftChunkPlanOptionsBuilder, RawMftWorkChunk};
 pub use entry_build::{AdsInfo, RawMftBatchEntry, RawMftChunkBatch, RawMftEntry, RawMftLink};
-pub use ondisk::attribute::FileNameNamespace;
-pub use ondisk::data_run::{DataRun as DataRunInfo, DataRunSummary};
+pub use layout::attribute::FileNameNamespace;
+pub use layout::data_run::{DataRun as DataRunInfo, DataRunSummary};
 pub use options::{
     RawMftEntryOptions, RawMftReadBuffers, RawMftRecordRange, RawMftScanOptions,
     RawMftScanOptionsBuilder,

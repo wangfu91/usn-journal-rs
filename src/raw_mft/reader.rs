@@ -9,7 +9,7 @@ use crate::{
         attr_list::{enrich_from_attr_list, should_enrich_from_attr_list},
         entry_build::{AttributeListInfo, EntryBuildOptions, RawMftBatchScratch, RawMftEntry},
         io::VolumeReader,
-        ondisk::{boot::BootSector, data_run::DataRun, extent::ExtentMap, record::FileRecord},
+        layout::{boot::BootSector, data_run::DataRun, extent::ExtentMap, record::FileRecord},
         options::RawMftScanOptions,
     },
 };

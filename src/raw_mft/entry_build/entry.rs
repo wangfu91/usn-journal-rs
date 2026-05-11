@@ -15,7 +15,7 @@ use crate::{
     Fid, FileAttributes, Filetime,
     file_attributes::FileAttributeView,
     path::PathResolvableEntry,
-    raw_mft::ondisk::{
+    raw_mft::layout::{
         attribute::{FileNameNamespace, NtfsAttribute, file_attr_flags},
         data_run::{DataRunSummary, summarize_runs},
         record::FileRecord,
@@ -469,7 +469,7 @@ impl PathResolvableEntry for RawMftEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::raw_mft::ondisk::{
+    use crate::raw_mft::layout::{
         attribute::{
             FileNameNamespace, NtfsAttributeHeader, NtfsAttributeType, NtfsFileNameHeader,
             NtfsResidentAttributeHeader, NtfsStandardInformation,

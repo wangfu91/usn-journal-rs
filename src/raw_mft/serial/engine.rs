@@ -8,7 +8,7 @@ use crate::{
     raw_mft::{
         RawMft,
         io::VolumeReader,
-        ondisk::{extent::ExtentLookupCursor, record::FileRecord},
+        layout::{extent::ExtentLookupCursor, record::FileRecord},
         options::RawMftScanOptions,
         reader::io_err,
     },

@@ -1,6 +1,6 @@
 //! Shared FILE-record attribute dispatch for raw-MFT entry builders.
 
-use crate::raw_mft::ondisk::{
+use crate::raw_mft::layout::{
     attribute::{NtfsAttribute, NtfsAttributeType, for_each_attribute},
     record::FileRecord,
 };
