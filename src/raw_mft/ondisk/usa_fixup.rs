@@ -7,6 +7,38 @@
 //! Array (USA) near the start of the record. Fixup is therefore a two-step
 //! process: first verify that every sector trailer still contains the
 //! sentinel, then copy the saved replacement bytes back into place.
+//! MFT FILE record (e.g. 1024 bytes total)
+//!     0x0000  +------------------------------------------------------+
+//!             | FILE header                                          |
+//!             |  - signature "FILE"                                  |
+//!             |  - usa_offset                                        |
+//!             |  - usa_count                                         |
+//!             |  - lsn                                               |
+//!             |  - sequence_number                                   |
+//!             |  - hard_link_count                                   |
+//!             |  - first_attribute_offset                            |
+//!             |  - flags                                             |
+//!             |  - used_size                                         |
+//!             |  - allocated_size                                    |
+//!             |  - base_file_reference                               |
+//!             |  - next_attribute_id                                 |
+//!             |  - mft_record_number                                 |
+//!             +------------------------------------------------------+
+//!     0x00??  | USA array                                            |
+//!             |  - usa[0] = update sequence number                   |
+//!             |  - usa[1..] = original tail bytes per sector         |
+//!             +------------------------------------------------------+
+//!     0x00??  | Attribute #1                                         |
+//!             |  - type / len / flags / id                           |
+//!             |  - resident or non-resident payload                  |
+//!             +------------------------------------------------------+
+//!     0x00??  | Attribute #2                                         |
+//!             +------------------------------------------------------+
+//!     0x00??  | Attribute #3                                         |
+//!             +------------------------------------------------------+
+//!     0x03FC  | End marker = 0xFFFFFFFF                              |
+//!             +------------------------------------------------------+
+//!
 
 use crate::errors::UsnError;
 
@@ -35,7 +67,14 @@ pub(crate) fn apply_usa_fixup(
             reason: "update_sequence_length must be at least 2",
         });
     }
+
+    // `usa_count` is the number of `u16` words in the USA, not the number
+    // of sectors. Word 0 stores the shared sentinel, and each remaining
+    // word stores one protected sector's original 2-byte trailer. So the
+    // number of protected sectors is `usa_count - 1`.
     let sectors = usa_count - 1;
+    // Each usa entry is 2 bytes, so the USA occupies `2 * usa_count` bytes starting at `usa_offset`. 
+    // Verify that the USA fits within the record buffer before we try to read from it.
     let usa_end = usa_offset
         .checked_add(usa_count.checked_mul(2).ok_or(UsnError::InvalidMftRecord {
             number: record_number,
