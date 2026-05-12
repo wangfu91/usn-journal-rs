@@ -11,7 +11,7 @@ The current diff keeps these meaningful changes:
 - Migrated `benches\raw_mft_ingest.rs` from Divan to Criterion for more stable measurements and baseline comparisons.
 - Added `src\raw_mft\ingest_support.rs` so the benchmark and profiling target share the exact same ingest workload.
 - Added `examples\raw_mft_parallel_ingest_profile.rs` as the exact-match profiling target for flamegraph and ETW runs.
-- Kept the lean batch parsing path in `src\raw_mft\batch.rs` and `src\raw_mft\mod.rs`, so folded chunk consumers avoid rebuilding the full `RawMftEntry` shape when they only need the reduced batch form.
+- Kept the lean batch parsing path in `src\raw_mft\entry_build\batch.rs`, with the batch types wired through `src\raw_mft\entry_build\mod.rs` and re-exported from `src\raw_mft\mod.rs`, so folded chunk consumers avoid rebuilding the full `RawMftEntry` shape when they only need the reduced batch form.
 
 ## Validation method
 
