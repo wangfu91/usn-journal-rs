@@ -378,7 +378,7 @@ That keeps the code path predictable and avoids thread setup overhead when paral
 
 The original `RawMft` only holds a borrowed `&Volume`, so worker threads cannot safely share a mutable `VolumeReader`.
 
-Instead the parallel path first extracts a reusable source with `parallel_volume_source`:
+Instead the parallel path first extracts a reusable volume source from the original `Volume` (drive letter or mount point):
 
 - `DriveLetter(char)`, or
 - `MountPoint(PathBuf)`.

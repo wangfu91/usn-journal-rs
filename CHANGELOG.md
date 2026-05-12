@@ -74,7 +74,8 @@ and idiomatic Rust refactoring. **Breaking changes throughout** — see the
 - `RawMft::get_record` renamed to `RawMft::read_record`.
 - `journal::EnumOptions` renamed to `JournalIterOptions`;
   `mft::EnumOptions` renamed to `MftIterOptions`.
-- Fallible iteration entry points renamed to `try_iter` / `try_iter_with_options`.
+- `UsnJournal` and `Mft` fallible iteration entry points are now `try_iter` /
+  `try_iter_with_options`.
 - `PathResolvableEntry::fid()` and `parent_fid()` now return `Fid`.
 - `Volume` keeps the originating drive letter or mount point internally; use `Volume::drive_letter()` and `Volume::mount_point()` to inspect it.
 - Entry structs now derive `Clone`, `PartialEq`, `Eq`, and `Hash` where their
@@ -133,6 +134,13 @@ Or via mount point:
 ```diff
 - for entry in journal.iter()? {
 + for entry in journal.try_iter()? {
+```
+
+### Iterating the MFT
+
+```diff
+- for entry in mft.iter()? {
++ for entry in mft.try_iter()? {
 ```
 
 ### Iterator options
