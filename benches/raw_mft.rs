@@ -24,7 +24,7 @@ fn main() {
 
 /// Bound iteration so each bench sample finishes in a reasonable time
 /// even on multi-million-record system drives.
-const BENCH_RECORD_LIMIT: usize = 200_000;
+const BENCH_RECORD_LIMIT: usize = 20_000;
 
 /// Read the drive letter to benchmark from `USN_TEST_DRIVE`.
 fn pick_drive() -> char {
@@ -63,7 +63,7 @@ fn raw_mft_iter(bencher: Bencher) {
     };
     bencher.bench_local(|| {
         let mut count = 0u64;
-        if let Ok(it) = mft.try_iter() {
+        if let Ok(it) = mft.iter() {
             for r in it.take(BENCH_RECORD_LIMIT) {
                 if r.is_ok() {
                     count += 1;
@@ -106,7 +106,7 @@ fn raw_mft_iter_with_path_resolver(bencher: Bencher) {
     bencher.bench_local(|| {
         let mut resolver = PathResolver::new(&volume);
         let mut count = 0u64;
-        if let Ok(it) = mft.try_iter() {
+        if let Ok(it) = mft.iter() {
             for r in it.flatten().take(BENCH_RECORD_LIMIT) {
                 let _ = resolver.resolve_path(&r);
                 count += 1;
@@ -130,7 +130,7 @@ fn raw_mft_iter_with_cached_resolver(bencher: Bencher) {
     bencher.bench_local(|| {
         let mut resolver = PathResolver::new(&volume);
         let mut count = 0u64;
-        if let Ok(it) = mft.try_iter() {
+        if let Ok(it) = mft.iter() {
             for r in it.flatten().take(BENCH_RECORD_LIMIT) {
                 let _ = resolver.resolve_path(&r);
                 count += 1;
@@ -157,11 +157,11 @@ fn raw_mft_buffer_size(bencher: Bencher, buffer_bytes: usize) {
         let Some(buffer_bytes) = std::num::NonZeroUsize::new(buffer_bytes) else {
             return divan::black_box(0u64);
         };
-        let opts = usn_journal_rs::raw_mft::RawMftIterOptions::builder()
+        let opts = usn_journal_rs::raw_mft::RawMftScanOptions::builder()
             .buffer_bytes(buffer_bytes)
             .build();
         let mut count = 0u64;
-        if let Ok(it) = mft.try_iter_with_options(opts) {
+        if let Ok(it) = mft.iter_with_options(opts) {
             for r in it.take(BENCH_RECORD_LIMIT) {
                 if r.is_ok() {
                     count += 1;

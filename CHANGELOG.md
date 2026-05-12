@@ -42,7 +42,8 @@ and idiomatic Rust refactoring. **Breaking changes throughout** — see the
   replaces the previous single constructor.
 - `Volume` now records the originating drive letter or mount point internally.
 - `JournalIterOptions::builder()`, `MftIterOptions::builder()`,
-  `RawMftIterOptions::builder()`.
+  `RawMftScanOptions::builder()`, and `RawMftChunkPlanOptions::builder()`.
+- `RawMft::parallel()` builder-style facade for ordered parallel chunk scans.
 - `PathResolver::new(v).with_lru_cache(n).with_in_memory_tree(&raw_mft)?`
   fluent builder API.
 - `usn_journal_rs::prelude` for common application imports.
@@ -65,11 +66,16 @@ and idiomatic Rust refactoring. **Breaking changes throughout** — see the
   call `.without_lru_cache()` for fully uncached syscall resolution.
 - `RawMftEntry` timestamps are `Filetime` instead of external date/time types.
 - `UsnEntry::time` is `Filetime` instead of `std::time::SystemTime`.
-- `RawMftIterOptions::batch_records: usize` →
-  `RawMftIterOptions::buffer_bytes: NonZeroUsize`.
+- `RawMftIterOptions` renamed to `RawMftScanOptions`, with structured
+  `RawMftReadBuffers`, `RawMftRecordRange`, and `RawMftEntryOptions` groups.
+- `RawMftWorkPlanOptions` renamed to `RawMftChunkPlanOptions`.
+- `RawMft::try_iter` / `try_iter_with_options` renamed to
+  `RawMft::iter` / `iter_with_options`.
+- `RawMft::get_record` renamed to `RawMft::read_record`.
 - `journal::EnumOptions` renamed to `JournalIterOptions`;
   `mft::EnumOptions` renamed to `MftIterOptions`.
-- Fallible iteration entry points renamed to `try_iter` / `try_iter_with_options`.
+- `UsnJournal` and `Mft` fallible iteration entry points are now `try_iter` /
+  `try_iter_with_options`.
 - `PathResolvableEntry::fid()` and `parent_fid()` now return `Fid`.
 - `Volume` keeps the originating drive letter or mount point internally; use `Volume::drive_letter()` and `Volume::mount_point()` to inspect it.
 - Entry structs now derive `Clone`, `PartialEq`, `Eq`, and `Hash` where their
@@ -80,8 +86,10 @@ and idiomatic Rust refactoring. **Breaking changes throughout** — see the
 - `src/journal.rs` split into the `src/journal/` module directory
   (`mod.rs`, `journal.rs`, `iter.rs`, `entry.rs`, `reason.rs`, `options.rs`,
   `data.rs`, `defaults.rs`).
-- `src/record.rs` renamed to `src/usn_record.rs` to disambiguate from
-  `src/raw_mft/record.rs`.
+- `src/record.rs` renamed to `src/usn_record.rs`.
+- Raw `$MFT` on-disk parser modules moved under `src/raw_mft/ondisk/`, and
+  the old mixed `builder_common` helper was split into focused attribute
+  dispatch, attribute capture, and file-name selection modules.
 - Cargo profile cleanup: removed bogus `[profile.test]` flags; added
   `[profile.bench] lto = "thin"`.
 
@@ -126,6 +134,13 @@ Or via mount point:
 ```diff
 - for entry in journal.iter()? {
 + for entry in journal.try_iter()? {
+```
+
+### Iterating the MFT
+
+```diff
+- for entry in mft.iter()? {
++ for entry in mft.try_iter()? {
 ```
 
 ### Iterator options

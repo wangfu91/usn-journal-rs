@@ -12,6 +12,8 @@
 use std::env;
 use usn_journal_rs::{errors::UsnError, path::PathResolver, raw_mft::RawMft, volume::Volume};
 
+const MAX_ENTRIES: usize = 1_000;
+
 /// Run the example and print any top-level error.
 fn main() {
     if let Err(e) = run() {
@@ -40,11 +42,11 @@ fn run() -> Result<(), UsnError> {
     );
 
     let mut count = 0u64;
-    for result in mft.try_iter()? {
+    for result in mft.iter()?.take(MAX_ENTRIES) {
         match result {
             Ok(entry) => {
                 let path = resolver.resolve_path(&entry);
-                let path_disp = path
+                let path_display = path
                     .map(|p| p.to_string_lossy().to_string())
                     .unwrap_or_else(|| entry.file_name.to_string_lossy().to_string());
                 let kind = if entry.is_directory { "DIR " } else { "FILE" };
@@ -57,7 +59,7 @@ fn run() -> Result<(), UsnError> {
                     entry.alternate_data_streams.len(),
                     entry.is_sparse,
                     entry.is_compressed,
-                    path_disp,
+                    path_display,
                 );
                 count += 1;
             }

@@ -91,17 +91,74 @@ Benchmarks are run with [Divan](https://github.com/nvzqz/divan) on a 200 k-recor
   behavior unless you explicitly opt out with `.without_lru_cache()`.
 - **In-memory directory-tree path resolution** — ~40× faster than the syscall-based resolver
   for full-volume scans (<500 ms vs ~21 s). Use `PathResolver::new(v).with_in_memory_tree(&raw_mft)?`.
-- **Buffer size** — tune with `RawMftIterOptions::builder().buffer_bytes(NonZeroUsize::new(256 * 1024).unwrap()).build()`.
+- **Buffer size** — tune with `RawMftScanOptions::builder().buffer_bytes(NonZeroUsize::new(256 * 1024).unwrap()).build()`.
+
+For the newer raw-`$MFT` ingest throughput work, use the Criterion harness in
+`benches/raw_mft_ingest.rs` instead of the ad-hoc profiling example when you
+need statistically useful worker-count or scheduling comparisons.
 
 Run benchmarks:
 
-```sh
+```powershell
 cargo bench --bench raw_mft
 cargo bench --bench journal
 cargo bench --bench path_resolver
+cargo bench --bench raw_mft_ingest
 ```
 
 Set `USN_TEST_DRIVE=D` to target a different volume (default: `C`).
+
+The raw-`$MFT` ingest harness also understands a few environment variables:
+
+- `USN_RAW_MFT_BENCH_DRIVE=C` — choose the target volume
+- `USN_RAW_MFT_BENCH_WORKERS=10` — set one fixed worker count
+- `USN_RAW_MFT_BENCH_WORKERS_LIST=1,2,4,8,11` — sweep worker counts in one run
+- `USN_RAW_MFT_BENCH_SCHEDULING=dynamic` — choose the executor policy for the baseline run
+- `USN_RAW_MFT_BENCH_SCHEDULING_LIST=dynamic,contiguous` — compare both policies side by side
+- `USN_RAW_MFT_BENCH_CHUNK_RECORDS=2048` — override the logical records-per-chunk default
+- `USN_RAW_MFT_BENCH_BUFFER_BYTES=262144` — override the main read buffer size
+- `USN_RAW_MFT_BENCH_ATTR_BUFFER_BYTES=16384` — override the attribute-list read buffer size
+- `USN_RAW_MFT_BENCH_PRINT_SUMMARY=1` — print an extra one-shot summary table before Criterion runs
+- `USN_RAW_MFT_BENCH_SUMMARY_RUNS=3` — use a median of 3 one-shot runs per summary row
+
+### Raw `$MFT` ingest benchmark notes
+
+Recent Criterion runs on a large `C:` NTFS volume used the current benchmark
+shape, where both chunk planning and scanning keep `skip_unused(true)`, but
+chunk planning still uses dense logical bands and only drops fully unused
+bands:
+
+- ~3,059,968 addressable records
+- 2,048 records per chunk (~1,329 planned chunks on the measured live volume)
+- 256 KiB main buffer / 16 KiB attribute buffer
+
+Observed results from the current tuning passes:
+
+- **Dynamic scheduling** clearly beat **contiguous scheduling**
+- The worker-count sweet spot stayed in the **10..=11 worker** range
+- Among tested main-buffer sizes (`64 KiB` through `2 MiB`), **256 KiB** was fastest
+- Among tested attribute-buffer sizes (`4 KiB` through `64 KiB`), **16 KiB** stayed effectively best and was retained as the default
+- The best measured point so far is **11 workers + dynamic scheduling + 2,048-record chunks + 256 KiB / 16 KiB buffers**
+
+Representative medians from the latest sweeps:
+
+| Config | Median time |
+| ---- | ----------: |
+| Dynamic, 11 workers, 2048 chunks, 256 KiB / 16 KiB buffers | ~2.35 s |
+| Dynamic, 11 workers, 2048 chunks, 512 KiB / 16 KiB buffers | ~2.38 s |
+| Dynamic, 11 workers, 2048 chunks, 256 KiB / 64 KiB buffers | ~2.64 s |
+| Contiguous, 11 workers, 2048 chunks, 512 KiB / 16 KiB buffers | ~3.67 s |
+
+That is why the ingest benchmark defaults now cap the automatic worker count at
+10 instead of following all available logical CPUs, use `2048` logical records
+per chunk by default, and default the main read buffer to `256 KiB`. Always
+re-measure on the actual target volume before treating a result as universal:
+filesystem churn and different used-record fragmentation can shift both the
+planned chunk count and the optimum worker count.
+
+For the longer write-up, including the `C:`-drive sweep data and a code-based
+explanation of why `dynamic` scheduling wins, see
+[`docs/raw_mft_parallel_ingest_findings.md`](docs/raw_mft_parallel_ingest_findings.md).
 
 ## Privileges
 

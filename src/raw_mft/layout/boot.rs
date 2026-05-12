@@ -11,6 +11,33 @@ pub const BOOT_SECTOR_SIZE: usize = 512;
 /// Expected OEM ID for an NTFS volume (`"NTFS    "`).
 pub const NTFS_OEM_ID: &[u8; 8] = b"NTFS    ";
 
+/// NTFS BPB / extended BPB offset of the 8-byte OEM ID field.
+const OEM_ID_OFFSET: usize = 3;
+/// Byte width of the fixed OEM ID field.
+const OEM_ID_LEN: usize = 8;
+/// NTFS BPB offset of the 2-byte `bytes_per_sector` field.
+const BYTES_PER_SECTOR_OFFSET: usize = 11;
+/// NTFS BPB offset of the signed 1-byte `sectors_per_cluster` field.
+const SECTORS_PER_CLUSTER_OFFSET: usize = 13;
+/// NTFS extended BPB offset of the 8-byte `$MFT` logical cluster number.
+const MFT_LCN_OFFSET: usize = 48;
+/// NTFS extended BPB offset of the signed 1-byte file-record size descriptor.
+const FILE_RECORD_SIZE_INFO_OFFSET: usize = 64;
+
+fn read_le_at<T, const N: usize>(
+    buf: &[u8],
+    offset: usize,
+    from_le_bytes: fn([u8; N]) -> T,
+) -> Result<T, UsnError> {
+    let bytes = buf
+        .get(offset..offset + N)
+        .ok_or(UsnError::InvalidBootSector("boot sector truncated"))?;
+    let array: [u8; N] = bytes
+        .try_into()
+        .expect("slice length checked above; fixed-width read is bounded");
+    Ok(from_le_bytes(array))
+}
+
 /// Parsed NTFS boot sector geometry.
 #[derive(Debug, Clone)]
 pub(crate) struct BootSector {
@@ -38,30 +65,34 @@ impl BootSector {
             return Err(UsnError::InvalidBootSector("buffer smaller than 512 bytes"));
         }
 
-        // OEM ID lives at offset 3 and is 8 bytes long.
-        let oem = &buf[3..11];
+        let oem = &buf[OEM_ID_OFFSET..OEM_ID_OFFSET + OEM_ID_LEN];
         if oem != NTFS_OEM_ID {
             return Err(UsnError::UnsupportedFilesystem(
                 "volume is not NTFS (OEM ID mismatch)",
             ));
         }
 
-        let bytes_per_sector = u16::from_le_bytes([buf[11], buf[12]]) as u32;
-        let sectors_per_cluster_raw = buf[13] as i8;
-        let mut mft_lcn_bytes = [0u8; 8];
-        mft_lcn_bytes.copy_from_slice(&buf[48..56]);
-        let mft_lcn = u64::from_le_bytes(mft_lcn_bytes);
-        let file_record_size_info = buf[64] as i8;
+        let mft_lcn = read_le_at(buf, MFT_LCN_OFFSET, u64::from_le_bytes)?;
 
+        let bytes_per_sector = read_le_at(buf, BYTES_PER_SECTOR_OFFSET, u16::from_le_bytes)? as u32;
         if bytes_per_sector == 0 || !bytes_per_sector.is_power_of_two() {
             return Err(UsnError::InvalidBootSector(
                 "bytes_per_sector must be a non-zero power of two",
             ));
         }
 
+        // NTFS also stores sectors-per-cluster as a signed byte. Positive
+        // values are the common case and mean exactly that many sectors per
+        // cluster. Negative values encode the cluster size as `2^abs(value)`
+        // bytes, which we then convert back into a sector count relative to
+        // `bytes_per_sector`.
+        let sectors_per_cluster_raw = buf[SECTORS_PER_CLUSTER_OFFSET] as i8;
         let sectors_per_cluster: u32 = if sectors_per_cluster_raw > 0 {
             sectors_per_cluster_raw as u32
         } else if sectors_per_cluster_raw < 0 {
+            // Negative values describe a power-of-two byte size directly.
+            // This is less common than the positive form, but it is part of
+            // the NTFS on-disk encoding and therefore must be handled.
             let exp = (-(sectors_per_cluster_raw as i32)) as u32;
             if exp >= 32 {
                 return Err(UsnError::InvalidBootSector(
@@ -85,11 +116,20 @@ impl BootSector {
             .checked_mul(sectors_per_cluster as u64)
             .ok_or(UsnError::InvalidBootSector("cluster size overflow"))?;
 
+        // NTFS stores this field as a signed byte, not a raw byte count:
+        //   * positive  => FILE record size is `value * cluster_size`
+        //   * negative  => FILE record size is `2^abs(value)` bytes
+        // The negative encoding is common on real systems; for example
+        // `-10` means `2^10 == 1024` bytes per FILE record.
+        let file_record_size_info = buf[FILE_RECORD_SIZE_INFO_OFFSET] as i8;
         let file_record_size: u64 = if file_record_size_info > 0 {
             (file_record_size_info as u64)
                 .checked_mul(cluster_size)
                 .ok_or(UsnError::InvalidBootSector("file_record_size overflow"))?
         } else if file_record_size_info < 0 {
+            // Negative values encode a power-of-two byte size directly,
+            // which lets NTFS represent record sizes smaller than a full
+            // cluster (for example 1024-byte records on 4096-byte clusters).
             let exp = (-(file_record_size_info as i32)) as u32;
             if exp >= 32 {
                 return Err(UsnError::InvalidBootSector(

@@ -8,7 +8,7 @@ use std::num::{NonZeroU64, NonZeroUsize};
 use usn_journal_rs::{
     Fid,
     errors::UsnError,
-    raw_mft::{RawMft, RawMftBatchEntry, RawMftIterOptions, RawMftWorkPlanOptions},
+    raw_mft::{RawMft, RawMftBatchEntry, RawMftChunkPlanOptions, RawMftScanOptions},
     volume::Volume,
 };
 
@@ -49,14 +49,13 @@ fn raw_mft_parallel_chunk_path_matches_serial_chunk_path() -> Result<(), String>
     let Some(max_records_per_chunk) = NonZeroU64::new(1024) else {
         return Err("max_records_per_chunk must be non-zero".into());
     };
-    let chunk_options = RawMftWorkPlanOptions {
-        start_record: 24,
-        end_record: Some(50_000),
-        max_records_per_chunk,
-        ..RawMftWorkPlanOptions::default()
-    };
+    let chunk_options = RawMftChunkPlanOptions::builder()
+        .start_record(24)
+        .end_record(Some(50_000))
+        .max_records_per_chunk(max_records_per_chunk)
+        .build();
     let chunks: Vec<_> = raw_mft
-        .plan_work_chunks_with_options(chunk_options)
+        .plan_chunks_with_options(chunk_options)
         .into_iter()
         .take(8)
         .collect();
@@ -65,7 +64,7 @@ fn raw_mft_parallel_chunk_path_matches_serial_chunk_path() -> Result<(), String>
         return Ok(());
     }
 
-    let options = RawMftIterOptions::builder()
+    let options = RawMftScanOptions::builder()
         .collect_alternate_data_streams(false)
         .collect_data_run_summary(false)
         .build();
@@ -73,13 +72,8 @@ fn raw_mft_parallel_chunk_path_matches_serial_chunk_path() -> Result<(), String>
         .iter()
         .map(|chunk| {
             raw_mft
-                .read_chunk_with_options(*chunk, options.clone())
-                .map_err(|error| {
-                    format!(
-                        "serial read_chunk_with_options failed for {:?}: {error}",
-                        chunk
-                    )
-                })
+                .read_chunk(*chunk, options.clone())
+                .map_err(|error| format!("serial read_chunk failed for {:?}: {error}", chunk))
         })
         .collect::<Result<_, _>>()?;
 
@@ -87,8 +81,12 @@ fn raw_mft_parallel_chunk_path_matches_serial_chunk_path() -> Result<(), String>
         return Err("worker_count must be non-zero".into());
     };
     let parallel_batches = raw_mft
-        .read_chunks_parallel_with_options(chunks.clone(), options, worker_count)
-        .map_err(|error| format!("read_chunks_parallel_with_options failed: {error}"))?;
+        .parallel()
+        .chunks(chunks.clone())
+        .scan_options(options)
+        .workers(worker_count)
+        .collect_batches()
+        .map_err(|error| format!("parallel collect_batches failed: {error}"))?;
 
     assert_eq!(
         parallel_batches.len(),

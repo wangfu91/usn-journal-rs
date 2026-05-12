@@ -1,7 +1,7 @@
 //! Integration test: compare `RawMft` records with `Mft` API records.
 //!
 //! We sample entries from `Mft` (`FSCTL_ENUM_USN_DATA`), then look up the
-//! corresponding raw FILE record by record number via `RawMft::get_record`.
+//! corresponding raw FILE record by record number via `RawMft::read_record`.
 //! The test asserts high agreement on core identity fields:
 //!   - file ID (`fid` / `file_reference`)
 //!   - parent file ID
@@ -133,14 +133,14 @@ fn raw_mft_and_mft_api_agree_on_sampled_entries() {
                 continue;
             };
 
-            let raw_entry = match raw_mft.get_record(record_number) {
+            let raw_entry = match raw_mft.read_record(record_number) {
                 Ok(Some(r)) => r,
                 Ok(None) => {
                     lookup_misses += 1;
                     continue;
                 }
                 Err(e) => panic!(
-                    "RawMft::get_record({record_number}) failed for fid {}: {e}",
+                    "RawMft::read_record({record_number}) failed for fid {}: {e}",
                     entry.fid
                 ),
             };
@@ -195,11 +195,7 @@ fn raw_mft_and_mft_api_agree_on_sampled_entries() {
     // Fallback for environments that only surface extended MFT IDs.
     let mut raw_paths = HashSet::with_capacity(PATH_TARGET);
     let mut raw_path_resolver = PathResolver::new(&volume);
-    for raw_entry in raw_mft
-        .try_iter()
-        .expect("RawMft::try_iter failed")
-        .flatten()
-    {
+    for raw_entry in raw_mft.iter().expect("RawMft::iter failed").flatten() {
         if !raw_entry.is_used || raw_entry.file_name.is_empty() {
             continue;
         }
@@ -245,7 +241,7 @@ fn raw_mft_and_mft_api_agree_on_sampled_entries() {
 /// builds that otherwise prefer V3.
 ///
 /// For each entry the matching raw FILE record is fetched by record number
-/// with [`RawMft::get_record`] and compared field-by-field.  Because the
+/// with [`RawMft::read_record`] and compared field-by-field.  Because the
 /// filesystem is live (log files are created and deleted continuously),
 /// a few mismatches between the two reads are normal and tolerated.
 ///
@@ -323,7 +319,7 @@ fn raw_mft_and_mft_api_record_parity_standard_ids() {
             None => continue,
         };
 
-        let raw_entry = match raw_mft.get_record(record_number) {
+        let raw_entry = match raw_mft.read_record(record_number) {
             Ok(Some(r)) => r,
             // Record freed between the Mft scan and the RawMft lookup — fine.
             Ok(None) => {
@@ -331,7 +327,7 @@ fn raw_mft_and_mft_api_record_parity_standard_ids() {
                 continue;
             }
             Err(e) => panic!(
-                "RawMft::get_record({record_number}) failed for fid {}: {e}",
+                "RawMft::read_record({record_number}) failed for fid {}: {e}",
                 entry.fid
             ),
         };

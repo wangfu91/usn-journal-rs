@@ -29,6 +29,7 @@ log = "0.4"
 lru = "0.18"
 rustc-hash = "2"
 thiserror = "2"
+zerocopy = { version = "0.8.48", features = ["derive"] }
 
 [dependencies.windows]
 version = "0.62"
@@ -44,6 +45,7 @@ features = [
 ]
 
 [dev-dependencies]
+criterion = "0.8.2"
 injectorpp = "0.5"
 divan = "0.1"
 
@@ -70,3 +72,6 @@ incremental = false
 
 [profile.bench]
 lto = "thin"
+
+[profile.release]
+debug = true

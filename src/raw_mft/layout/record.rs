@@ -7,7 +7,8 @@
 
 use std::mem::size_of;
 
-use crate::{errors::UsnError, raw_mft::fixup};
+use crate::{errors::UsnError, raw_mft::layout::usa_fixup};
+use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
 /// `FILE` record signature.
 pub const FILE_RECORD_SIGNATURE: &[u8; 4] = b"FILE";
@@ -25,7 +26,9 @@ pub mod flags {
     pub const IS_DIRECTORY: u16 = 0x0002;
 }
 
+/// On-disk FILE record header(42 bytes), as found at the start of every MFT record.
 #[repr(C, packed)]
+#[derive(Copy, Clone, FromBytes, Immutable, IntoBytes, KnownLayout)]
 pub(crate) struct FileRecordHeader {
     /// Four-byte `FILE` signature.
     pub signature: [u8; 4],
@@ -57,42 +60,51 @@ pub(crate) struct FileRecordHeader {
 pub(crate) struct FileRecord<'a> {
     /// Fixed-up FILE-record bytes.
     pub data: &'a [u8],
-    /// Borrowed FILE-record header.
-    pub header: &'a FileRecordHeader,
+    /// Parsed FILE-record header copied out of the record bytes.
+    pub header: FileRecordHeader,
     /// Record number in the `$MFT`.
     pub number: u64,
 }
 
 impl<'a> FileRecord<'a> {
-    /// Validate that `data` starts with a plausible FILE record header.
-    pub fn is_valid(data: &[u8]) -> bool {
-        if data.len() < size_of::<FileRecordHeader>() {
-            return false;
-        }
-        // SAFETY: We have just verified `data.len() >= sizeof(FileRecordHeader)`.
-        // `FileRecordHeader` is `#[repr(C, packed)]`, i.e. has alignment 1,
-        // so any byte pointer is sufficiently aligned to form a reference;
-        // Rust's packed-struct field access performs unaligned reads.
-        // The reference is bound to the borrow of `data`.
-        let h = unsafe { &*(data.as_ptr() as *const FileRecordHeader) };
+    /// Read the fixed-size FILE record header from the start of `data`.
+    ///
+    /// `zerocopy` performs the size check for us and returns a copied
+    /// `FileRecordHeader` value. We keep this as an owned copy on purpose:
+    /// the header is only ~42 bytes, even a million records only makes the
+    /// copy cost small compared with the full MFT scan, and this avoids
+    /// borrowing a packed header across the later in-place USA fixup.
+    fn header_from_bytes(data: &[u8]) -> Option<FileRecordHeader> {
+        let bytes = data.get(..size_of::<FileRecordHeader>())?;
+        FileRecordHeader::read_from_bytes(bytes).ok()
+    }
+
+    /// Read and validate a plausible FILE record header from `data`.
+    fn validated_header(data: &[u8]) -> Option<FileRecordHeader> {
+        let h = Self::header_from_bytes(data)?;
         if &h.signature != FILE_RECORD_SIGNATURE {
-            return false;
+            return None;
         }
         if h.update_sequence_length == 0 {
-            return false;
+            return None;
         }
         if (h.used_size as usize) > data.len() {
-            return false;
+            return None;
         }
         let usa_end = h.update_sequence_offset as usize
             + (h.update_sequence_length as usize).saturating_mul(2);
         if usa_end > data.len() {
-            return false;
+            return None;
         }
         if (h.attributes_offset as u32) >= h.used_size {
-            return false;
+            return None;
         }
-        true
+        Some(h)
+    }
+
+    /// Validate that `data` starts with a plausible FILE record header.
+    pub fn is_valid(data: &[u8]) -> bool {
+        Self::validated_header(data).is_some()
     }
 
     /// Apply the USA fixup to `data` in place and return a borrowing view.
@@ -101,27 +113,14 @@ impl<'a> FileRecord<'a> {
         volume_offset: Option<u64>,
         data: &'a mut [u8],
     ) -> Result<FileRecord<'a>, UsnError> {
-        if !Self::is_valid(data) {
-            return Err(UsnError::invalid_mft_record(
-                number,
-                volume_offset,
-                "FILE signature or header invalid",
-            ));
-        }
-        let (usa_offset, usa_count) = {
-            // SAFETY: `is_valid(data)` returned true, so the buffer is at
-            // least `sizeof(FileRecordHeader)` bytes long. The header is
-            // `#[repr(C, packed)]` so any pointer is suitably aligned.
-            let h = unsafe { &*(data.as_ptr() as *const FileRecordHeader) };
-            (
-                h.update_sequence_offset as usize,
-                h.update_sequence_length as usize,
-            )
-        };
-        fixup::apply_fixup(number, data, usa_offset, usa_count)?;
-        // SAFETY: Same as above. `apply_fixup` did not shrink the buffer
-        // (it only writes inside it), so `data` still covers the header.
-        let header = unsafe { &*(data.as_ptr() as *const FileRecordHeader) };
+        let header = Self::validated_header(data).ok_or_else(|| {
+            UsnError::invalid_mft_record(number, volume_offset, "FILE signature or header invalid")
+        })?;
+        let (usa_offset, usa_count) = (
+            header.update_sequence_offset as usize,
+            header.update_sequence_length as usize,
+        );
+        usa_fixup::apply_usa_fixup(number, data, usa_offset, usa_count)?;
         Ok(FileRecord {
             data,
             header,
@@ -189,9 +188,7 @@ mod tests {
             base_reference: 0,
             next_attribute_id: 0,
         };
-        unsafe {
-            std::ptr::write_unaligned(buf.as_mut_ptr() as *mut FileRecordHeader, header);
-        }
+        buf[..size_of::<FileRecordHeader>()].copy_from_slice(header.as_bytes());
         // USA: sentinel 0xAB 0xCD, then real values for 2 sectors
         buf[42] = 0xAB;
         buf[43] = 0xCD;
