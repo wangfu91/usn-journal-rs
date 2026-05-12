@@ -168,6 +168,11 @@ pub(super) fn read_nonresident(
             }
         }
     }
+    if remaining != 0 {
+        return Err(UsnError::InvalidDataRun(
+            "data runs shorter than requested attribute size",
+        ));
+    }
     Ok(out)
 }
 
@@ -175,3 +180,34 @@ pub(super) fn read_nonresident(
 pub(super) fn io_err(error: std::io::Error) -> UsnError {
     UsnError::Io(error)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use windows::Win32::Foundation::HANDLE;
+
+    fn sparse_only_reader() -> VolumeReader {
+        VolumeReader::new(HANDLE(std::ptr::null_mut()), 512)
+            .expect("test reader construction should succeed")
+    }
+
+    #[test]
+    fn read_nonresident_accepts_exact_sparse_coverage() {
+        let mut reader = sparse_only_reader();
+        let out = read_nonresident(&mut reader, &[DataRun::Sparse { clusters: 2 }], 4, 8)
+            .expect("exact sparse coverage should succeed");
+        assert_eq!(out, vec![0; 8]);
+    }
+
+    #[test]
+    fn read_nonresident_rejects_short_sparse_coverage() {
+        let mut reader = sparse_only_reader();
+        let error =
+            read_nonresident(&mut reader, &[DataRun::Sparse { clusters: 1 }], 4, 8).unwrap_err();
+        assert!(matches!(
+            error,
+            UsnError::InvalidDataRun("data runs shorter than requested attribute size")
+        ));
+    }
+}
+
