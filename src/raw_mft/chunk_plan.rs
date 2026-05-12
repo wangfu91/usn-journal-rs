@@ -4,7 +4,7 @@ use std::num::NonZeroU64;
 
 use crate::raw_mft::{layout::record::FIRST_NORMAL_RECORD, options::RawMftRecordRange};
 
-/// A deterministic logical record range for raw `$MFT` parsing work.
+/// A deterministic logical record range for raw `$MFT` parsing work. [start_record, end_record)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RawMftWorkChunk {
     /// Inclusive first record number in the chunk.
