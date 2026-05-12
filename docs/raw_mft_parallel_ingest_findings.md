@@ -183,6 +183,38 @@ Two aggressive follow-up experiments were tried and then reverted because they r
 
 Those attempts made the benchmark slower, so they were not kept in the current diff.
 
+Another scheduling-focused experiment was tried during the May 2026 locality
+work and also was **not** kept as a code change:
+
+- Add a batched dynamic scheduler that hands out small contiguous chunk groups
+  (for example 2, 4, or 8 chunks at a time) from the shared atomic cursor,
+  hoping to preserve more worker-local sequential I/O than plain per-chunk
+  dynamic scheduling while keeping better balance than fully contiguous bands.
+
+Initial sweep at `11` workers, `2048` chunk records, and `256 KiB` / `16 KiB`
+buffers looked mildly promising for the 2-chunk batch:
+
+| Scheduling | Median time |
+| --- | ---: |
+| Dynamic | ~2.43 s |
+| Dynamic batched, 2 chunks | ~2.38 s |
+| Dynamic batched, 4 chunks | ~2.43 s |
+| Dynamic batched, 8 chunks | ~2.51 s |
+| Contiguous | ~3.36 s |
+
+But two follow-up confirmation runs with fixed worker counts did **not** hold up
+that apparent win:
+
+| Workers | Dynamic | Dynamic batched, 2 chunks |
+| ---: | ---: | ---: |
+| 10 | ~2.34 s | ~2.36 s |
+| 11 | ~2.35 s | ~2.36 s |
+
+Conclusion: batching chunk claims may slightly reduce the atomic scheduling rate,
+but on this workload it does not produce a stable enough locality win to beat or
+replace plain dynamic scheduling. The experiment was kept as a measurement note,
+not as a retained code path.
+
 ## Profiling findings
 
 ### Flamegraph
@@ -211,6 +243,102 @@ The important findings were:
 - There was meaningful concurrent background disk activity during the capture, including heavy writes attributed to `System`.
 
 Conclusion: the next bottleneck is not purely parser CPU work anymore; storage behavior and background I/O are materially affecting results.
+
+### Follow-up ETW comparison: `dynamic` vs `contiguous` (May 2026)
+
+After the benchmark defaults were retuned to the current best-known shape
+(`11` workers, `2048` chunk records, `256 KiB` main buffer, `16 KiB`
+attribute buffer), two matching ETW traces were captured with the same exact
+profile executable and only the scheduling mode changed:
+
+```powershell
+$env:USN_RAW_MFT_BENCH_DRIVE='C'
+$env:USN_RAW_MFT_BENCH_WORKERS='11'
+$env:USN_RAW_MFT_BENCH_CHUNK_RECORDS='2048'
+$env:USN_RAW_MFT_BENCH_BUFFER_BYTES='262144'
+$env:USN_RAW_MFT_BENCH_ATTR_BUFFER_BYTES='16384'
+
+$env:USN_RAW_MFT_BENCH_SCHEDULING='dynamic'
+wpr -start GeneralProfile -start FileIO -start DiskIO -filemode
+target\release\examples\raw_mft_parallel_ingest_profile.exe
+wpr -stop tmp\raw_mft_parallel_ingest_validation\etw\raw_mft_parallel_ingest_dynamic.etl
+
+$env:USN_RAW_MFT_BENCH_SCHEDULING='contiguous'
+wpr -start GeneralProfile -start FileIO -start DiskIO -filemode
+target\release\examples\raw_mft_parallel_ingest_profile.exe
+wpr -stop tmp\raw_mft_parallel_ingest_validation\etw\raw_mft_parallel_ingest_contiguous.etl
+```
+
+Profile elapsed times from the matched runs:
+
+| Scheduling | Profile elapsed |
+| --- | ---: |
+| Dynamic | ~2.692 s |
+| Contiguous | ~4.410 s |
+
+Quick `xperf -a diskio -detail` summaries for the profile process showed:
+
+| Scheduling | Read count | Read MiB | Avg read I/O us | Avg read service us | Avg read QD start |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Dynamic | 58,693 | ~3228.0 | ~186.7 | ~38.0 | ~5.08 |
+| Contiguous | 58,546 | ~3205.6 | ~154.7 | ~56.8 | ~2.21 |
+
+So both runs issue almost the same total amount of read traffic, but they do not
+exercise the disk in the same way:
+
+- **dynamic** keeps more outstanding reads in flight
+- **contiguous** shows a noticeably lower queue depth
+- **contiguous** also shows a higher average disk service time per read
+
+The coarse `xperf -a diskio` interval view points in the same direction.
+
+Dynamic compressed the heavy read burst into roughly the `2-4 s` window:
+
+- `2-3 s`: `96.24%` Disk 0 usage
+- `3-4 s`: `90.67%` Disk 0 usage
+
+Contiguous stayed busy for longer instead of finishing sooner:
+
+- `2-3 s`: `94.47%` Disk 0 usage
+- `3-4 s`: `95.00%` Disk 0 usage
+- `4-5 s`: `64.95%` Disk 0 usage
+- `5-6 s`: `30.08%` Disk 0 usage
+
+That already suggests the main benefit of `dynamic` is not “better single-stream
+sequentiality”, but better overlap and less idle tail time.
+
+To test that more directly, the dominant raw-volume read stream for the profile
+process (`\Device\HarddiskVolume2`) was sorted by request start time and the
+byte-offset jump between consecutive reads was summarized:
+
+| Scheduling | Exact sequential % | Jump <= 1 MiB % | Median abs jump |
+| --- | ---: | ---: | ---: |
+| Dynamic | `0.09%` | `3.91%` | ~`88.6 MiB` |
+| Contiguous | `0.92%` | `7.63%` | ~`885.9 MiB` |
+
+These numbers are noisy because requests from multiple workers are interleaved on
+one time axis, and they show a mixed picture rather than one single locality
+story:
+
+- `contiguous` shows **more exact-adjacent and small-hop reads** than plain
+  `dynamic`
+- but it also shows a much larger median absolute jump, which is consistent with
+  the global timeline switching between workers that own far-apart contiguous
+  bands
+- and it is still much slower overall
+
+So the current evidence favors this interpretation:
+
+1. `contiguous` improves some worker-local / short-hop locality signals
+2. but that locality win is smaller than the wall-clock loss from chunk-cost
+   imbalance and tail effects
+3. `dynamic` wins because it keeps more useful work in flight and finishes the
+   long tail sooner, even if its read offsets are globally more interleaved
+
+This is exactly why the earlier batched-dynamic scheduling experiment was worth
+trying: it targeted the gap between locality and balance. But because that
+experiment did not produce a stable end-to-end win, the retained default still
+should be plain `dynamic`.
 
 ## Why the `C:` results make sense in the current code
 
