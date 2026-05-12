@@ -22,7 +22,7 @@ flowchart TD
     B --> C[Read the `$MFT::$DATA` runlist]
     C --> D[Decode data runs<br/>`layout/data_run.rs`]
     D --> E[Build extent map<br/>`layout/extent.rs`]
-    E --> F[Resolve record number to absolute volume offset]
+    E --> F[Resolve record number to absolute volume offset<br/>through fragmented extents when needed]
     F --> G[Read raw FILE record bytes<br/>`reader.rs` / `VolumeReader`]
     G --> H[Validate FILE record header<br/>`layout/record.rs`]
     H --> I[Apply USA fixup<br/>`layout/usa_fixup.rs`]
@@ -53,7 +53,7 @@ flowchart TD
 
 > `record number -> absolute disk byte offset`
 
-It is needed because the `$MFT` is often **not stored contiguously** on disk. When a caller wants to read record `N`, the code first needs to determine which extent segment contains that record and where that segment maps on the volume.
+It is needed because the `$MFT` is often **not stored contiguously** on disk. A simple formula like `mft_start + record_number * file_record_size` only works when the MFT is effectively one contiguous extent. When a caller wants to read record `N`, the code first needs to determine which extent segment contains that record and where that segment maps on the volume.
 
 ## Short summary
 

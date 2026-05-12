@@ -1,5 +1,11 @@
 //! Extent map mapping virtual cluster numbers (VCNs) of the `$MFT`
 //! `$DATA` attribute to volume byte offsets.
+//!
+//! NTFS keeps the `$MFT` as a regular file, so its data can be split across
+//! multiple extents and may even contain sparse holes. This module turns the
+//! decoded `$MFT` runlist into a lookup structure that can answer:
+//!
+//! `record number -> absolute disk byte offset`
 
 use crate::{errors::UsnError, raw_mft::layout::data_run::DataRun};
 
@@ -70,8 +76,8 @@ impl ExtentMap {
         }
     }
 
-    /// Total number of records that the MFT data can hold (including
-    /// sparse holes).
+    /// Total number of records that the MFT data can hold (including sparse
+    /// holes in the logical address space).
     pub fn record_count(&self) -> u64 {
         if self.file_record_size == 0 {
             return 0;
@@ -80,6 +86,11 @@ impl ExtentMap {
     }
 
     /// Translate a record number to its absolute volume byte offset.
+    ///
+    /// This is the convenient one-shot form. It creates a fresh lookup
+    /// cursor internally, so it is simplest to use when you do not care
+    /// about repeated nearby lookups.
+    ///
     /// Returns `Ok(None)` for sparse regions and `Err` for out-of-range
     /// record numbers.
     pub fn record_offset(&self, record_number: u64) -> Result<Option<u64>, UsnError> {
@@ -89,6 +100,10 @@ impl ExtentMap {
 
     /// Translate a record number to its absolute volume byte offset while
     /// reusing a caller-owned lookup cursor across nearby queries.
+    ///
+    /// Use this when scanning records in order, because the cached segment
+    /// index lets the next lookup start near the previous one instead of
+    /// rescanning the entire extent list from the beginning.
     pub fn record_offset_with_cursor(
         &self,
         record_number: u64,
