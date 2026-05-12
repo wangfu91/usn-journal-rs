@@ -87,7 +87,9 @@ Useful environment variables:
 - `USN_RAW_MFT_BENCH_WORKERS_LIST=1,2,4,8,11`
 - `USN_RAW_MFT_BENCH_SCHEDULING=dynamic`
 - `USN_RAW_MFT_BENCH_SCHEDULING_LIST=dynamic,contiguous`
-- `USN_RAW_MFT_BENCH_CHUNK_RECORDS=16384`
+- `USN_RAW_MFT_BENCH_CHUNK_RECORDS=2048`
+- `USN_RAW_MFT_BENCH_BUFFER_BYTES=262144`
+- `USN_RAW_MFT_BENCH_ATTR_BUFFER_BYTES=16384`
 - `USN_RAW_MFT_BENCH_PRINT_SUMMARY=1`
 - `USN_RAW_MFT_BENCH_SUMMARY_RUNS=3`
 
@@ -103,24 +105,24 @@ cargo bench --bench raw_mft_ingest -- --sample-size 10 --warm-up-time 3 --measur
 
 Recent Criterion runs on a large `C:` NTFS volume, using the current ingest
 benchmark shape (~3.06 M addressable records, `skip_unused(true)` in both chunk
-planning and scanning, but dense logical chunk bands with only fully unused
-bands omitted, and about 180 planned chunks on the measured live volume),
-showed:
+planning and scanning, dense logical chunk bands with only fully unused bands
+omitted, `2048` logical records per chunk, about `1329` planned chunks on the
+measured live volume, and `256 KiB` / `16 KiB` buffers), showed:
 
 - `dynamic` scheduling consistently beating `contiguous`
-- the fastest point landing around `10` workers
-- the best measured point at `10` workers with `dynamic`
+- the fastest worker region landing around `10..=11` workers
+- a `256 KiB` main buffer beating the previously used `512 KiB` benchmark default
+- a `16 KiB` attribute buffer remaining effectively best among the tested sizes
+- the best measured point so far at `11` workers with `dynamic`
 
 Representative medians:
 
-| Mode | Workers | Median time |
-| ---- | ------: | ----------: |
-| Dynamic | 2 | ~4.86 s |
-| Dynamic | 4 | ~3.24 s |
-| Dynamic | 6 | ~2.81 s |
-| Dynamic | 10 | ~2.58 s |
-| Dynamic | 11 | ~2.62 s |
-| Contiguous | 10 | ~3.74 s |
+| Config | Median time |
+| ---- | ----------: |
+| Dynamic, 11 workers, 2048 chunks, 256 KiB / 16 KiB buffers | ~2.35 s |
+| Dynamic, 11 workers, 2048 chunks, 512 KiB / 16 KiB buffers | ~2.38 s |
+| Dynamic, 11 workers, 2048 chunks, 256 KiB / 64 KiB buffers | ~2.64 s |
+| Contiguous, 11 workers, 2048 chunks, 512 KiB / 16 KiB buffers | ~3.67 s |
 
 Those measurements only justify the current **benchmark** default. Production
 scan defaults should still be chosen from the calling workload, not copied from

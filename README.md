@@ -115,42 +115,46 @@ The raw-`$MFT` ingest harness also understands a few environment variables:
 - `USN_RAW_MFT_BENCH_WORKERS_LIST=1,2,4,8,11` — sweep worker counts in one run
 - `USN_RAW_MFT_BENCH_SCHEDULING=dynamic` — choose the executor policy for the baseline run
 - `USN_RAW_MFT_BENCH_SCHEDULING_LIST=dynamic,contiguous` — compare both policies side by side
+- `USN_RAW_MFT_BENCH_CHUNK_RECORDS=2048` — override the logical records-per-chunk default
+- `USN_RAW_MFT_BENCH_BUFFER_BYTES=262144` — override the main read buffer size
+- `USN_RAW_MFT_BENCH_ATTR_BUFFER_BYTES=16384` — override the attribute-list read buffer size
 - `USN_RAW_MFT_BENCH_PRINT_SUMMARY=1` — print an extra one-shot summary table before Criterion runs
 - `USN_RAW_MFT_BENCH_SUMMARY_RUNS=3` — use a median of 3 one-shot runs per summary row
 
 ### Raw `$MFT` ingest benchmark notes
 
-Recent Criterion runs on a large `C:` NTFS volume used the current default
-ingest benchmark shape, where both chunk planning and scanning keep
-`skip_unused(true)`, but chunk planning still uses dense logical bands and only
-drops fully unused bands:
+Recent Criterion runs on a large `C:` NTFS volume used the current benchmark
+shape, where both chunk planning and scanning keep `skip_unused(true)`, but
+chunk planning still uses dense logical bands and only drops fully unused
+bands:
 
 - ~3,059,968 addressable records
-- 16,384 records per chunk (~180 planned chunks on the measured live volume)
-- 512 KiB main buffer / 16 KiB attribute buffer
+- 2,048 records per chunk (~1,329 planned chunks on the measured live volume)
+- 256 KiB main buffer / 16 KiB attribute buffer
 
-Observed results for that workload:
+Observed results from the current tuning passes:
 
 - **Dynamic scheduling** clearly beat **contiguous scheduling**
-- The fastest point stayed around **10 workers**
-- The best measured point was **10 workers + dynamic scheduling**
+- The worker-count sweet spot stayed in the **10..=11 worker** range
+- Among tested main-buffer sizes (`64 KiB` through `2 MiB`), **256 KiB** was fastest
+- Among tested attribute-buffer sizes (`4 KiB` through `64 KiB`), **16 KiB** stayed effectively best and was retained as the default
+- The best measured point so far is **11 workers + dynamic scheduling + 2,048-record chunks + 256 KiB / 16 KiB buffers**
 
-Representative medians from that run:
+Representative medians from the latest sweeps:
 
-| Mode | Workers | Median time |
-| ---- | ------: | ----------: |
-| Dynamic | 2 | ~4.86 s |
-| Dynamic | 4 | ~3.24 s |
-| Dynamic | 6 | ~2.81 s |
-| Dynamic | 10 | ~2.58 s |
-| Dynamic | 11 | ~2.62 s |
-| Contiguous | 10 | ~3.74 s |
+| Config | Median time |
+| ---- | ----------: |
+| Dynamic, 11 workers, 2048 chunks, 256 KiB / 16 KiB buffers | ~2.35 s |
+| Dynamic, 11 workers, 2048 chunks, 512 KiB / 16 KiB buffers | ~2.38 s |
+| Dynamic, 11 workers, 2048 chunks, 256 KiB / 64 KiB buffers | ~2.64 s |
+| Contiguous, 11 workers, 2048 chunks, 512 KiB / 16 KiB buffers | ~3.67 s |
 
 That is why the ingest benchmark defaults now cap the automatic worker count at
-10 instead of following all available logical CPUs. Always re-measure on the
-actual target volume before treating a result as universal: filesystem churn and
-different used-record fragmentation can shift both the planned chunk count and
-the optimum worker count.
+10 instead of following all available logical CPUs, use `2048` logical records
+per chunk by default, and default the main read buffer to `256 KiB`. Always
+re-measure on the actual target volume before treating a result as universal:
+filesystem churn and different used-record fragmentation can shift both the
+planned chunk count and the optimum worker count.
 
 For the longer write-up, including the `C:`-drive sweep data and a code-based
 explanation of why `dynamic` scheduling wins, see

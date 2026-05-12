@@ -34,7 +34,7 @@ copied in, while leaving `src\raw_mft\*.rs` at `HEAD`.
 
 ## Benchmark results
 
-### `C:` drive worker and scheduling sweep (May 2026)
+### `C:` drive chunk, worker, scheduling, and buffer sweeps (May 2026)
 
 The earlier `2 workers is best` conclusion was discarded and re-measured with
 the current Criterion harness on a large `C:` NTFS volume. After that, the
@@ -44,13 +44,14 @@ planning split at every used-record run. The planner was then changed again so
 it keeps dense logical chunk bands and only drops bands that are fully unused.
 The results below are from that optimized planner.
 
-Current measured workload shape printed by `benches\raw_mft_ingest.rs`:
+Current measured workload shape printed by `benches\raw_mft_ingest.rs` after
+retuning the benchmark defaults:
 
 - drive: `C`
 - addressable records: `3,059,968`
-- planned chunks: about `180` on the measured live volume
-- chunk size: `16,384` logical records
-- main buffer: `512 KiB`
+- planned chunks: about `1,329` on the measured live volume
+- chunk size: `2,048` logical records
+- main buffer: `256 KiB`
 - attribute buffer: `16 KiB`
 - start record: `24`
 - end record: `full`
@@ -65,12 +66,22 @@ Representative commands:
 ```powershell
 $env:USN_RAW_MFT_BENCH_DRIVE='C'
 $env:USN_RAW_MFT_BENCH_SCHEDULING='dynamic'
+$env:USN_RAW_MFT_BENCH_CHUNK_RECORDS='2048'
 $env:USN_RAW_MFT_BENCH_WORKERS_LIST='1,2,4,6,8,10,11,12'
 cargo bench --bench raw_mft_ingest -- --sample-size 10 --warm-up-time 3 --measurement-time 10
 
 $env:USN_RAW_MFT_BENCH_DRIVE='C'
-$env:USN_RAW_MFT_BENCH_WORKERS='10'
+$env:USN_RAW_MFT_BENCH_CHUNK_RECORDS='2048'
+$env:USN_RAW_MFT_BENCH_WORKERS='11'
 $env:USN_RAW_MFT_BENCH_SCHEDULING_LIST='dynamic,contiguous'
+cargo bench --bench raw_mft_ingest -- --sample-size 10 --warm-up-time 3 --measurement-time 10
+
+$env:USN_RAW_MFT_BENCH_DRIVE='C'
+$env:USN_RAW_MFT_BENCH_CHUNK_RECORDS='2048'
+$env:USN_RAW_MFT_BENCH_WORKERS='11'
+$env:USN_RAW_MFT_BENCH_SCHEDULING='dynamic'
+$env:USN_RAW_MFT_BENCH_BUFFER_BYTES='262144'
+$env:USN_RAW_MFT_BENCH_ATTR_BUFFER_BYTES='16384'
 cargo bench --bench raw_mft_ingest -- --sample-size 10 --warm-up-time 3 --measurement-time 10
 
 $env:USN_RAW_MFT_BENCH_PRINT_SUMMARY='1'
@@ -78,30 +89,63 @@ $env:USN_RAW_MFT_BENCH_SUMMARY_RUNS='3'
 cargo bench --bench raw_mft_ingest -- --sample-size 10 --warm-up-time 3 --measurement-time 10
 ```
 
-Observed medians from the optimized planner:
+Observed medians from the current chunk-size sweep (`workers=10`, `dynamic`,
+default buffers at the time):
+
+| Chunk records | Planned chunks | Median time |
+| --- | ---: | ---: |
+| 1,024 | 2,595 | ~2.53 s |
+| 2,048 | 1,329 | ~2.49 s |
+| 4,096 | 680 | ~2.51 s |
+| 8,192 | 351 | ~2.56 s |
+
+Observed medians from the follow-up worker and scheduling sweeps with
+`chunk_records=2048`:
 
 | Mode | Workers | Median time |
 | --- | ---: | ---: |
-| Dynamic | 1 | ~8.53 s |
-| Dynamic | 2 | ~4.86 s |
-| Dynamic | 4 | ~3.24 s |
-| Dynamic | 6 | ~2.81 s |
-| Dynamic | 8 | ~2.64 s |
-| Dynamic | 10 | ~2.58 s |
-| Dynamic | 11 | ~2.62 s |
-| Dynamic | 12 | ~2.66 s |
-| Contiguous | 10 | ~3.74 s |
+| Dynamic | 8 | ~2.55 s |
+| Dynamic | 10 | ~2.50 s |
+| Dynamic | 11 | ~2.48 s |
+| Dynamic | 12 | ~2.51 s |
+| Contiguous | 11 | ~3.67 s |
+
+Observed medians from the main-buffer sweep with `chunk_records=2048`,
+`workers=11`, `dynamic`, and `attr_buffer=16 KiB`:
+
+| Main buffer | Median time |
+| --- | ---: |
+| 64 KiB | ~2.51 s |
+| 128 KiB | ~2.38 s |
+| 256 KiB | ~2.35 s |
+| 512 KiB | ~2.38 s |
+| 1 MiB | ~2.41 s |
+| 2 MiB | ~2.44 s |
+
+Observed medians from the attribute-buffer sweep with `chunk_records=2048`,
+`workers=11`, `dynamic`, and `main_buffer=256 KiB`:
+
+| Attribute buffer | Median time |
+| --- | ---: |
+| 4 KiB | ~2.39 s |
+| 8 KiB | ~2.35 s |
+| 16 KiB | ~2.35 s |
+| 32 KiB | ~2.41 s |
+| 64 KiB | ~2.64 s |
 
 Conclusion for this workload:
 
-- the fastest region is now a **plateau around 8..=11 workers**, with the best point at `10`
-- the best measured point was **10 workers + dynamic scheduling**
+- the fastest region is now a **plateau around 10..=11 workers**
+- the best measured point so far is **11 workers + dynamic scheduling + 2,048-record chunks + 256 KiB / 16 KiB buffers**
 - `dynamic` was consistently and materially faster than `contiguous`
+- `256 KiB` is the current best measured main-buffer default for this benchmark shape
+- `16 KiB` remains a good attribute-buffer default; `8 KiB` was effectively tied, while larger buffers regressed
 
-The benchmark harness now caps its automatic worker default at `10` and can also
-print an opt-in one-shot summary table (`USN_RAW_MFT_BENCH_PRINT_SUMMARY=1`) so
-future worker/scheduling sweeps do not require manually copying every median out
-of the Criterion log.
+The benchmark harness now caps its automatic worker default at `10`, defaults to
+`2,048` logical records per chunk, uses a `256 KiB` main buffer and a `16 KiB`
+attribute buffer, and can also print an opt-in one-shot summary table
+(`USN_RAW_MFT_BENCH_PRINT_SUMMARY=1`) so future worker/scheduling sweeps do not
+require manually copying every median out of the Criterion log.
 
 ### Current worktree vs detached `HEAD` with the same harness
 
@@ -194,7 +238,7 @@ That means increasing worker count increases both:
 - useful parallelism
 - and the number of independent raw-volume readers / seek streams / buffers
 
-### Why performance improves sharply up to about 8-10 workers
+### Why performance improves sharply up to about 10-11 workers
 
 The code gives a straightforward reason for the initial speedup:
 
@@ -202,14 +246,15 @@ The code gives a straightforward reason for the initial speedup:
 - each chunk is processed independently on a worker thread
 - the main thread only drains results in order afterward
 
-On the current `C:` workload there are about `180` planned chunks. That is
+On the current `C:` workload there are about `1,329` planned chunks. That is
 still plenty of parallel work for a moderate worker count, so scaling from
-`1 -> 2 -> 4 -> 6 -> 8 -> 10` reduces how much chunk work each worker owns.
+`1 -> 2 -> 4 -> 6 -> 8 -> 10 -> 11` reduces how much chunk work each worker
+owns.
 
-At `10` workers, the average chunk budget is still about `18` chunks per
-worker, so there is enough work to keep workers busy while chunk overhead stays
-amortized. The plateau is caused by the trade-off between useful parallelism and
-the overhead/contention created by more workers.
+At `10-11` workers, the average chunk budget is still roughly `120-133` chunks
+per worker, so there is enough work to keep workers busy while chunk overhead
+stays amortized. The plateau is caused by the trade-off between useful
+parallelism and the overhead/contention created by more workers.
 
 ### Why the optimum stops around 10 instead of scaling to 32 workers
 
@@ -231,14 +276,14 @@ So more workers do **not** only mean more CPU. They also mean:
 
 Inference supported by the measurements:
 
-- by roughly `8..=10` workers, the code has extracted most of the useful scan
+- by roughly `10..=11` workers, the code has extracted most of the useful scan
   parallelism available from this workload
 - beyond that point, extra workers mainly add contention on the same volume and
   more competing read/seek streams, so wall-clock time stops improving and then regresses
 
 This matches the current measured curve too: improvement is strong through the
-low worker counts, then the curve flattens around `8-11`, and `10` comes out as
-the best measured point.
+low worker counts, then the curve flattens around `10-11`, and `11` comes out
+as the best measured point so far.
 
 ### Why chunk cost is uneven in this benchmark
 
@@ -303,19 +348,20 @@ This also follows naturally from the code:
 - fewer chunks per band means worse averaging of chunk-cost variance
 - one expensive chunk therefore distorts a worker's entire assigned band more severely
 
-With about `180` planned chunks, contiguous scheduling is no longer harmed by an
-explosion of tiny tasks, but `dynamic` still wins because the executor sees a
+With about `1,329` planned chunks, contiguous scheduling is no longer harmed by
+an explosion of tiny tasks, but `dynamic` still wins because the executor sees a
 stream of uneven chunk costs. Dynamic workers keep consuming the next remaining
 chunk, while contiguous workers stay stuck inside one preassigned band
 regardless of how expensive that band becomes.
 
-That matches the current result at `10` workers very well:
+That matches the current result at `11` workers very well:
 
-- `dynamic`: about `3.16 s`
-- `contiguous`: about `4.36 s`
+- `dynamic`: about `2.49 s`
+- `contiguous`: about `3.67 s`
 
 So the corrected benchmark did not invalidate the scheduling conclusion.
-It only changed the workload shape enough to move the worker optimum.
+It changed the workload shape enough to move the worker optimum and then the
+buffer sweeps shaved off another small but repeatable improvement.
 
 ### What this code does *not* prove yet
 

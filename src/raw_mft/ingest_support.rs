@@ -23,11 +23,11 @@ use super::{
 };
 
 /// Default main read buffer size for the parallel ingest path.
-const DEFAULT_MAIN_BUFFER_BYTES: usize = 512 * 1024;
+const DEFAULT_MAIN_BUFFER_BYTES: usize = 256 * 1024;
 /// Default attribute-list read buffer size for the parallel ingest path.
 const DEFAULT_ATTR_BUFFER_BYTES: usize = 16 * 1024;
 /// Default number of logical records per chunk.
-const DEFAULT_CHUNK_RECORDS: u64 = 16 * 1024;
+const DEFAULT_CHUNK_RECORDS: u64 = 2 * 1024;
 /// First normal FILE record number in the NTFS `$MFT`.
 const FIRST_NORMAL_RECORD: u64 = 24;
 
@@ -587,8 +587,9 @@ fn default_worker_count() -> NonZeroUsize {
     // The current Criterion worker sweeps on a large C: volume keep
     // `skip_unused(true)` in both chunk planning and scanning, but chunk
     // planning now stays dense and only drops fully unused logical bands.
-    // That brings the workload back to roughly 180 planned chunks and settles
-    // into its fastest region around 10 workers with dynamic scheduling. Cap
+    // With the current 2,048-record default chunk size that produces about
+    // 1,329 planned chunks on the measured live volume and still settles into
+    // its fastest region around 10-11 workers with dynamic scheduling. Cap
     // the benchmark default at 10 so unattended runs start near the measured
     // sweet spot instead of blindly using every logical CPU.
     nonzero_usize(available.clamp(1, 10))
