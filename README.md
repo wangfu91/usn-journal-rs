@@ -93,15 +93,68 @@ Benchmarks are run with [Divan](https://github.com/nvzqz/divan) on a 200 k-recor
   for full-volume scans (<500 ms vs ~21 s). Use `PathResolver::new(v).with_in_memory_tree(&raw_mft)?`.
 - **Buffer size** — tune with `RawMftScanOptions::builder().buffer_bytes(NonZeroUsize::new(256 * 1024).unwrap()).build()`.
 
+For the newer raw-`$MFT` ingest throughput work, use the Criterion harness in
+`benches/raw_mft_ingest.rs` instead of the ad-hoc profiling example when you
+need statistically useful worker-count or scheduling comparisons.
+
 Run benchmarks:
 
-```sh
+```powershell
 cargo bench --bench raw_mft
 cargo bench --bench journal
 cargo bench --bench path_resolver
+cargo bench --bench raw_mft_ingest
 ```
 
 Set `USN_TEST_DRIVE=D` to target a different volume (default: `C`).
+
+The raw-`$MFT` ingest harness also understands a few environment variables:
+
+- `USN_RAW_MFT_BENCH_DRIVE=C` — choose the target volume
+- `USN_RAW_MFT_BENCH_WORKERS=10` — set one fixed worker count
+- `USN_RAW_MFT_BENCH_WORKERS_LIST=1,2,4,8,11` — sweep worker counts in one run
+- `USN_RAW_MFT_BENCH_SCHEDULING=dynamic` — choose the executor policy for the baseline run
+- `USN_RAW_MFT_BENCH_SCHEDULING_LIST=dynamic,contiguous` — compare both policies side by side
+- `USN_RAW_MFT_BENCH_PRINT_SUMMARY=1` — print an extra one-shot summary table before Criterion runs
+- `USN_RAW_MFT_BENCH_SUMMARY_RUNS=3` — use a median of 3 one-shot runs per summary row
+
+### Raw `$MFT` ingest benchmark notes
+
+Recent Criterion runs on a large `C:` NTFS volume used the current default
+ingest benchmark shape, where both chunk planning and scanning keep
+`skip_unused(true)`, but chunk planning still uses dense logical bands and only
+drops fully unused bands:
+
+- ~3,059,968 addressable records
+- 16,384 records per chunk (~180 planned chunks on the measured live volume)
+- 512 KiB main buffer / 16 KiB attribute buffer
+
+Observed results for that workload:
+
+- **Dynamic scheduling** clearly beat **contiguous scheduling**
+- The fastest point stayed around **10 workers**
+- The best measured point was **10 workers + dynamic scheduling**
+
+Representative medians from that run:
+
+| Mode | Workers | Median time |
+| ---- | ------: | ----------: |
+| Dynamic | 2 | ~4.86 s |
+| Dynamic | 4 | ~3.24 s |
+| Dynamic | 6 | ~2.81 s |
+| Dynamic | 10 | ~2.58 s |
+| Dynamic | 11 | ~2.62 s |
+| Contiguous | 10 | ~3.74 s |
+
+That is why the ingest benchmark defaults now cap the automatic worker count at
+10 instead of following all available logical CPUs. Always re-measure on the
+actual target volume before treating a result as universal: filesystem churn and
+different used-record fragmentation can shift both the planned chunk count and
+the optimum worker count.
+
+For the longer write-up, including the `C:`-drive sweep data and a code-based
+explanation of why `dynamic` scheduling wins, see
+[`docs/raw_mft_parallel_ingest_findings.md`](docs/raw_mft_parallel_ingest_findings.md).
 
 ## Privileges
 

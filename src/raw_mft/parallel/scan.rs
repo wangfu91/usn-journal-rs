@@ -5,6 +5,7 @@ use std::{num::NonZeroUsize, thread};
 use crate::{
     errors::UsnError,
     raw_mft::{
+        parallel::ChunkScheduling,
         RawMft, RawMftBatchEntry, RawMftChunkBatch, RawMftChunkPlanOptions, RawMftScanOptions,
         RawMftWorkChunk,
     },
@@ -21,6 +22,7 @@ pub struct RawMftParallelScan<'m, 'v> {
     chunks: Option<Vec<RawMftWorkChunk>>,
     scan_options: RawMftScanOptions,
     worker_count: Option<NonZeroUsize>,
+    scheduling: ChunkScheduling,
 }
 
 impl<'m, 'v> RawMftParallelScan<'m, 'v> {
@@ -31,6 +33,7 @@ impl<'m, 'v> RawMftParallelScan<'m, 'v> {
             chunks: None,
             scan_options: RawMftScanOptions::default(),
             worker_count: None,
+            scheduling: ChunkScheduling::Dynamic,
         }
     }
 
@@ -59,11 +62,17 @@ impl<'m, 'v> RawMftParallelScan<'m, 'v> {
         self
     }
 
+    /// Internal benchmark hook for selecting worker scheduling policy.
+    pub(crate) fn scheduling(mut self, scheduling: ChunkScheduling) -> Self {
+        self.scheduling = scheduling;
+        self
+    }
+
     /// Parse chunks in parallel and collect ordered batches.
     pub fn collect_batches(self) -> Result<Vec<RawMftChunkBatch>, UsnError> {
         let worker_count = self.resolved_worker_count()?;
         self.mft
-            .read_chunks(self.resolved_chunks(), self.scan_options, worker_count)
+            .read_chunks(self.resolved_chunks(), self.scan_options, worker_count, self.scheduling)
     }
 
     /// Parse chunks in parallel and visit ordered batches.
@@ -76,6 +85,7 @@ impl<'m, 'v> RawMftParallelScan<'m, 'v> {
             self.resolved_chunks(),
             self.scan_options,
             worker_count,
+            self.scheduling,
             visit,
         )
     }
@@ -92,6 +102,7 @@ impl<'m, 'v> RawMftParallelScan<'m, 'v> {
             self.resolved_chunks(),
             self.scan_options,
             worker_count,
+            self.scheduling,
             map_chunk,
             visit,
         )
@@ -115,6 +126,7 @@ impl<'m, 'v> RawMftParallelScan<'m, 'v> {
             self.resolved_chunks(),
             self.scan_options,
             worker_count,
+            self.scheduling,
             init,
             fold_entry,
             visit,

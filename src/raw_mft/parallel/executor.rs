@@ -18,6 +18,15 @@ use crate::{
     volume::Volume,
 };
 
+/// Internal worker scheduling mode for chunk execution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ChunkScheduling {
+    /// Workers fetch the next remaining chunk from a shared atomic cursor.
+    Dynamic,
+    /// Each worker receives one contiguous band of chunk indices.
+    Contiguous,
+}
+
 /// Reopenable source information for worker-local volume handles.
 #[derive(Debug, Clone)]
 enum ParallelVolumeSource {
@@ -31,6 +40,7 @@ pub(super) fn run_parallel_chunks_in_order<T, Work, Visit>(
     chunks: Vec<RawMftWorkChunk>,
     options: RawMftScanOptions,
     worker_count: NonZeroUsize,
+    scheduling: ChunkScheduling,
     work_chunk: Work,
     mut visit: Visit,
 ) -> Result<(), UsnError>
@@ -71,7 +81,7 @@ where
     thread::scope(|scope| -> Result<(), UsnError> {
         let (tx, rx) = mpsc::channel::<Result<(usize, T), UsnError>>();
         let mut handles = Vec::with_capacity(worker_count);
-        for _ in 0..worker_count {
+        for worker_index in 0..worker_count {
             let next_index = &next_index;
             let chunks = &chunks;
             let tx = tx.clone();
@@ -104,18 +114,44 @@ where
                         }
                     };
 
-                loop {
-                    let index = next_index.fetch_add(1, Ordering::Relaxed);
-                    if index >= chunks.len() {
-                        break;
-                    }
+                match scheduling {
+                    ChunkScheduling::Dynamic => {
+                        loop {
+                            let index = next_index.fetch_add(1, Ordering::Relaxed);
+                            if index >= chunks.len() {
+                                break;
+                            }
 
-                    let chunk = chunks[index];
-                    let result =
-                        work_chunk(&worker_mft, chunk, &options, &mut reader, &mut attr_reader)
+                            let chunk = chunks[index];
+                            let result = work_chunk(
+                                &worker_mft,
+                                chunk,
+                                &options,
+                                &mut reader,
+                                &mut attr_reader,
+                            )
                             .map(|result| (index, result));
-                    if tx.send(result).is_err() {
-                        break;
+                            if tx.send(result).is_err() {
+                                break;
+                            }
+                        }
+                    }
+                    ChunkScheduling::Contiguous => {
+                        let (start, end) = contiguous_worker_range(chunks.len(), worker_count, worker_index);
+                        for index in start..end {
+                            let chunk = chunks[index];
+                            let result = work_chunk(
+                                &worker_mft,
+                                chunk,
+                                &options,
+                                &mut reader,
+                                &mut attr_reader,
+                            )
+                            .map(|result| (index, result));
+                            if tx.send(result).is_err() {
+                                break;
+                            }
+                        }
                     }
                 }
             }));
@@ -132,6 +168,15 @@ where
 
         Ok(())
     })
+}
+
+/// Return the half-open chunk-index range assigned to one worker under contiguous scheduling.
+fn contiguous_worker_range(chunk_count: usize, worker_count: usize, worker_index: usize) -> (usize, usize) {
+    let base = chunk_count / worker_count;
+    let extra = chunk_count % worker_count;
+    let start = worker_index * base + worker_index.min(extra);
+    let len = base + usize::from(worker_index < extra);
+    (start, start + len)
 }
 
 /// Build a stable error when available parallelism cannot be queried.

@@ -73,3 +73,60 @@ boot sector
 - This README is intentionally internal and describes the implementation structure of `raw_mft`.
 - The diagrams are written in English so they can be reused in docs or design notes.
 
+## Parallel ingest benchmarking
+
+For worker-count and executor-policy questions, prefer the Criterion harness in
+`benches/raw_mft_ingest.rs` over `examples/raw_mft_parallel_ingest_profile.rs`.
+The example is still useful for profiling, but it is not a statistically sound
+benchmark on its own.
+
+Useful environment variables:
+
+- `USN_RAW_MFT_BENCH_DRIVE=C`
+- `USN_RAW_MFT_BENCH_WORKERS=10`
+- `USN_RAW_MFT_BENCH_WORKERS_LIST=1,2,4,8,11`
+- `USN_RAW_MFT_BENCH_SCHEDULING=dynamic`
+- `USN_RAW_MFT_BENCH_SCHEDULING_LIST=dynamic,contiguous`
+- `USN_RAW_MFT_BENCH_CHUNK_RECORDS=16384`
+- `USN_RAW_MFT_BENCH_PRINT_SUMMARY=1`
+- `USN_RAW_MFT_BENCH_SUMMARY_RUNS=3`
+
+Example commands:
+
+```powershell
+cargo bench --bench raw_mft_ingest -- --sample-size 10 --warm-up-time 3 --measurement-time 10
+
+$env:USN_RAW_MFT_BENCH_DRIVE='C'
+$env:USN_RAW_MFT_BENCH_WORKERS_LIST='1,2,4,8,11'
+cargo bench --bench raw_mft_ingest -- --sample-size 10 --warm-up-time 3 --measurement-time 10
+```
+
+Recent Criterion runs on a large `C:` NTFS volume, using the current ingest
+benchmark shape (~3.06 M addressable records, `skip_unused(true)` in both chunk
+planning and scanning, but dense logical chunk bands with only fully unused
+bands omitted, and about 180 planned chunks on the measured live volume),
+showed:
+
+- `dynamic` scheduling consistently beating `contiguous`
+- the fastest point landing around `10` workers
+- the best measured point at `10` workers with `dynamic`
+
+Representative medians:
+
+| Mode | Workers | Median time |
+| ---- | ------: | ----------: |
+| Dynamic | 2 | ~4.86 s |
+| Dynamic | 4 | ~3.24 s |
+| Dynamic | 6 | ~2.81 s |
+| Dynamic | 10 | ~2.58 s |
+| Dynamic | 11 | ~2.62 s |
+| Contiguous | 10 | ~3.74 s |
+
+Those measurements only justify the current **benchmark** default. Production
+scan defaults should still be chosen from the calling workload, not copied from
+one benchmark volume blindly.
+
+For the fuller experiment log and the code-path explanation of the worker-count
+and scheduling results, see
+[`../../docs/raw_mft_parallel_ingest_findings.md`](../../docs/raw_mft_parallel_ingest_findings.md).
+

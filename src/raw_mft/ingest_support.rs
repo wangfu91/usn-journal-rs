@@ -19,6 +19,7 @@ use crate::{
 use super::{
     FileNameNamespace, RawMft, RawMftBatchEntry, RawMftChunkPlanOptions, RawMftEntry,
     RawMftLink, RawMftScanOptions, RawMftWorkChunk,
+    parallel::ChunkScheduling,
 };
 
 /// Default main read buffer size for the parallel ingest path.
@@ -47,6 +48,24 @@ pub struct BenchConfig {
     pub start_record: u64,
     /// Optional exclusive end record number.
     pub end_record: Option<u64>,
+    /// Worker scheduling mode used by the parallel executor.
+    scheduling: ChunkScheduling,
+}
+
+/// Benchmark-visible scheduling mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BenchScheduling {
+    Dynamic,
+    Contiguous,
+}
+
+impl BenchScheduling {
+    fn as_executor_mode(self) -> ChunkScheduling {
+        match self {
+            Self::Dynamic => ChunkScheduling::Dynamic,
+            Self::Contiguous => ChunkScheduling::Contiguous,
+        }
+    }
 }
 
 impl BenchConfig {
@@ -77,6 +96,11 @@ impl BenchConfig {
             end_record: env::var("USN_RAW_MFT_BENCH_END_RECORD")
                 .ok()
                 .and_then(|value| value.parse::<u64>().ok()),
+            scheduling: parse_bench_scheduling(
+                env::var("USN_RAW_MFT_BENCH_SCHEDULING").ok().as_deref(),
+                BenchScheduling::Dynamic,
+            )
+            .as_executor_mode(),
         }
     }
 
@@ -98,11 +122,38 @@ impl BenchConfig {
     /// Build chunk-planning options for the parallel ingest path.
     fn chunk_plan_options(&self) -> RawMftChunkPlanOptions {
         RawMftChunkPlanOptions::builder()
-            .skip_unused(false)
+            .skip_unused(true)
             .start_record(self.start_record)
             .end_record(self.end_record)
             .max_records_per_chunk(self.chunk_records)
             .build()
+    }
+}
+
+impl BenchConfig {
+    /// Return a copy with a different worker count.
+    #[must_use]
+    pub fn with_worker_count(&self, worker_count: NonZeroUsize) -> Self {
+        let mut config = self.clone();
+        config.worker_count = worker_count;
+        config
+    }
+
+    /// Return a copy with a different scheduling mode.
+    #[must_use]
+    pub fn with_scheduling(&self, scheduling: BenchScheduling) -> Self {
+        let mut config = self.clone();
+        config.scheduling = scheduling.as_executor_mode();
+        config
+    }
+
+    /// Human-readable scheduling label for benchmark output.
+    #[must_use]
+    pub fn scheduling_label(&self) -> &'static str {
+        match self.scheduling {
+            ChunkScheduling::Dynamic => "dynamic",
+            ChunkScheduling::Contiguous => "contiguous",
+        }
     }
 }
 
@@ -135,6 +186,19 @@ pub struct BenchSummary {
     pub logical_bytes: u64,
     /// Sum of allocated sizes across visible records.
     pub allocated_bytes: u64,
+}
+
+/// Static description of the benchmarked workload shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BenchWorkloadShape {
+    /// Total addressable file records in the `$MFT`.
+    pub record_count: u64,
+    /// Number of logical chunks planned for the current config.
+    pub planned_chunks: usize,
+    /// NTFS file-record size in bytes.
+    pub file_record_size: u64,
+    /// NTFS cluster size in bytes.
+    pub cluster_size: u64,
 }
 
 /// Per-run mutable storage used while ingesting entries.
@@ -174,11 +238,51 @@ pub fn print_bench_config(config: &BenchConfig) {
             .map(|value| value.to_string())
             .unwrap_or_else(|| "full".to_owned()),
     );
+    eprintln!("raw_mft_ingest bench scheduling: {}", config.scheduling_label());
+}
+
+/// Parse a comma-separated worker sweep list from the environment.
+pub fn worker_sweep_values() -> Vec<NonZeroUsize> {
+    parse_nonzero_usize_list("USN_RAW_MFT_BENCH_WORKERS_LIST")
+}
+
+/// Parse a comma-separated scheduling sweep list from the environment.
+pub fn scheduling_sweep_values() -> Vec<BenchScheduling> {
+    env::var("USN_RAW_MFT_BENCH_SCHEDULING_LIST")
+        .ok()
+        .map(|value| {
+            value
+                .split(',')
+                .filter_map(parse_bench_scheduling_token)
+                .collect::<Vec<_>>()
+        })
+        .filter(|values| !values.is_empty())
+        .unwrap_or_default()
 }
 
 /// Return whether the serial ingest benchmark should also be run.
 pub fn include_serial_bench() -> bool {
     env::var_os("USN_RAW_MFT_BENCH_INCLUDE_SERIAL").is_some()
+}
+
+/// Return whether the benchmark harness should print an extra one-shot summary table.
+pub fn print_summary_enabled() -> bool {
+    env::var_os("USN_RAW_MFT_BENCH_PRINT_SUMMARY").is_some()
+}
+
+/// Return how many one-shot runs should be used when printing the summary table.
+pub fn summary_run_count() -> NonZeroUsize {
+    parse_env_nonzero_usize("USN_RAW_MFT_BENCH_SUMMARY_RUNS", NonZeroUsize::MIN)
+}
+
+/// Describe the workload shape produced by the current benchmark config.
+pub fn workload_shape(mft: &RawMft<'_>, config: &BenchConfig) -> BenchWorkloadShape {
+    BenchWorkloadShape {
+        record_count: mft.record_count(),
+        planned_chunks: mft.plan_chunks_with_options(config.chunk_plan_options()).len(),
+        file_record_size: mft.file_record_size(),
+        cluster_size: mft.cluster_size(),
+    }
 }
 
 /// Run the parallel ingest workload and return a compact summary.
@@ -203,6 +307,7 @@ pub fn run_parallel_ingest(
             .chunks(chunks)
             .scan_options(iter_options)
             .workers(config.worker_count)
+            .scheduling(config.scheduling)
             .fold_chunks(
                 new_partial_ingest,
                 |partial, entry| {
@@ -479,6 +584,13 @@ fn default_worker_count() -> NonZeroUsize {
         .ok()
         .map(NonZeroUsize::get)
         .unwrap_or(1);
+    // The current Criterion worker sweeps on a large C: volume keep
+    // `skip_unused(true)` in both chunk planning and scanning, but chunk
+    // planning now stays dense and only drops fully unused logical bands.
+    // That brings the workload back to roughly 180 planned chunks and settles
+    // into its fastest region around 10 workers with dynamic scheduling. Cap
+    // the benchmark default at 10 so unattended runs start near the measured
+    // sweet spot instead of blindly using every logical CPU.
     nonzero_usize(available.clamp(1, 10))
 }
 
@@ -500,6 +612,34 @@ fn parse_env_nonzero_u64(name: &str, default: NonZeroU64) -> NonZeroU64 {
         .unwrap_or(default)
 }
 
+fn parse_nonzero_usize_list(name: &str) -> Vec<NonZeroUsize> {
+    env::var(name)
+        .ok()
+        .map(|value| {
+            value
+                .split(',')
+                .filter_map(|item| item.trim().parse::<usize>().ok())
+                .filter_map(NonZeroUsize::new)
+                .collect::<Vec<_>>()
+        })
+        .filter(|values| !values.is_empty())
+        .unwrap_or_default()
+}
+
+fn parse_bench_scheduling(value: Option<&str>, default: BenchScheduling) -> BenchScheduling {
+    value.and_then(parse_bench_scheduling_token).unwrap_or(default)
+}
+
+fn parse_bench_scheduling_token(value: &str) -> Option<BenchScheduling> {
+    if value.eq_ignore_ascii_case("dynamic") {
+        Some(BenchScheduling::Dynamic)
+    } else if value.eq_ignore_ascii_case("contiguous") {
+        Some(BenchScheduling::Contiguous)
+    } else {
+        None
+    }
+}
+
 /// Convert a `usize` into a non-zero `usize`, clamping zero to one.
 fn nonzero_usize(value: usize) -> NonZeroUsize {
     NonZeroUsize::new(value).unwrap_or(NonZeroUsize::MIN)
@@ -508,6 +648,38 @@ fn nonzero_usize(value: usize) -> NonZeroUsize {
 /// Convert a `u64` into a non-zero `u64`, clamping zero to one.
 fn nonzero_u64(value: u64) -> NonZeroU64 {
     NonZeroU64::new(value).unwrap_or(NonZeroU64::MIN)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_config() -> BenchConfig {
+        BenchConfig {
+            drive: 'C',
+            worker_count: NonZeroUsize::new(11).expect("worker count must be non-zero"),
+            main_buffer_bytes: NonZeroUsize::new(DEFAULT_MAIN_BUFFER_BYTES)
+                .expect("main buffer must be non-zero"),
+            attr_buffer_bytes: NonZeroUsize::new(DEFAULT_ATTR_BUFFER_BYTES)
+                .expect("attr buffer must be non-zero"),
+            chunk_records: NonZeroU64::new(DEFAULT_CHUNK_RECORDS)
+                .expect("chunk size must be non-zero"),
+            start_record: FIRST_NORMAL_RECORD,
+            end_record: None,
+            scheduling: ChunkScheduling::Dynamic,
+        }
+    }
+
+    #[test]
+    fn benchmark_scan_and_chunk_defaults_both_skip_unused() {
+        let config = sample_config();
+        let iter_options = config.iter_options();
+        let chunk_options = config.chunk_plan_options();
+
+        assert!(iter_options.skip_unused());
+        assert!(iter_options.skip_extension_records());
+        assert!(chunk_options.skip_unused());
+    }
 }
 
 

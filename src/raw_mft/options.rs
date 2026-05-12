@@ -129,7 +129,7 @@ impl RawMftEntryOptions {
 /// Options controlling raw `$MFT` scan behavior.
 ///
 /// Use [`RawMftScanOptions::builder`] for the fluent builder API.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct RawMftScanOptions {
     /// Read-buffer sizing.
     pub(crate) buffers: RawMftReadBuffers,
@@ -150,6 +150,18 @@ pub struct RawMftScanOptions {
     /// Defaults to `true`.  Set to `false` only if you explicitly need to
     /// inspect raw extension record contents.
     pub(crate) skip_extension_records: bool,
+}
+
+impl Default for RawMftScanOptions {
+    fn default() -> Self {
+        Self {
+            buffers: RawMftReadBuffers::default(),
+            range: RawMftRecordRange::default(),
+            entry: RawMftEntryOptions::default(),
+            skip_unused: true,
+            skip_extension_records: true,
+        }
+    }
 }
 
 impl RawMftScanOptions {

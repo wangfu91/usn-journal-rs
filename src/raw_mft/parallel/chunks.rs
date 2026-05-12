@@ -16,6 +16,7 @@ use crate::{
 };
 
 use super::executor;
+use super::ChunkScheduling;
 
 impl<'a> RawMft<'a> {
     /// Build deterministic logical work chunks for raw `$MFT` parsing.
@@ -181,6 +182,7 @@ impl<'a> RawMft<'a> {
         chunks: Vec<RawMftWorkChunk>,
         options: RawMftScanOptions,
         worker_count: NonZeroUsize,
+        scheduling: ChunkScheduling,
         map_chunk: F,
         visit: V,
     ) -> Result<(), UsnError>
@@ -194,6 +196,7 @@ impl<'a> RawMft<'a> {
             chunks,
             options,
             worker_count,
+            scheduling,
             move |mft, chunk, options, reader, attr_reader| {
                 mft.read_chunk_with_reused_readers(chunk, options, reader, attr_reader)
                     .and_then(|entries| map_chunk(RawMftChunkBatch { chunk, entries }))
@@ -203,11 +206,13 @@ impl<'a> RawMft<'a> {
     }
 
     /// Parse logical work chunks in parallel and fold lean batch entries on worker threads.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn for_each_folded_chunk<Init, Fold, T, V>(
         &self,
         chunks: Vec<RawMftWorkChunk>,
         options: RawMftScanOptions,
         worker_count: NonZeroUsize,
+        scheduling: ChunkScheduling,
         init: Init,
         fold_entry: Fold,
         visit: V,
@@ -223,6 +228,7 @@ impl<'a> RawMft<'a> {
             chunks,
             options,
             worker_count,
+            scheduling,
             move |mft, chunk, options, reader, attr_reader| {
                 mft.fold_chunk_with_reused_readers(
                     chunk,
@@ -243,12 +249,20 @@ impl<'a> RawMft<'a> {
         chunks: Vec<RawMftWorkChunk>,
         options: RawMftScanOptions,
         worker_count: NonZeroUsize,
+        scheduling: ChunkScheduling,
         visit: F,
     ) -> Result<(), UsnError>
     where
         F: FnMut(RawMftChunkBatch) -> Result<(), UsnError>,
     {
-        self.for_each_mapped_chunk(chunks, options, worker_count, Ok::<_, UsnError>, visit)
+        self.for_each_mapped_chunk(
+            chunks,
+            options,
+            worker_count,
+            scheduling,
+            Ok::<_, UsnError>,
+            visit,
+        )
     }
 
     /// Parse logical work chunks in parallel using worker-local readers and custom options.
@@ -257,9 +271,10 @@ impl<'a> RawMft<'a> {
         chunks: Vec<RawMftWorkChunk>,
         options: RawMftScanOptions,
         worker_count: NonZeroUsize,
+        scheduling: ChunkScheduling,
     ) -> Result<Vec<RawMftChunkBatch>, UsnError> {
         let mut ordered_batches = Vec::with_capacity(chunks.len());
-        self.for_each_chunk(chunks, options, worker_count, |batch| {
+        self.for_each_chunk(chunks, options, worker_count, scheduling, |batch| {
             ordered_batches.push(batch);
             Ok(())
         })?;
