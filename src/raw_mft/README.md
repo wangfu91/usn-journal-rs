@@ -87,10 +87,14 @@ Useful environment variables:
 - `USN_RAW_MFT_BENCH_WORKERS_LIST=1,2,4,8,11`
 - `USN_RAW_MFT_BENCH_SCHEDULING=dynamic`
 - `USN_RAW_MFT_BENCH_SCHEDULING_LIST=dynamic,contiguous`
+- `USN_RAW_MFT_BENCH_SCHEDULING=dynamic-cost-banded`
+- `USN_RAW_MFT_BENCH_SCHEDULING=dynamic-observed-adaptive`
 - `USN_RAW_MFT_BENCH_CHUNK_RECORDS=2048`
 - `USN_RAW_MFT_BENCH_BUFFER_BYTES=262144`
 - `USN_RAW_MFT_BENCH_ATTR_BUFFER_BYTES=16384`
-- `USN_RAW_MFT_BENCH_PRINT_SUMMARY=1`
+- `USN_RAW_MFT_BENCH_PRINT_SUMMARY=1` (the one-shot table prints adaptive mismatch columns such as top-hit / top-half / missed tail chunks when `dynamic-observed-adaptive` is included)
+- `USN_RAW_MFT_BENCH_PRINT_SCHEDULING_PROFILE=1` (prints per-worker stats, slow chunks, and for `dynamic-observed-adaptive` also per-band `static`/`observed` decisions plus predicted-vs-actual tail overlap / top-half / top-quarter miss summaries)
+- `USN_RAW_MFT_BENCH_COST_HINT_ATTR_SAMPLE=1` (explicit experiment only; current measured result regressed, so do not enable by default)
 - `USN_RAW_MFT_BENCH_SUMMARY_RUNS=3`
 
 Example commands:

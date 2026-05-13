@@ -6,6 +6,16 @@ use crate::raw_mft::{
     DEFAULT_ATTR_BUFFER_BYTES, DEFAULT_BUFFER_BYTES, layout::record::FIRST_NORMAL_RECORD,
 };
 
+/// Internal attr-list enrichment strategy used by batch/raw-MFT scan tooling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum AttrListBatchMode {
+    /// Full enrichment behavior used by the public raw-MFT scan APIs.
+    #[default]
+    Full,
+    /// Summary-only enrichment used by the ingest benchmark/tooling experiment.
+    SummaryOnly,
+}
+
 /// Inclusive/exclusive logical record range for a raw `$MFT` scan.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RawMftRecordRange {
@@ -150,6 +160,14 @@ pub struct RawMftScanOptions {
     /// Defaults to `true`.  Set to `false` only if you explicitly need to
     /// inspect raw extension record contents.
     pub(crate) skip_extension_records: bool,
+    /// Internal attr-list enrichment mode for batch-oriented scans.
+    pub(crate) attr_list_batch_mode: AttrListBatchMode,
+    /// Internal benchmark/tooling hook for sorting attr-list extension targets by offset before loading them.
+    pub(crate) sort_attr_list_extensions_by_offset: bool,
+    /// Internal benchmark/tooling hook for deferring batch attr-list extension loads until the whole chunk has been scanned.
+    pub(crate) deferred_chunk_attr_list_enrichment: bool,
+    /// Internal benchmark/tooling hook for flushing deferred batch attr-list work after a bounded number of scanned records.
+    pub(crate) deferred_chunk_attr_list_window_records: usize,
 }
 
 impl Default for RawMftScanOptions {
@@ -160,6 +178,10 @@ impl Default for RawMftScanOptions {
             entry: RawMftEntryOptions::default(),
             skip_unused: true,
             skip_extension_records: true,
+            attr_list_batch_mode: AttrListBatchMode::Full,
+            sort_attr_list_extensions_by_offset: false,
+            deferred_chunk_attr_list_enrichment: false,
+            deferred_chunk_attr_list_window_records: usize::MAX,
         }
     }
 }
@@ -198,6 +220,30 @@ impl RawMftScanOptions {
     #[must_use]
     pub const fn skip_extension_records(&self) -> bool {
         self.skip_extension_records
+    }
+
+    /// Internal attr-list enrichment mode used by batch-oriented scans.
+    #[must_use]
+    pub(crate) const fn attr_list_batch_mode(&self) -> AttrListBatchMode {
+        self.attr_list_batch_mode
+    }
+
+    /// Internal attr-list extension-load ordering flag used by batch-oriented scans.
+    #[must_use]
+    pub(crate) const fn sort_attr_list_extensions_by_offset(&self) -> bool {
+        self.sort_attr_list_extensions_by_offset
+    }
+
+    /// Internal attr-list batch-enrichment execution strategy used by chunk scans.
+    #[must_use]
+    pub(crate) const fn deferred_chunk_attr_list_enrichment(&self) -> bool {
+        self.deferred_chunk_attr_list_enrichment
+    }
+
+    /// Internal deferred attr-list flush window measured in scanned base records.
+    #[must_use]
+    pub(crate) const fn deferred_chunk_attr_list_window_records(&self) -> usize {
+        self.deferred_chunk_attr_list_window_records
     }
 }
 
@@ -245,6 +291,30 @@ impl RawMftScanOptionsBuilder {
     /// Defaults to `true`.  See [`RawMftScanOptions::skip_extension_records`] for details.
     pub fn skip_extension_records(mut self, v: bool) -> Self {
         self.inner.skip_extension_records = v;
+        self
+    }
+
+    /// Internal benchmark/tooling hook for selecting a lighter attr-list batch mode.
+    pub(crate) fn attr_list_batch_mode(mut self, v: AttrListBatchMode) -> Self {
+        self.inner.attr_list_batch_mode = v;
+        self
+    }
+
+    /// Internal benchmark/tooling hook for sorting attr-list extension targets by offset.
+    pub(crate) fn sort_attr_list_extensions_by_offset(mut self, v: bool) -> Self {
+        self.inner.sort_attr_list_extensions_by_offset = v;
+        self
+    }
+
+    /// Internal benchmark/tooling hook for deferring batch attr-list enrichment until the whole chunk has been scanned.
+    pub(crate) fn deferred_chunk_attr_list_enrichment(mut self, v: bool) -> Self {
+        self.inner.deferred_chunk_attr_list_enrichment = v;
+        self
+    }
+
+    /// Internal benchmark/tooling hook for bounding deferred attr-list work to a smaller record window.
+    pub(crate) fn deferred_chunk_attr_list_window_records(mut self, v: usize) -> Self {
+        self.inner.deferred_chunk_attr_list_window_records = v.max(1);
         self
     }
 

@@ -1,12 +1,16 @@
 //! Shared low-level read helpers reused by the raw-MFT iterator,
 //! single-record access path, and `$ATTRIBUTE_LIST` enrichment code.
 
-use std::io::{Read, Seek, SeekFrom};
+use std::{
+    io::{Read, Seek, SeekFrom},
+    time::Instant,
+};
 
 use crate::{
     errors::UsnError,
     raw_mft::{
         attr_list::{enrich_from_attr_list, should_enrich_from_attr_list},
+        attr_list_profile,
         entry_build::{AttributeListInfo, EntryBuildOptions, RawMftBatchScratch, RawMftEntry},
         io::VolumeReader,
         layout::{boot::BootSector, data_run::DataRun, extent::ExtentMap, record::FileRecord},
@@ -56,6 +60,39 @@ pub(super) fn read_record_raw(
     record_number: u64,
     build_options: EntryBuildOptions,
 ) -> Result<Option<(RawMftEntry, Option<AttributeListInfo>)>, UsnError> {
+    if attr_list_profile::is_extension_load_active() {
+        let offset_lookup_started = Instant::now();
+        let offset = match extent_map.record_offset(record_number)? {
+            Some(offset) => offset,
+            None => return Ok(None),
+        };
+        attr_list_profile::record_extension_offset_lookup_time(offset_lookup_started.elapsed());
+        attr_list_profile::record_extension_record_target(
+            record_number,
+            offset,
+            boot.file_record_size as u64,
+        );
+
+        let read_started = Instant::now();
+        let buf = reader
+            .borrow_at(offset, boot.file_record_size as usize)
+            .map_err(io_err)?;
+        attr_list_profile::record_extension_record_read_time(read_started.elapsed());
+
+        if !FileRecord::is_valid(buf) {
+            return Ok(None);
+        }
+
+        let parse_started = Instant::now();
+        let rec = FileRecord::parse(record_number, Some(offset), buf)?;
+        attr_list_profile::record_extension_record_parse_time(parse_started.elapsed());
+
+        let build_started = Instant::now();
+        let built = RawMftEntry::from_record_with_attr_list(&rec, build_options);
+        attr_list_profile::record_extension_entry_build_time(build_started.elapsed());
+        return Ok(Some(built));
+    }
+
     let offset = match extent_map.record_offset(record_number)? {
         Some(offset) => offset,
         None => return Ok(None),
@@ -75,13 +112,47 @@ pub(super) fn read_record_raw(
 
 /// Read one raw FILE record and return the lean batch entry plus any
 /// captured `$ATTRIBUTE_LIST` payload.
-pub(super) fn read_batch_record_raw(
+pub(crate) fn read_batch_record_raw(
     reader: &mut VolumeReader,
     boot: &BootSector,
     extent_map: &ExtentMap,
     record_number: u64,
     collect_dos_file_name_links: bool,
 ) -> Result<Option<(RawMftBatchScratch, Option<AttributeListInfo>)>, UsnError> {
+    if attr_list_profile::is_extension_load_active() {
+        let offset_lookup_started = Instant::now();
+        let offset = match extent_map.record_offset(record_number)? {
+            Some(offset) => offset,
+            None => return Ok(None),
+        };
+        attr_list_profile::record_extension_offset_lookup_time(offset_lookup_started.elapsed());
+        attr_list_profile::record_extension_record_target(
+            record_number,
+            offset,
+            boot.file_record_size as u64,
+        );
+
+        let read_started = Instant::now();
+        let buf = reader
+            .borrow_at(offset, boot.file_record_size as usize)
+            .map_err(io_err)?;
+        attr_list_profile::record_extension_record_read_time(read_started.elapsed());
+
+        if !FileRecord::is_valid(buf) {
+            return Ok(None);
+        }
+
+        let parse_started = Instant::now();
+        let rec = FileRecord::parse(record_number, Some(offset), buf)?;
+        attr_list_profile::record_extension_record_parse_time(parse_started.elapsed());
+
+        let build_started = Instant::now();
+        let built =
+            RawMftBatchScratch::from_record_with_attr_list(&rec, collect_dos_file_name_links);
+        attr_list_profile::record_extension_entry_build_time(build_started.elapsed());
+        return Ok(Some(built));
+    }
+
     let offset = match extent_map.record_offset(record_number)? {
         Some(offset) => offset,
         None => return Ok(None),
@@ -210,4 +281,3 @@ mod tests {
         ));
     }
 }
-

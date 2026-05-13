@@ -114,12 +114,22 @@ The raw-`$MFT` ingest harness also understands a few environment variables:
 - `USN_RAW_MFT_BENCH_WORKERS=10` — set one fixed worker count
 - `USN_RAW_MFT_BENCH_WORKERS_LIST=1,2,4,8,11` — sweep worker counts in one run
 - `USN_RAW_MFT_BENCH_SCHEDULING=dynamic` — choose the executor policy for the baseline run
-- `USN_RAW_MFT_BENCH_SCHEDULING_LIST=dynamic,contiguous` — compare both policies side by side
+- `USN_RAW_MFT_BENCH_SCHEDULING_LIST=dynamic,contiguous` — compare policies side by side
+- `USN_RAW_MFT_BENCH_SCHEDULING=dynamic-cost-banded` — try the experimental cost-aware local-band scheduler
+- `USN_RAW_MFT_BENCH_SCHEDULING=dynamic-observed-adaptive` — try the experimental runtime-feedback scheduler that reorders later bands from measured chunk timings
 - `USN_RAW_MFT_BENCH_CHUNK_RECORDS=2048` — override the logical records-per-chunk default
 - `USN_RAW_MFT_BENCH_BUFFER_BYTES=262144` — override the main read buffer size
 - `USN_RAW_MFT_BENCH_ATTR_BUFFER_BYTES=16384` — override the attribute-list read buffer size
-- `USN_RAW_MFT_BENCH_PRINT_SUMMARY=1` — print an extra one-shot summary table before Criterion runs
+- `USN_RAW_MFT_BENCH_PRINT_SUMMARY=1` — print an extra one-shot summary table before Criterion runs; `dynamic-observed-adaptive` rows also include mismatch columns such as top-hit / top-half / missed tail chunks
+- `USN_RAW_MFT_BENCH_PRINT_SCHEDULING_PROFILE=1` — print per-worker and tail-chunk scheduling telemetry in the exact-match profile example; `dynamic-observed-adaptive` also prints per-band `static`/`observed` decisions plus predicted-vs-actual tail overlap / top-half / top-quarter miss summaries
+- `USN_RAW_MFT_BENCH_COST_HINT_ATTR_SAMPLE=1` — let `dynamic-cost-banded` do a small attr-list sampling prepass before ordering chunks; this is still explicit-only because the measured result regressed materially
 - `USN_RAW_MFT_BENCH_SUMMARY_RUNS=3` — use a median of 3 one-shot runs per summary row
+
+For a more repeatable current-worktree-vs-baseline comparison, including a
+best-effort quiet-disk gate plus repeated exact-match runs of
+`examples/raw_mft_parallel_ingest_profile.rs`, use
+`scripts/measure-raw-mft-ingest.ps1` and the walkthrough in
+`docs/raw_mft_benchmark_workflow.md`.
 
 ### Raw `$MFT` ingest benchmark notes
 

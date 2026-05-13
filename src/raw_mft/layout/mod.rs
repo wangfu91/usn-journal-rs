@@ -4,5 +4,5 @@ pub(crate) mod attribute;
 pub(crate) mod boot;
 pub(crate) mod data_run;
 pub(crate) mod extent;
-pub(crate) mod usa_fixup;
 pub(crate) mod record;
+pub(crate) mod usa_fixup;

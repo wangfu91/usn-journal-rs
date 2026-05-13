@@ -182,7 +182,9 @@ mod tests {
         let Some(chunk_size) = NonZeroU64::new(4) else {
             return Err("chunk size must be non-zero".into());
         };
-        let used = [false, true, false, false, false, false, false, false, true, false, false, false];
+        let used = [
+            false, true, false, false, false, false, false, false, true, false, false, false,
+        ];
         let chunks =
             build_work_chunks(0, used.len() as u64, chunk_size, true, |n| used[n as usize]);
         assert_eq!(

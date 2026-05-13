@@ -253,17 +253,21 @@ impl RawMftEntryBuilder {
         if let Some((header, name_units)) = attr.as_file_name() {
             let ns = FileNameNamespace::from_u8(header.namespace);
             let parent_reference = Fid::new(header.parent_directory_reference);
-            let file_name = OsString::from_wide(name_units);
-            let should_replace = self.file_names.consider(
-                current_file_name(
-                    self.entry.namespace,
-                    self.entry.parent_reference,
-                    &self.entry.file_name,
-                ),
-                ns,
-                parent_reference,
-                &file_name,
+            let current = current_file_name(
+                self.entry.namespace,
+                self.entry.parent_reference,
+                &self.entry.file_name,
             );
+            if !self
+                .file_names
+                .should_materialize_candidate(current, ns, parent_reference)
+            {
+                return;
+            }
+            let file_name = OsString::from_wide(name_units);
+            let should_replace = self
+                .file_names
+                .consider(current, ns, parent_reference, &file_name);
             if should_replace {
                 self.entry.namespace = ns;
                 self.entry.file_name = file_name;

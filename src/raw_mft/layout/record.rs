@@ -64,6 +64,8 @@ pub(crate) struct FileRecord<'a> {
     pub header: FileRecordHeader,
     /// Record number in the `$MFT`.
     pub number: u64,
+    /// Raw volume byte offset where this FILE record was read from, when known.
+    pub volume_offset: Option<u64>,
 }
 
 impl<'a> FileRecord<'a> {
@@ -125,6 +127,7 @@ impl<'a> FileRecord<'a> {
             data,
             header,
             number,
+            volume_offset,
         })
     }
 

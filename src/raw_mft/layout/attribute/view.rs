@@ -270,6 +270,3 @@ mod tests {
         assert!(NtfsAttribute::new(&buf).is_none());
     }
 }
-
-
-

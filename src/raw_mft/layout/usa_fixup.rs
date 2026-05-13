@@ -73,7 +73,7 @@ pub(crate) fn apply_usa_fixup(
     // word stores one protected sector's original 2-byte trailer. So the
     // number of protected sectors is `usa_count - 1`.
     let sectors = usa_count - 1;
-    // Each usa entry is 2 bytes, so the USA occupies `2 * usa_count` bytes starting at `usa_offset`. 
+    // Each usa entry is 2 bytes, so the USA occupies `2 * usa_count` bytes starting at `usa_offset`.
     // Verify that the USA fits within the record buffer before we try to read from it.
     let usa_end = usa_offset
         .checked_add(usa_count.checked_mul(2).ok_or(UsnError::InvalidMftRecord {

@@ -5,9 +5,8 @@ use std::{num::NonZeroUsize, thread};
 use crate::{
     errors::UsnError,
     raw_mft::{
-        parallel::ChunkScheduling,
         RawMft, RawMftBatchEntry, RawMftChunkBatch, RawMftChunkPlanOptions, RawMftScanOptions,
-        RawMftWorkChunk,
+        RawMftWorkChunk, parallel::ChunkScheduling,
     },
 };
 
@@ -71,8 +70,12 @@ impl<'m, 'v> RawMftParallelScan<'m, 'v> {
     /// Parse chunks in parallel and collect ordered batches.
     pub fn collect_batches(self) -> Result<Vec<RawMftChunkBatch>, UsnError> {
         let worker_count = self.resolved_worker_count()?;
-        self.mft
-            .read_chunks(self.resolved_chunks(), self.scan_options, worker_count, self.scheduling)
+        self.mft.read_chunks(
+            self.resolved_chunks(),
+            self.scan_options,
+            worker_count,
+            self.scheduling,
+        )
     }
 
     /// Parse chunks in parallel and visit ordered batches.

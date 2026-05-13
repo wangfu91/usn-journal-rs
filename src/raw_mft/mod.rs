@@ -31,6 +31,7 @@
 //! * Reading the volume requires Administrator privileges.
 
 mod attr_list;
+mod attr_list_profile;
 mod bootstrap;
 mod chunk_plan;
 mod entry_build;
@@ -42,6 +43,7 @@ mod layout;
 mod options;
 mod parallel;
 mod reader;
+mod schedule_profile;
 mod serial;
 #[cfg(test)]
 mod tests;

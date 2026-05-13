@@ -1,22 +1,50 @@
 //! Chunk planning and chunk-local operations for parallel raw-MFT scans.
 
-use std::num::NonZeroUsize;
+use std::{num::NonZeroUsize, time::Instant};
+
+use log::debug;
 
 use crate::{
     errors::UsnError,
     raw_mft::{
         RawMft,
-        attr_list::{enrich_batch_from_attr_list, should_enrich_batch_from_attr_list},
+        attr_list::{
+            PreparedBatchAttrListEnrichment, apply_prepared_batch_attr_list_enrichment,
+            enrich_batch_from_attr_list, enrich_batch_from_attr_list_for_summary,
+            prepare_batch_attr_list_enrichment, should_enrich_batch_from_attr_list,
+            should_enrich_batch_from_attr_list_for_summary,
+        },
+        attr_list_profile,
         chunk_plan::{self, RawMftChunkPlanOptions, RawMftWorkChunk},
         entry_build::{RawMftBatchEntry, RawMftBatchScratch, RawMftChunkBatch},
         io::VolumeReader,
+        options::AttrListBatchMode,
         options::RawMftScanOptions,
+        reader::read_batch_record_raw,
         serial::engine::{SerialParseState, next_record_output},
     },
 };
 
-use super::executor;
 use super::ChunkScheduling;
+use super::executor;
+
+enum ParsedBatchRecord {
+    Ready(RawMftBatchEntry),
+    Deferred(PreparedBatchAttrListEnrichment),
+}
+
+enum ChunkBatchEntrySlot {
+    Ready(RawMftBatchEntry),
+    Deferred(usize),
+}
+
+struct ScheduledBatchExtensionLoad {
+    ordinal: usize,
+    offset_key: u64,
+    task_index: usize,
+    ext_index: usize,
+    ext_record_number: u64,
+}
 
 impl<'a> RawMft<'a> {
     /// Build deterministic logical work chunks for raw `$MFT` parsing.
@@ -93,34 +121,183 @@ impl<'a> RawMft<'a> {
         F: FnMut(RawMftBatchEntry) -> Result<(), UsnError>,
     {
         let mut scan = SerialParseState::for_range(self, options, start_record, end_record);
+        let deferred_attr_list = options.deferred_chunk_attr_list_enrichment();
+        let attr_list_batch_mode = options.attr_list_batch_mode();
+        let collect_dos_file_name_links = options.entry.collect_dos_file_name_links;
+        let sort_attr_list_extensions_by_offset = options.sort_attr_list_extensions_by_offset();
+        let mut entry_slots = Vec::new();
+        let mut deferred_tasks = Vec::new();
+        let mut window_record_count = 0usize;
+        let deferred_window_limit = options.deferred_chunk_attr_list_window_records();
 
-        while let Some(entry) =
-            next_record_output(self, &mut scan, reader, |record| {
-                let record_number = record.number;
+        while let Some(entry) = next_record_output(self, &mut scan, reader, |record| {
+            let record_number = record.number;
+            attr_list_profile::record_scanned_record();
 
-                let (mut entry, attr_list) = RawMftBatchScratch::from_record_with_attr_list(
-                    record,
-                    options.entry.collect_dos_file_name_links,
-                );
+            let (entry, attr_list) = RawMftBatchScratch::from_record_with_attr_list(
+                record,
+                collect_dos_file_name_links,
+            );
 
-                if let Some(attr_list) = attr_list
-                    && should_enrich_batch_from_attr_list(&entry)
-                {
-                    let _ = enrich_batch_from_attr_list(
-                        &mut entry,
-                        attr_list,
-                        record_number,
-                        attr_reader,
-                        &self.boot,
-                        self.extent_map.as_ref(),
-                        options.entry.collect_dos_file_name_links,
-                    );
+            if let Some(attr_list) = attr_list {
+                attr_list_profile::record_attr_list_present(&attr_list);
+                let should_enrich = match attr_list_batch_mode {
+                    AttrListBatchMode::Full => should_enrich_batch_from_attr_list(&entry),
+                    AttrListBatchMode::SummaryOnly => {
+                        should_enrich_batch_from_attr_list_for_summary(&entry)
+                    }
+                };
+                attr_list_profile::record_need_check(should_enrich);
+
+                if should_enrich {
+                    if !deferred_attr_list {
+                        attr_list_profile::set_current_enrichment_base_context(
+                            record.volume_offset,
+                            start_record,
+                            end_record,
+                        );
+                        let mut entry = entry;
+                        if attr_list_profile::is_enabled() {
+                            let started = Instant::now();
+                            let stats = match attr_list_batch_mode {
+                                AttrListBatchMode::Full => enrich_batch_from_attr_list(
+                                    &mut entry,
+                                    attr_list,
+                                    record_number,
+                                    attr_reader,
+                                    &self.boot,
+                                    self.extent_map.as_ref(),
+                                    collect_dos_file_name_links,
+                                    sort_attr_list_extensions_by_offset,
+                                ),
+                                AttrListBatchMode::SummaryOnly => {
+                                    enrich_batch_from_attr_list_for_summary(
+                                        &mut entry,
+                                        attr_list,
+                                        record_number,
+                                        attr_reader,
+                                        &self.boot,
+                                        self.extent_map.as_ref(),
+                                        collect_dos_file_name_links,
+                                        sort_attr_list_extensions_by_offset,
+                                    )
+                                }
+                            };
+                            attr_list_profile::record_enrichment(stats, started.elapsed());
+                        } else {
+                            match attr_list_batch_mode {
+                                AttrListBatchMode::Full => {
+                                    let _ = enrich_batch_from_attr_list(
+                                        &mut entry,
+                                        attr_list,
+                                        record_number,
+                                        attr_reader,
+                                        &self.boot,
+                                        self.extent_map.as_ref(),
+                                        collect_dos_file_name_links,
+                                        sort_attr_list_extensions_by_offset,
+                                    );
+                                }
+                                AttrListBatchMode::SummaryOnly => {
+                                    let _ = enrich_batch_from_attr_list_for_summary(
+                                        &mut entry,
+                                        attr_list,
+                                        record_number,
+                                        attr_reader,
+                                        &self.boot,
+                                        self.extent_map.as_ref(),
+                                        collect_dos_file_name_links,
+                                        sort_attr_list_extensions_by_offset,
+                                    );
+                                }
+                            }
+                        }
+
+                        return Ok(ParsedBatchRecord::Ready(entry.into_entry()));
+                    }
+
+                    return Ok(ParsedBatchRecord::Deferred(
+                        prepare_batch_attr_list_enrichment(
+                            entry,
+                            attr_list,
+                            record_number,
+                            record.volume_offset,
+                            attr_reader,
+                            &self.boot,
+                            attr_list_batch_mode,
+                        ),
+                    ));
                 }
+            }
 
-                Ok(entry.into_entry())
-            })?
-        {
-            visit(entry)?;
+            Ok(ParsedBatchRecord::Ready(entry.into_entry()))
+        })? {
+            if !deferred_attr_list {
+                match entry {
+                    ParsedBatchRecord::Ready(entry) => visit(entry)?,
+                    ParsedBatchRecord::Deferred(task) => {
+                        let task_index = deferred_tasks.len();
+                        deferred_tasks.push(Some(task));
+                        entry_slots.push(ChunkBatchEntrySlot::Deferred(task_index));
+                        flush_batch_entry_window(
+                            self,
+                            options,
+                            start_record,
+                            end_record,
+                            attr_reader,
+                            &mut entry_slots,
+                            &mut deferred_tasks,
+                            &mut visit,
+                        )?;
+                    }
+                }
+                continue;
+            }
+
+            match entry {
+                ParsedBatchRecord::Ready(entry) => {
+                    if deferred_tasks.is_empty() {
+                        visit(entry)?;
+                        continue;
+                    }
+                    entry_slots.push(ChunkBatchEntrySlot::Ready(entry));
+                }
+                ParsedBatchRecord::Deferred(task) => {
+                    let task_index = deferred_tasks.len();
+                    deferred_tasks.push(Some(task));
+                    entry_slots.push(ChunkBatchEntrySlot::Deferred(task_index));
+                }
+            }
+
+            if !deferred_tasks.is_empty() {
+                window_record_count += 1;
+                if window_record_count >= deferred_window_limit {
+                    flush_batch_entry_window(
+                        self,
+                        options,
+                        start_record,
+                        end_record,
+                        attr_reader,
+                        &mut entry_slots,
+                        &mut deferred_tasks,
+                        &mut visit,
+                    )?;
+                    window_record_count = 0;
+                }
+            }
+        }
+
+        if deferred_attr_list && (!entry_slots.is_empty() || !deferred_tasks.is_empty()) {
+            flush_batch_entry_window(
+                self,
+                options,
+                start_record,
+                end_record,
+                attr_reader,
+                &mut entry_slots,
+                &mut deferred_tasks,
+                &mut visit,
+            )?;
         }
 
         Ok(())
@@ -280,4 +457,114 @@ impl<'a> RawMft<'a> {
         })?;
         Ok(ordered_batches)
     }
+}
+
+fn flush_batch_entry_window<F>(
+    mft: &RawMft<'_>,
+    options: &RawMftScanOptions,
+    start_record: u64,
+    end_record: u64,
+    attr_reader: &mut VolumeReader,
+    entry_slots: &mut Vec<ChunkBatchEntrySlot>,
+    deferred_tasks: &mut Vec<Option<PreparedBatchAttrListEnrichment>>,
+    visit: &mut F,
+) -> Result<(), UsnError>
+where
+    F: FnMut(RawMftBatchEntry) -> Result<(), UsnError>,
+{
+    if !deferred_tasks.is_empty() {
+        let deferred_started = Instant::now();
+        let mut load_plan = build_scheduled_batch_extension_loads(
+            deferred_tasks,
+            mft.extent_map.as_ref(),
+            options.sort_attr_list_extensions_by_offset(),
+        );
+        for scheduled in load_plan.drain(..) {
+            let Some(task) = deferred_tasks[scheduled.task_index].as_mut() else {
+                continue;
+            };
+            attr_list_profile::set_current_enrichment_base_context(
+                task.base_record_offset,
+                start_record,
+                end_record,
+            );
+            let load_started = Instant::now();
+            let _extension_scope = attr_list_profile::enter_extension_load_scope();
+            let load_result = read_batch_record_raw(
+                attr_reader,
+                &mft.boot,
+                mft.extent_map.as_ref(),
+                scheduled.ext_record_number,
+                options.entry.collect_dos_file_name_links,
+            )
+            .map(|result| result.map(|(entry, _)| entry));
+            attr_list_profile::record_extension_record_load_attempt(load_started.elapsed());
+            match load_result {
+                Ok(Some(ext_entry)) => {
+                    task.loaded_extensions[scheduled.ext_index] = Some(ext_entry)
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    debug!(
+                        "raw_mft: record {}: failed to load extension record {}: {}",
+                        task.base_record_number, scheduled.ext_record_number, error,
+                    );
+                }
+            }
+        }
+        for task in deferred_tasks.iter_mut().flatten() {
+            let stats = apply_prepared_batch_attr_list_enrichment(task);
+            attr_list_profile::record_enrichment(stats, std::time::Duration::ZERO);
+        }
+        attr_list_profile::record_enrichment_wall_time(deferred_started.elapsed());
+    }
+
+    for slot in entry_slots.drain(..) {
+        match slot {
+            ChunkBatchEntrySlot::Ready(entry) => visit(entry)?,
+            ChunkBatchEntrySlot::Deferred(task_index) => {
+                let task = deferred_tasks[task_index]
+                    .take()
+                    .expect("deferred batch task should still be present");
+                visit(task.entry.into_entry())?;
+            }
+        }
+    }
+    deferred_tasks.clear();
+    Ok(())
+}
+
+fn build_scheduled_batch_extension_loads(
+    deferred_tasks: &[Option<PreparedBatchAttrListEnrichment>],
+    extent_map: &crate::raw_mft::layout::extent::ExtentMap,
+    sort_by_offset: bool,
+) -> Vec<ScheduledBatchExtensionLoad> {
+    let mut load_plan = Vec::new();
+    for (task_index, task) in deferred_tasks.iter().enumerate() {
+        let Some(task) = task.as_ref() else {
+            continue;
+        };
+        for (ext_index, &ext_record_number) in task.ext_records.iter().enumerate() {
+            let offset_key = if sort_by_offset {
+                match extent_map.record_offset(ext_record_number) {
+                    Ok(Some(offset)) => offset,
+                    Ok(None) => u64::MAX - 1,
+                    Err(_) => u64::MAX,
+                }
+            } else {
+                0
+            };
+            load_plan.push(ScheduledBatchExtensionLoad {
+                ordinal: load_plan.len(),
+                offset_key,
+                task_index,
+                ext_index,
+                ext_record_number,
+            });
+        }
+    }
+    if sort_by_offset {
+        load_plan.sort_unstable_by_key(|scheduled| (scheduled.offset_key, scheduled.ordinal));
+    }
+    load_plan
 }

@@ -2,8 +2,8 @@
 
 use std::path::Path;
 
-use usn_journal_rs::journal::{UsnEntry, UsnJournal};
 use usn_journal_rs::Filetime;
+use usn_journal_rs::journal::{UsnEntry, UsnJournal};
 use usn_journal_rs::path::PathResolver;
 use usn_journal_rs::volume::Volume;
 

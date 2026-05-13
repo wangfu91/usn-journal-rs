@@ -5,11 +5,12 @@
 
 use std::ffi::OsString;
 use std::os::windows::ffi::OsStringExt;
+use std::time::Instant;
 
 use crate::{
     Fid, FileAttributes, Filetime,
     raw_mft::{
-        RawMftWorkChunk,
+        RawMftWorkChunk, attr_list_profile,
         layout::{
             attribute::{FileNameNamespace, NtfsAttribute, file_attr_flags},
             record::FileRecord,
@@ -170,17 +171,31 @@ impl RawMftBatchEntryBuilder {
         if let Some((header, name_units)) = attr.as_file_name() {
             let namespace = FileNameNamespace::from_u8(header.namespace);
             let parent_reference = Fid::new(header.parent_directory_reference);
-            let file_name = OsString::from_wide(name_units);
-            let should_replace = self.file_names.consider(
-                current_file_name(
-                    self.scratch.entry.namespace,
-                    self.scratch.entry.parent_reference,
-                    &self.scratch.entry.file_name,
-                ),
-                namespace,
-                parent_reference,
-                &file_name,
+            let current = current_file_name(
+                self.scratch.entry.namespace,
+                self.scratch.entry.parent_reference,
+                &self.scratch.entry.file_name,
             );
+            if !self
+                .file_names
+                .should_materialize_candidate(current, namespace, parent_reference)
+            {
+                return;
+            }
+            let file_name = if attr_list_profile::is_extension_load_active() {
+                let started = Instant::now();
+                let file_name = OsString::from_wide(name_units);
+                attr_list_profile::record_extension_file_name_materialized(
+                    name_units.len(),
+                    started.elapsed(),
+                );
+                file_name
+            } else {
+                OsString::from_wide(name_units)
+            };
+            let should_replace = self
+                .file_names
+                .consider(current, namespace, parent_reference, &file_name);
             if should_replace {
                 self.scratch.entry.namespace = namespace;
                 self.scratch.entry.file_name = file_name;

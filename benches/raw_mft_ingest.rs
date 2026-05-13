@@ -27,15 +27,18 @@
 //! For low-noise runs, keep worker count / chunk size fixed, close disk-heavy
 //! background work, and benchmark the same drive state repeatedly.
 
-use std::{num::NonZeroUsize, time::{Duration, Instant}};
+use std::{
+    num::NonZeroUsize,
+    time::{Duration, Instant},
+};
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use usn_journal_rs::raw_mft::{
     RawMft,
     ingest_support::{
-        self, BenchScheduling, bench_config, include_serial_bench, open_volume,
-        print_bench_config, print_summary_enabled, run_parallel_ingest, run_serial_ingest,
-        scheduling_sweep_values, summary_run_count, worker_sweep_values, workload_shape,
+        self, BenchScheduling, bench_config, include_serial_bench, open_volume, print_bench_config,
+        print_summary_enabled, run_parallel_ingest, run_serial_ingest, scheduling_sweep_values,
+        summary_run_count, worker_sweep_values, workload_shape,
     },
 };
 
@@ -43,6 +46,16 @@ use usn_journal_rs::raw_mft::{
 struct SummaryCase {
     workers: NonZeroUsize,
     scheduling: BenchScheduling,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct SummaryRow {
+    elapsed: Duration,
+    top_hit_rate: Option<f64>,
+    top_half_hits: Option<(usize, usize)>,
+    top_quarter_hits: Option<(usize, usize)>,
+    missed_actual: Option<usize>,
+    worst_pred_rank: Option<usize>,
 }
 
 fn raw_mft_ingest_benchmarks(c: &mut Criterion) {
@@ -61,10 +74,7 @@ fn raw_mft_ingest_benchmarks(c: &mut Criterion) {
     let shape = workload_shape(&mft, &config);
     eprintln!(
         "raw_mft_ingest workload: record_count={} planned_chunks={} file_record_size={} cluster_size={}",
-        shape.record_count,
-        shape.planned_chunks,
-        shape.file_record_size,
-        shape.cluster_size,
+        shape.record_count, shape.planned_chunks, shape.file_record_size, shape.cluster_size,
     );
     maybe_print_summary_table(&mft, &config);
 
@@ -146,6 +156,9 @@ fn raw_mft_ingest_benchmarks(c: &mut Criterion) {
 fn scheduling_label(scheduling: BenchScheduling) -> &'static str {
     match scheduling {
         BenchScheduling::Dynamic => "dynamic",
+        BenchScheduling::DynamicPhysicalOrder => "dynamic-physical-order",
+        BenchScheduling::DynamicCostBanded => "dynamic-cost-banded",
+        BenchScheduling::DynamicObservedAdaptive => "dynamic-observed-adaptive",
         BenchScheduling::Contiguous => "contiguous",
     }
 }
@@ -161,25 +174,30 @@ fn maybe_print_summary_table(mft: &RawMft<'_>, config: &ingest_support::BenchCon
         "raw_mft_ingest one-shot summary (median of {} run(s); wall-clock only, not Criterion confidence intervals):",
         run_count.get()
     );
-    eprintln!("| workers | scheduling | elapsed |");
-    eprintln!("| ------: | ---------- | ------: |");
+    eprintln!("| workers | scheduling | elapsed | top-hit | top-half | top-quarter | missed | worst-pred-rank |");
+    eprintln!("| ------: | ---------- | ------: | -------: | -------: | ----------: | -----: | ---------------: |");
 
     for case in cases {
         let case_config = config
             .with_worker_count(case.workers)
             .with_scheduling(case.scheduling);
-        match median_elapsed(run_count, || run_parallel_ingest(mft, &case_config)) {
-            Ok(elapsed) => {
+        match median_summary_row(run_count, || summary_row_for_case(mft, &case_config, case.scheduling)) {
+            Ok(row) => {
                 eprintln!(
-                    "| {} | {} | {} |",
+                    "| {} | {} | {} | {} | {} | {} | {} | {} |",
                     case.workers,
                     scheduling_label(case.scheduling),
-                    format_duration(elapsed),
+                    format_duration(row.elapsed),
+                    format_percent_option(row.top_hit_rate),
+                    format_count_pair_option(row.top_half_hits),
+                    format_count_pair_option(row.top_quarter_hits),
+                    format_usize_option(row.missed_actual),
+                    format_usize_option(row.worst_pred_rank),
                 );
             }
             Err(error) => {
                 eprintln!(
-                    "| {} | {} | error: {} |",
+                    "| {} | {} | error: {} | - | - | - | - | - |",
                     case.workers,
                     scheduling_label(case.scheduling),
                     error,
@@ -189,16 +207,46 @@ fn maybe_print_summary_table(mft: &RawMft<'_>, config: &ingest_support::BenchCon
     }
 }
 
+fn summary_row_for_case(
+    mft: &RawMft<'_>,
+    config: &ingest_support::BenchConfig,
+    scheduling: BenchScheduling,
+) -> Result<SummaryRow, usn_journal_rs::errors::UsnError> {
+    let start = Instant::now();
+    let scheduling_profile = if matches!(scheduling, BenchScheduling::DynamicObservedAdaptive) {
+        let (_, profiles) = ingest_support::run_parallel_ingest_with_profiles(mft, config, false, true)?;
+        profiles.scheduling
+    } else {
+        let summary = run_parallel_ingest(mft, config)?;
+        std::hint::black_box(summary);
+        None
+    };
+
+    Ok(SummaryRow {
+        elapsed: start.elapsed(),
+        top_hit_rate: scheduling_profile.as_ref().map(|profile| profile.actual_top_hit_rate()),
+        top_half_hits: scheduling_profile
+            .as_ref()
+            .map(|profile| (profile.actual_top_in_predicted_top_half, profile.compared_top_k)),
+        top_quarter_hits: scheduling_profile
+            .as_ref()
+            .map(|profile| (profile.actual_top_in_predicted_top_quarter, profile.compared_top_k)),
+        missed_actual: scheduling_profile
+            .as_ref()
+            .map(|profile| profile.actual_top_missed_by_predicted_top_k),
+        worst_pred_rank: scheduling_profile
+            .as_ref()
+            .map(|profile| profile.actual_top_worst_predicted_rank),
+    })
+}
+
 fn summary_cases(config: &ingest_support::BenchConfig) -> Vec<SummaryCase> {
     let mut cases = Vec::new();
     push_unique_case(
         &mut cases,
         SummaryCase {
             workers: config.worker_count,
-            scheduling: match config.scheduling_label() {
-                "contiguous" => BenchScheduling::Contiguous,
-                _ => BenchScheduling::Dynamic,
-            },
+            scheduling: config.scheduling_mode(),
         },
     );
 
@@ -207,10 +255,7 @@ fn summary_cases(config: &ingest_support::BenchConfig) -> Vec<SummaryCase> {
             &mut cases,
             SummaryCase {
                 workers: worker_count,
-                scheduling: match config.scheduling_label() {
-                    "contiguous" => BenchScheduling::Contiguous,
-                    _ => BenchScheduling::Dynamic,
-                },
+                scheduling: config.scheduling_mode(),
             },
         );
     }
@@ -234,19 +279,19 @@ fn push_unique_case(cases: &mut Vec<SummaryCase>, case: SummaryCase) {
     }
 }
 
-fn median_elapsed<F>(run_count: NonZeroUsize, mut f: F) -> Result<Duration, usn_journal_rs::errors::UsnError>
+fn median_summary_row<F>(
+    run_count: NonZeroUsize,
+    mut f: F,
+) -> Result<SummaryRow, usn_journal_rs::errors::UsnError>
 where
-    F: FnMut() -> Result<ingest_support::BenchSummary, usn_journal_rs::errors::UsnError>,
+    F: FnMut() -> Result<SummaryRow, usn_journal_rs::errors::UsnError>,
 {
-    let mut durations = Vec::with_capacity(run_count.get());
+    let mut rows = Vec::with_capacity(run_count.get());
     for _ in 0..run_count.get() {
-        let start = Instant::now();
-        let summary = f()?;
-        std::hint::black_box(summary);
-        durations.push(start.elapsed());
+        rows.push(f()?);
     }
-    durations.sort_unstable();
-    Ok(durations[durations.len() / 2])
+    rows.sort_unstable_by(|left, right| left.elapsed.cmp(&right.elapsed));
+    Ok(rows[rows.len() / 2])
 }
 
 fn format_duration(duration: Duration) -> String {
@@ -255,6 +300,24 @@ fn format_duration(duration: Duration) -> String {
     } else {
         format!("{:.1} ms", duration.as_secs_f64() * 1_000.0)
     }
+}
+
+fn format_percent_option(value: Option<f64>) -> String {
+    value
+        .map(|value| format!("{:.2}%", value * 100.0))
+        .unwrap_or_else(|| "-".to_owned())
+}
+
+fn format_count_pair_option(value: Option<(usize, usize)>) -> String {
+    value
+        .map(|(hits, total)| format!("{hits}/{total}"))
+        .unwrap_or_else(|| "-".to_owned())
+}
+
+fn format_usize_option(value: Option<usize>) -> String {
+    value
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "-".to_owned())
 }
 
 criterion_group! {

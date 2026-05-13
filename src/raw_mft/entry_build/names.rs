@@ -34,6 +34,21 @@ impl FileNameSelector {
         }
     }
 
+    /// Return whether a candidate name needs materialization at all.
+    ///
+    /// When DOS links are disabled, a same-parent DOS short name can be
+    /// rejected up front as soon as a non-DOS name already exists.
+    pub(super) fn should_materialize_candidate(
+        &self,
+        current: Option<CurrentFileName<'_>>,
+        candidate_namespace: FileNameNamespace,
+        candidate_parent: Fid,
+    ) -> bool {
+        !(!self.collect_dos_file_name_links
+            && candidate_namespace == FileNameNamespace::Dos
+            && self.has_non_dos_file_name_link(current, candidate_parent))
+    }
+
     /// Fold one `$FILE_NAME` candidate into the retained-link set and report
     /// whether it becomes the new best name.
     pub(super) fn consider(
@@ -43,10 +58,7 @@ impl FileNameSelector {
         candidate_parent: Fid,
         candidate_name: &OsString,
     ) -> bool {
-        if !self.collect_dos_file_name_links
-            && candidate_namespace == FileNameNamespace::Dos
-            && self.has_non_dos_file_name_link(current, candidate_parent)
-        {
+        if !self.should_materialize_candidate(current, candidate_namespace, candidate_parent) {
             return false;
         }
 
@@ -186,6 +198,20 @@ mod tests {
             &name("FILE~1.TXT"),
         ));
         assert!(selector.into_links().is_empty());
+    }
+
+    #[test]
+    fn suppressed_dos_candidate_can_be_rejected_before_materialization() {
+        let parent = Fid::new(5);
+        let current_name = name("file.txt");
+        let mut selector = FileNameSelector::new(false);
+        assert!(selector.consider(None, FileNameNamespace::Win32, parent, &current_name));
+
+        assert!(!selector.should_materialize_candidate(
+            current_file_name(FileNameNamespace::Win32, parent, &current_name),
+            FileNameNamespace::Dos,
+            parent,
+        ));
     }
 
     #[test]
