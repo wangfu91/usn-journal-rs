@@ -62,7 +62,7 @@ fn all_three_resolvers_agree() {
     }
 
     // Build the three resolvers.
-    let mut resolver1 = PathResolver::new(&volume);
+    let mut resolver1 = PathResolver::new(&volume).without_lru_cache();
 
     let mut resolver2 = PathResolver::new(&volume)
         .with_lru_cache(NonZeroUsize::new(1024).expect("1024 is non-zero"));

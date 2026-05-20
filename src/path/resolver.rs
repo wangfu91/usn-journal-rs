@@ -10,6 +10,13 @@ use super::{
     resolve::{DirLruCache, resolve_path, resolve_path_with_cache},
 };
 
+/// Default number of directory paths cached by [`PathResolver::new`].
+#[allow(clippy::useless_nonzero_new_unchecked)]
+pub const DEFAULT_LRU_CACHE_CAPACITY: NonZeroUsize = unsafe {
+    // SAFETY: `4096` is a non-zero constant.
+    NonZeroUsize::new_unchecked(4096)
+};
+
 /// Resolves file paths from file IDs on an NTFS/ReFS volume.
 ///
 /// Use [`PathResolver::new`] to configure and construct an instance:
@@ -44,13 +51,16 @@ pub struct PathResolver<'a> {
 }
 
 impl<'a> PathResolver<'a> {
-    /// Create a resolver with the given `volume` and no caching layers. Paths will be resolved via `OpenFileById` syscalls on demand.
-    /// Use `with_lru_cache` and `with_in_memory_tree` to add caching layers.    
+    /// Create a resolver with the given `volume` and the default LRU directory cache.
+    ///
+    /// Use [`Self::with_lru_cache`] to resize the cache,
+    /// [`Self::without_lru_cache`] to force uncached syscall resolution, or
+    /// [`Self::with_in_memory_tree`] to add the raw-`$MFT` directory tree.
     #[must_use]
     pub fn new(volume: &'a Volume) -> Self {
         Self {
             volume,
-            dir_fid_path_cache: None,
+            dir_fid_path_cache: Some(LruCache::new(DEFAULT_LRU_CACHE_CAPACITY)),
             buffer: RefCell::new(Vec::new()),
             in_memory_tree: None,
         }
@@ -60,6 +70,16 @@ impl<'a> PathResolver<'a> {
     #[must_use]
     pub fn with_lru_cache(mut self, capacity: NonZeroUsize) -> Self {
         self.dir_fid_path_cache = Some(LruCache::new(capacity));
+        self
+    }
+
+    /// Disable the LRU directory path cache.
+    ///
+    /// Resolution still uses the in-memory directory tree when one is
+    /// configured; otherwise each lookup falls back to direct syscalls.
+    #[must_use]
+    pub fn without_lru_cache(mut self) -> Self {
+        self.dir_fid_path_cache = None;
         self
     }
 

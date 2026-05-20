@@ -299,17 +299,17 @@ fn resolve_path_failure() {
 }
 
 #[test]
-fn resolver_default_has_no_cache_and_no_tree() {
+fn resolver_default_has_lru_cache_and_no_tree() {
     let volume = create_mock_volume();
     let resolver = PathResolver::new(&volume);
-    assert!(resolver.dir_fid_path_cache.is_none());
+    assert!(resolver.dir_fid_path_cache.is_some());
     assert!(resolver.in_memory_tree.is_none());
 }
 
 #[test]
 fn resolver_without_lru_cache_disables_cache() {
     let volume = create_mock_volume();
-    let resolver = PathResolver::new(&volume);
+    let resolver = PathResolver::new(&volume).without_lru_cache();
     assert!(resolver.dir_fid_path_cache.is_none());
     assert!(resolver.in_memory_tree.is_none());
 }

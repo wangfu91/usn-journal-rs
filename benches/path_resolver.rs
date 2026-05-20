@@ -97,7 +97,7 @@ fn resolver_syscall_no_cache(bencher: Bencher) {
     }
 
     bencher.bench_local(|| {
-        let mut resolver = PathResolver::new(&volume);
+        let mut resolver = PathResolver::new(&volume).without_lru_cache();
         let mut count = 0u64;
 
         for entry in &entries {
