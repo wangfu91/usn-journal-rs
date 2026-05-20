@@ -15,8 +15,8 @@ use crate::{
     },
 };
 
-use super::executor;
 use super::ChunkScheduling;
+use super::executor;
 
 impl<'a> RawMft<'a> {
     /// Build deterministic logical work chunks for raw `$MFT` parsing.
@@ -94,32 +94,30 @@ impl<'a> RawMft<'a> {
     {
         let mut scan = SerialParseState::for_range(self, options, start_record, end_record);
 
-        while let Some(entry) =
-            next_record_output(self, &mut scan, reader, |record| {
-                let record_number = record.number;
+        while let Some(entry) = next_record_output(self, &mut scan, reader, |record| {
+            let record_number = record.number;
 
-                let (mut entry, attr_list) = RawMftBatchScratch::from_record_with_attr_list(
-                    record,
+            let (mut entry, attr_list) = RawMftBatchScratch::from_record_with_attr_list(
+                record,
+                options.entry.collect_dos_file_name_links,
+            );
+
+            if let Some(attr_list) = attr_list
+                && should_enrich_batch_from_attr_list(&entry)
+            {
+                let _ = enrich_batch_from_attr_list(
+                    &mut entry,
+                    attr_list,
+                    record_number,
+                    attr_reader,
+                    &self.boot,
+                    self.extent_map.as_ref(),
                     options.entry.collect_dos_file_name_links,
                 );
+            }
 
-                if let Some(attr_list) = attr_list
-                    && should_enrich_batch_from_attr_list(&entry)
-                {
-                    let _ = enrich_batch_from_attr_list(
-                        &mut entry,
-                        attr_list,
-                        record_number,
-                        attr_reader,
-                        &self.boot,
-                        self.extent_map.as_ref(),
-                        options.entry.collect_dos_file_name_links,
-                    );
-                }
-
-                Ok(entry.into_entry())
-            })?
-        {
+            Ok(entry.into_entry())
+        })? {
             visit(entry)?;
         }
 

@@ -10,16 +10,11 @@ use std::{
 
 use rustc_hash::FxHashMap;
 
-use crate::{
-    Fid,
-    errors::UsnError,
-    volume::Volume,
-};
+use crate::{Fid, errors::UsnError, volume::Volume};
 
 use super::{
-    FileNameNamespace, RawMft, RawMftBatchEntry, RawMftChunkPlanOptions, RawMftEntry,
-    RawMftLink, RawMftScanOptions, RawMftWorkChunk,
-    parallel::ChunkScheduling,
+    FileNameNamespace, RawMft, RawMftBatchEntry, RawMftChunkPlanOptions, RawMftEntry, RawMftLink,
+    RawMftScanOptions, RawMftWorkChunk, parallel::ChunkScheduling,
 };
 
 /// Default main read buffer size for the parallel ingest path.
@@ -238,7 +233,10 @@ pub fn print_bench_config(config: &BenchConfig) {
             .map(|value| value.to_string())
             .unwrap_or_else(|| "full".to_owned()),
     );
-    eprintln!("raw_mft_ingest bench scheduling: {}", config.scheduling_label());
+    eprintln!(
+        "raw_mft_ingest bench scheduling: {}",
+        config.scheduling_label()
+    );
 }
 
 /// Parse a comma-separated worker sweep list from the environment.
@@ -279,7 +277,9 @@ pub fn summary_run_count() -> NonZeroUsize {
 pub fn workload_shape(mft: &RawMft<'_>, config: &BenchConfig) -> BenchWorkloadShape {
     BenchWorkloadShape {
         record_count: mft.record_count(),
-        planned_chunks: mft.plan_chunks_with_options(config.chunk_plan_options()).len(),
+        planned_chunks: mft
+            .plan_chunks_with_options(config.chunk_plan_options())
+            .len(),
         file_record_size: mft.file_record_size(),
         cluster_size: mft.cluster_size(),
     }
@@ -434,7 +434,11 @@ fn ingest_raw_entry_partial(entry: RawMftBatchEntry, partial: &mut PartialIngest
     }
 
     let metadata = BenchNodeMeta {
-        size: if entry.is_directory { 0 } else { entry.real_size },
+        size: if entry.is_directory {
+            0
+        } else {
+            entry.real_size
+        },
         allocated_size: if entry.is_directory {
             0
         } else {
@@ -470,7 +474,11 @@ fn ingest_iter_entry(entry: RawMftEntry, targets: &mut BenchTargets<'_>) {
     }
 
     let metadata = BenchNodeMeta {
-        size: if entry.is_directory { 0 } else { entry.real_size },
+        size: if entry.is_directory {
+            0
+        } else {
+            entry.real_size
+        },
         allocated_size: if entry.is_directory {
             0
         } else {
@@ -628,7 +636,9 @@ fn parse_nonzero_usize_list(name: &str) -> Vec<NonZeroUsize> {
 }
 
 fn parse_bench_scheduling(value: Option<&str>, default: BenchScheduling) -> BenchScheduling {
-    value.and_then(parse_bench_scheduling_token).unwrap_or(default)
+    value
+        .and_then(parse_bench_scheduling_token)
+        .unwrap_or(default)
 }
 
 fn parse_bench_scheduling_token(value: &str) -> Option<BenchScheduling> {
@@ -682,5 +692,3 @@ mod tests {
         assert!(chunk_options.skip_unused());
     }
 }
-
-

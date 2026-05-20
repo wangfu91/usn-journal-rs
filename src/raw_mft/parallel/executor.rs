@@ -115,29 +115,23 @@ where
                     };
 
                 match scheduling {
-                    ChunkScheduling::Dynamic => {
-                        loop {
-                            let index = next_index.fetch_add(1, Ordering::Relaxed);
-                            if index >= chunks.len() {
-                                break;
-                            }
-
-                            let chunk = chunks[index];
-                            let result = work_chunk(
-                                &worker_mft,
-                                chunk,
-                                &options,
-                                &mut reader,
-                                &mut attr_reader,
-                            )
-                            .map(|result| (index, result));
-                            if tx.send(result).is_err() {
-                                break;
-                            }
+                    ChunkScheduling::Dynamic => loop {
+                        let index = next_index.fetch_add(1, Ordering::Relaxed);
+                        if index >= chunks.len() {
+                            break;
                         }
-                    }
+
+                        let chunk = chunks[index];
+                        let result =
+                            work_chunk(&worker_mft, chunk, &options, &mut reader, &mut attr_reader)
+                                .map(|result| (index, result));
+                        if tx.send(result).is_err() {
+                            break;
+                        }
+                    },
                     ChunkScheduling::Contiguous => {
-                        let (start, end) = contiguous_worker_range(chunks.len(), worker_count, worker_index);
+                        let (start, end) =
+                            contiguous_worker_range(chunks.len(), worker_count, worker_index);
                         for index in start..end {
                             let chunk = chunks[index];
                             let result = work_chunk(
@@ -171,7 +165,11 @@ where
 }
 
 /// Return the half-open chunk-index range assigned to one worker under contiguous scheduling.
-fn contiguous_worker_range(chunk_count: usize, worker_count: usize, worker_index: usize) -> (usize, usize) {
+fn contiguous_worker_range(
+    chunk_count: usize,
+    worker_count: usize,
+    worker_index: usize,
+) -> (usize, usize) {
     let base = chunk_count / worker_count;
     let extra = chunk_count % worker_count;
     let start = worker_index * base + worker_index.min(extra);

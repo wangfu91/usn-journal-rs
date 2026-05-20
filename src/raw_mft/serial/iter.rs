@@ -58,30 +58,25 @@ impl<'a> Iterator for RawMftIter<'a> {
     type Item = Result<RawMftEntry, UsnError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match next_record_output(
-            self.mft,
-            &mut self.scan,
-            &mut self.reader,
-            |record| {
-                let record_number = record.number;
-                let (mut entry, attr_list) =
-                    RawMftEntry::from_record_with_attr_list(record, self.build_options);
-                if let Some(attr_list) = attr_list
-                    && should_enrich_from_attr_list(&entry)
-                {
-                    let _ = enrich_from_attr_list(
-                        &mut entry,
-                        attr_list,
-                        record_number,
-                        &mut self.attr_reader,
-                        &self.mft.boot,
-                        self.mft.extent_map.as_ref(),
-                        self.build_options,
-                    );
-                }
-                Ok(entry)
-            },
-        ) {
+        match next_record_output(self.mft, &mut self.scan, &mut self.reader, |record| {
+            let record_number = record.number;
+            let (mut entry, attr_list) =
+                RawMftEntry::from_record_with_attr_list(record, self.build_options);
+            if let Some(attr_list) = attr_list
+                && should_enrich_from_attr_list(&entry)
+            {
+                let _ = enrich_from_attr_list(
+                    &mut entry,
+                    attr_list,
+                    record_number,
+                    &mut self.attr_reader,
+                    &self.mft.boot,
+                    self.mft.extent_map.as_ref(),
+                    self.build_options,
+                );
+            }
+            Ok(entry)
+        }) {
             Ok(Some(entry)) => Some(Ok(entry)),
             Ok(None) => None,
             Err(error) => Some(Err(error)),

@@ -27,15 +27,18 @@
 //! For low-noise runs, keep worker count / chunk size fixed, close disk-heavy
 //! background work, and benchmark the same drive state repeatedly.
 
-use std::{num::NonZeroUsize, time::{Duration, Instant}};
+use std::{
+    num::NonZeroUsize,
+    time::{Duration, Instant},
+};
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use usn_journal_rs::raw_mft::{
     RawMft,
     ingest_support::{
-        self, BenchScheduling, bench_config, include_serial_bench, open_volume,
-        print_bench_config, print_summary_enabled, run_parallel_ingest, run_serial_ingest,
-        scheduling_sweep_values, summary_run_count, worker_sweep_values, workload_shape,
+        self, BenchScheduling, bench_config, include_serial_bench, open_volume, print_bench_config,
+        print_summary_enabled, run_parallel_ingest, run_serial_ingest, scheduling_sweep_values,
+        summary_run_count, worker_sweep_values, workload_shape,
     },
 };
 
@@ -61,10 +64,7 @@ fn raw_mft_ingest_benchmarks(c: &mut Criterion) {
     let shape = workload_shape(&mft, &config);
     eprintln!(
         "raw_mft_ingest workload: record_count={} planned_chunks={} file_record_size={} cluster_size={}",
-        shape.record_count,
-        shape.planned_chunks,
-        shape.file_record_size,
-        shape.cluster_size,
+        shape.record_count, shape.planned_chunks, shape.file_record_size, shape.cluster_size,
     );
     maybe_print_summary_table(&mft, &config);
 
@@ -234,7 +234,10 @@ fn push_unique_case(cases: &mut Vec<SummaryCase>, case: SummaryCase) {
     }
 }
 
-fn median_elapsed<F>(run_count: NonZeroUsize, mut f: F) -> Result<Duration, usn_journal_rs::errors::UsnError>
+fn median_elapsed<F>(
+    run_count: NonZeroUsize,
+    mut f: F,
+) -> Result<Duration, usn_journal_rs::errors::UsnError>
 where
     F: FnMut() -> Result<ingest_support::BenchSummary, usn_journal_rs::errors::UsnError>,
 {
