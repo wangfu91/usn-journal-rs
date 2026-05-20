@@ -145,8 +145,6 @@ fn in_memory_tree_cycle_detection() {
     // 10 -> 11 -> 10 (cycle)
     tree.insert(10, 11, &utf16("a"));
     tree.insert(11, 10, &utf16("b"));
-    // The walker bounds at 256 steps; the chain visits 10, 11, 10, 11...
-    // forever and returns None.
     assert!(tree.resolve(Fid::new(10)).is_none());
 }
 

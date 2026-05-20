@@ -6,7 +6,7 @@
 
 use super::util::{NTFS_ROOT_RECORD_NUMBER, mask_fid_to_record_number};
 use crate::{Fid, raw_mft::RawMft};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::{
     ffi::OsString,
     os::windows::ffi::{OsStrExt, OsStringExt},
@@ -124,15 +124,16 @@ impl InMemoryDirTree {
         fid: Fid,
         drive: Option<char>,
     ) -> Option<PathBuf> {
-        // Maximum walk depth — far above the practical NTFS path-component
-        // limit (~64 segments) and below any realistic cycle length.
+        // Maximum walk depth: comfortably above practical NTFS path depths
+        // while still bounding malformed parent chains.
         const MAX_STEPS: usize = 256;
 
         let mut chain: Vec<&[u16]> = Vec::with_capacity(32);
         let mut current = mask_fid_to_record_number(fid)?;
+        let mut visited = FxHashSet::default();
         let mut steps = 0usize;
         loop {
-            if steps >= MAX_STEPS {
+            if steps >= MAX_STEPS || !visited.insert(current) {
                 return None;
             }
             steps += 1;

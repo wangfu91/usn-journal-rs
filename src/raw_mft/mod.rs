@@ -125,6 +125,7 @@ impl<'a> RawMft<'a> {
     /// Read a single record by number. Returns `Ok(None)` when the
     /// record falls in a sparse hole or is unused (and `skip_unused` is
     /// implied here).
+    #[must_use = "the returned record is discarded if not inspected"]
     pub fn read_record(&self, number: u64) -> Result<Option<RawMftEntry>, UsnError> {
         let mut reader = VolumeReader::new(self.volume.handle, self.boot.bytes_per_sector as u64)?;
         read_record_at(
@@ -138,6 +139,7 @@ impl<'a> RawMft<'a> {
 
     /// True if `record_number` is marked as in-use in the `$BITMAP`.
     /// Returns `true` when no bitmap is available.
+    #[must_use]
     pub fn bitmap_used(&self, record_number: u64) -> bool {
         if self.bitmap.is_empty() {
             return true;

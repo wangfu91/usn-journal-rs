@@ -154,6 +154,7 @@ impl<'m, 'v> RawMftParallelScan<'m, 'v> {
 
 impl<'v> RawMft<'v> {
     /// Configure a parallel raw `$MFT` chunk scan.
+    #[must_use = "parallel scan builders do nothing unless executed"]
     pub fn parallel(&self) -> RawMftParallelScan<'_, 'v> {
         RawMftParallelScan::new(self)
     }

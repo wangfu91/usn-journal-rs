@@ -31,11 +31,13 @@ pub struct RawMftIter<'a> {
 
 impl<'a> RawMft<'a> {
     /// Begin iteration with default options.
+    #[must_use = "iterators are lazy and do nothing unless consumed"]
     pub fn iter(&self) -> Result<RawMftIter<'_>, UsnError> {
         self.iter_with_options(RawMftScanOptions::default())
     }
 
     /// Begin iteration with custom options.
+    #[must_use = "iterators are lazy and do nothing unless consumed"]
     pub fn iter_with_options(
         &self,
         options: RawMftScanOptions,

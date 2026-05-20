@@ -22,6 +22,7 @@ impl<'a> Mft<'a> {
     ///
     /// The iterator yields `Result<MftEntry, UsnError>` items, allowing callers
     /// to handle individual entry errors gracefully without stopping iteration.
+    #[must_use = "iterators are lazy and do nothing unless consumed"]
     pub fn try_iter(&self) -> UsnResult<MftIter> {
         self.try_iter_with_options(MftIterOptions::default())
     }
@@ -30,6 +31,7 @@ impl<'a> Mft<'a> {
     ///
     /// The iterator yields `Result<MftEntry, UsnError>` items, allowing callers
     /// to handle individual entry errors gracefully without stopping iteration.
+    #[must_use = "iterators are lazy and do nothing unless consumed"]
     pub fn try_iter_with_options(&self, options: MftIterOptions) -> UsnResult<MftIter> {
         Ok(MftIter::new(
             self.volume.handle,

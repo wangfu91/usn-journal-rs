@@ -137,7 +137,9 @@ pub(super) fn read_nonresident(
     cluster_size: u64,
     data_size: u64,
 ) -> Result<Vec<u8>, UsnError> {
-    let mut out = Vec::with_capacity(data_size as usize);
+    let capacity = usize::try_from(data_size)
+        .map_err(|_| UsnError::InvalidDataRun("attribute data size exceeds addressable memory"))?;
+    let mut out = Vec::with_capacity(capacity);
     let mut remaining = data_size;
     for run in runs {
         if remaining == 0 {
@@ -153,18 +155,31 @@ pub(super) fn read_nonresident(
                     .checked_mul(cluster_size)
                     .ok_or(UsnError::InvalidDataRun("run offset overflow"))?;
                 let start = out.len();
-                out.resize(start + to_read as usize, 0);
+                let to_read = usize::try_from(to_read).map_err(|_| {
+                    UsnError::InvalidDataRun("run read size exceeds addressable memory")
+                })?;
+                let end = start
+                    .checked_add(to_read)
+                    .ok_or(UsnError::InvalidDataRun("run read buffer overflow"))?;
+                out.resize(end, 0);
                 reader.seek(SeekFrom::Start(offset)).map_err(io_err)?;
                 reader.read_exact(&mut out[start..]).map_err(io_err)?;
-                remaining -= to_read;
+                remaining -= to_read as u64;
             }
             DataRun::Sparse { clusters } => {
                 let bytes = clusters
                     .checked_mul(cluster_size)
                     .ok_or(UsnError::InvalidDataRun("run byte length overflow"))?;
                 let to_zero = bytes.min(remaining);
-                out.resize(out.len() + to_zero as usize, 0);
-                remaining -= to_zero;
+                let to_zero = usize::try_from(to_zero).map_err(|_| {
+                    UsnError::InvalidDataRun("sparse run size exceeds addressable memory")
+                })?;
+                let end = out
+                    .len()
+                    .checked_add(to_zero)
+                    .ok_or(UsnError::InvalidDataRun("sparse run buffer overflow"))?;
+                out.resize(end, 0);
+                remaining -= to_zero as u64;
             }
         }
     }
