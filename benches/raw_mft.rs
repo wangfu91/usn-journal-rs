@@ -63,7 +63,7 @@ fn raw_mft_iter(bencher: Bencher) {
     };
     bencher.bench_local(|| {
         let mut count = 0u64;
-        if let Ok(it) = mft.iter() {
+        if let Ok(it) = mft.try_iter() {
             for r in it.take(BENCH_RECORD_LIMIT) {
                 if r.is_ok() {
                     count += 1;
@@ -106,7 +106,7 @@ fn raw_mft_iter_with_path_resolver(bencher: Bencher) {
     bencher.bench_local(|| {
         let mut resolver = PathResolver::new(&volume);
         let mut count = 0u64;
-        if let Ok(it) = mft.iter() {
+        if let Ok(it) = mft.try_iter() {
             for r in it.flatten().take(BENCH_RECORD_LIMIT) {
                 let _ = resolver.resolve_path(&r);
                 count += 1;
@@ -130,7 +130,7 @@ fn raw_mft_iter_with_cached_resolver(bencher: Bencher) {
     bencher.bench_local(|| {
         let mut resolver = PathResolver::new(&volume);
         let mut count = 0u64;
-        if let Ok(it) = mft.iter() {
+        if let Ok(it) = mft.try_iter() {
             for r in it.flatten().take(BENCH_RECORD_LIMIT) {
                 let _ = resolver.resolve_path(&r);
                 count += 1;
@@ -161,7 +161,7 @@ fn raw_mft_buffer_size(bencher: Bencher, buffer_bytes: usize) {
             .buffer_bytes(buffer_bytes)
             .build();
         let mut count = 0u64;
-        if let Ok(it) = mft.iter_with_options(opts) {
+        if let Ok(it) = mft.try_iter_with_options(opts) {
             for r in it.take(BENCH_RECORD_LIMIT) {
                 if r.is_ok() {
                     count += 1;

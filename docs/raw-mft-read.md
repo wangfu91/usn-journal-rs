@@ -43,7 +43,7 @@ At a high level the implementation does this:
 
 The same parsing path is reused for:
 
-- serial scans via `RawMft::iter` / `RawMft::iter_with_options`,
+- serial scans via `RawMft::try_iter` / `RawMft::try_iter_with_options`,
 - single-chunk parsing via `RawMft::read_chunk`,
 - parallel batch parsing via `RawMft::parallel().for_each_batch`,
 - parallel folded parsing via `RawMft::parallel().fold_chunks`.
@@ -177,7 +177,7 @@ That state is cheap to clone into worker-local reader contexts later because the
 
 ## Serial read path
 
-The public serial path is `RawMft::iter_with_options`, which constructs `RawMftIter`.
+The public serial path is `RawMft::try_iter_with_options`, which constructs `RawMftIter`.
 
 ### Reader setup
 

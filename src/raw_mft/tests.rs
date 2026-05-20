@@ -60,7 +60,7 @@ mod integration_tests {
         );
         let mut resolved_any = false;
         // Cap the search so the test stays bounded on huge volumes.
-        for r in mft.iter().expect("iter").flatten().take(20_000) {
+        for r in mft.try_iter().expect("iter").flatten().take(20_000) {
             if r.is_directory || r.file_name.is_empty() {
                 continue;
             }
