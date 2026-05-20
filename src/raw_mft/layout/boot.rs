@@ -34,7 +34,7 @@ fn read_le_at<T, const N: usize>(
         .ok_or(UsnError::InvalidBootSector("boot sector truncated"))?;
     let array: [u8; N] = bytes
         .try_into()
-        .expect("slice length checked above; fixed-width read is bounded");
+        .map_err(|_| UsnError::InvalidBootSector("boot sector field conversion failed"))?;
     Ok(from_le_bytes(array))
 }
 

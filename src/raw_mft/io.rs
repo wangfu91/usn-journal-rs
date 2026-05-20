@@ -119,8 +119,13 @@ impl VolumeReader {
         if self.buf_len == 0 {
             return false;
         }
-        let buf_end = self.buf_pos + self.buf_len as u64;
-        position >= self.buf_pos && position.saturating_add(n as u64) <= buf_end
+        let Some(buf_end) = self.buf_pos.checked_add(self.buf_len as u64) else {
+            return false;
+        };
+        position >= self.buf_pos
+            && position
+                .checked_add(n as u64)
+                .is_some_and(|end| end <= buf_end)
     }
 
     /// Borrow a mutable view of `len` bytes at the given volume offset
@@ -134,9 +139,14 @@ impl VolumeReader {
         if !self.buf_contains(offset, len) {
             // If the requested range can't fit in the buffer at all,
             // grow the buffer to a sector-aligned size that holds it.
-            let needed = (len as u64).div_ceil(self.sector_size) * self.sector_size;
-            if (needed as usize) > self.buf.len() {
-                self.buf.resize(needed as usize, 0);
+            let needed = (len as u64)
+                .div_ceil(self.sector_size)
+                .checked_mul(self.sector_size)
+                .ok_or_else(|| io::Error::other("borrow buffer size overflow"))?;
+            let needed = usize::try_from(needed)
+                .map_err(|_| io::Error::other("borrow buffer size exceeds addressable memory"))?;
+            if needed > self.buf.len() {
+                self.buf.resize(needed, 0);
             }
             let sector_pos = self.round_down(offset);
             self.refill(sector_pos)?;
@@ -148,7 +158,9 @@ impl VolumeReader {
             }
         }
         let inner_off = (offset - self.buf_pos) as usize;
-        self.position = offset + len as u64;
+        self.position = offset
+            .checked_add(len as u64)
+            .ok_or_else(|| io::Error::other("borrow position overflow"))?;
         Ok(&mut self.buf[inner_off..inner_off + len])
     }
 }
