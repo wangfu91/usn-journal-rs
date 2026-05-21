@@ -14,20 +14,21 @@ use super::{
     NtfsResidentAttributeHeader, NtfsStandardInformation,
 };
 
-/// Borrow a UTF-16 view directly from little-endian on-disk bytes.
+/// Decode UTF-16 units from little-endian on-disk bytes.
 ///
-/// NTFS stores names as UTF-16LE. This crate is Windows-only, so native
-/// `u16` endianness matches the on-disk representation. We still require
-/// natural 2-byte alignment before forming a borrowed `&[u16]` view.
-fn utf16_slice_from_le_bytes(bytes: &[u8]) -> Option<&[u16]> {
-    if !(bytes.as_ptr() as usize).is_multiple_of(2) || !bytes.len().is_multiple_of(2) {
+/// NTFS stores names as UTF-16LE. Decode explicitly rather than borrowing
+/// a `&[u16]` so malformed or oddly aligned byte buffers cannot affect
+/// reference validity.
+fn utf16_units_from_le_bytes(bytes: &[u8]) -> Option<Vec<u16>> {
+    if !bytes.len().is_multiple_of(2) {
         return None;
     }
-    let units = bytes.len() / 2;
-    // SAFETY: the caller provides a byte slice whose length is an exact
-    // multiple of 2 and whose start address is 2-byte aligned, so the
-    // buffer can be viewed as `[u16]` without reallocating or copying.
-    Some(unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const u16, units) })
+    Some(
+        bytes
+            .chunks_exact(2)
+            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+            .collect(),
+    )
 }
 
 /// A view into a single attribute record borrowed from a FILE record's
@@ -99,10 +100,14 @@ impl<'a> NtfsAttribute<'a> {
         self.header.flags
     }
 
-    /// Borrowed UTF-16 view of the attribute name without allocation.
-    /// Returns `None` if the attribute is unnamed or the name bytes are
-    /// not 2-byte aligned.
-    pub fn name_slice(&self) -> Option<&'a [u16]> {
+    /// Return whether this attribute has an on-disk name.
+    pub fn has_name(&self) -> bool {
+        self.header.name_length != 0
+    }
+
+    /// Decode the UTF-16 attribute name.
+    /// Returns `None` if the attribute is unnamed or the name range is invalid.
+    pub fn name_units(&self) -> Option<Vec<u16>> {
         let n = self.header.name_length as usize;
         if n == 0 {
             return None;
@@ -113,7 +118,7 @@ impl<'a> NtfsAttribute<'a> {
             return None;
         }
         let bytes = &self.data()[off..end];
-        let units = utf16_slice_from_le_bytes(bytes)?;
+        let units = utf16_units_from_le_bytes(bytes)?;
         debug_assert_eq!(units.len(), n);
         Some(units)
     }
@@ -156,11 +161,7 @@ impl<'a> NtfsAttribute<'a> {
     }
 
     /// Returns `(header, name_utf16_units)` for a `$FILE_NAME` attribute.
-    /// The name slice borrows directly from the attribute buffer when
-    /// 2-byte aligned; otherwise the attribute is rejected (which is
-    /// extremely rare in practice since attribute records start on
-    /// 8-byte boundaries).
-    pub fn as_file_name(&self) -> Option<(NtfsFileNameHeader, &'a [u16])> {
+    pub fn as_file_name(&self) -> Option<(NtfsFileNameHeader, Vec<u16>)> {
         if self.type_id() != NtfsAttributeType::FileName as u32 {
             return None;
         }
@@ -173,7 +174,7 @@ impl<'a> NtfsAttribute<'a> {
             return None;
         }
         let bytes = &v[size_of::<NtfsFileNameHeader>()..needed];
-        let units = utf16_slice_from_le_bytes(bytes)?;
+        let units = utf16_units_from_le_bytes(bytes)?;
         debug_assert_eq!(units.len(), n);
         Some((header, units))
     }

@@ -253,7 +253,7 @@ impl RawMftEntryBuilder {
         if let Some((header, name_units)) = attr.as_file_name() {
             let ns = FileNameNamespace::from_u8(header.namespace);
             let parent_reference = Fid::new(header.parent_directory_reference);
-            let file_name = OsString::from_wide(name_units);
+            let file_name = OsString::from_wide(&name_units);
             let should_replace = self.file_names.consider(
                 current_file_name(
                     self.entry.namespace,
@@ -283,7 +283,7 @@ impl RawMftEntryBuilder {
 
     /// Fold a `$DATA` attribute into the unnamed stream or ADS list.
     fn apply_data_attribute(&mut self, attr: &NtfsAttribute<'_>) {
-        let stream_name = attr.name_slice();
+        let stream_name = attr.name_units();
         if attr.is_non_resident() {
             if let Some(h) = attr.nonresident_header() {
                 self.apply_nonresident_data(stream_name, h.allocated_size, h.data_size, attr);
@@ -298,7 +298,7 @@ impl RawMftEntryBuilder {
     /// Fold a non-resident `$DATA` attribute into the entry.
     fn apply_nonresident_data(
         &mut self,
-        stream_name: Option<&[u16]>,
+        stream_name: Option<Vec<u16>>,
         allocated_size: u64,
         data_size: u64,
         attr: &NtfsAttribute<'_>,
@@ -329,7 +329,7 @@ impl RawMftEntryBuilder {
             Some(name_units) => {
                 if self.collect_alternate_data_streams {
                     self.alternate_data_streams.push(AdsInfo {
-                        name: OsString::from_wide(name_units),
+                        name: OsString::from_wide(&name_units),
                         real_size: data_size,
                         allocated_size,
                         is_resident: false,
@@ -349,7 +349,7 @@ impl RawMftEntryBuilder {
     }
 
     /// Fold a resident `$DATA` attribute into the entry.
-    fn apply_resident_data(&mut self, stream_name: Option<&[u16]>, value_length: u64) {
+    fn apply_resident_data(&mut self, stream_name: Option<Vec<u16>>, value_length: u64) {
         match stream_name {
             None => {
                 if !self.have_unnamed_data {
@@ -363,7 +363,7 @@ impl RawMftEntryBuilder {
             Some(name_units) => {
                 if self.collect_alternate_data_streams {
                     self.alternate_data_streams.push(AdsInfo {
-                        name: OsString::from_wide(name_units),
+                        name: OsString::from_wide(&name_units),
                         real_size: value_length,
                         allocated_size: value_length,
                         is_resident: true,
