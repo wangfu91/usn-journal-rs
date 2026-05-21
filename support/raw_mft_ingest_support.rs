@@ -281,7 +281,9 @@ pub fn summary_run_count() -> NonZeroUsize {
 pub fn workload_shape(mft: &RawMft<'_>, config: &BenchConfig) -> BenchWorkloadShape {
     BenchWorkloadShape {
         record_count: mft.record_count(),
-        planned_chunks: mft.plan_chunks_with_options(config.chunk_plan_options()).len(),
+        planned_chunks: mft
+            .plan_chunks_with_options(config.chunk_plan_options())
+            .len(),
         file_record_size: mft.file_record_size(),
         cluster_size: mft.cluster_size(),
     }
