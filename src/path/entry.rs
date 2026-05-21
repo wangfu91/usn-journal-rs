@@ -1,6 +1,6 @@
 //! Traits for entries that can be resolved into filesystem paths.
 
-use std::ffi::OsString;
+use std::ffi::OsStr;
 
 use crate::{Fid, journal::UsnEntry, mft::MftEntry};
 
@@ -11,7 +11,7 @@ pub trait PathResolvableEntry {
     /// Return the parent directory's file identifier.
     fn parent_fid(&self) -> Fid;
     /// Return the entry's leaf file name.
-    fn file_name(&self) -> &OsString;
+    fn file_name(&self) -> &OsStr;
     /// Return whether the entry represents a directory.
     fn is_dir(&self) -> bool;
 }
@@ -23,7 +23,7 @@ impl PathResolvableEntry for MftEntry {
     fn parent_fid(&self) -> Fid {
         self.parent_fid
     }
-    fn file_name(&self) -> &OsString {
+    fn file_name(&self) -> &OsStr {
         &self.file_name
     }
     fn is_dir(&self) -> bool {
@@ -38,7 +38,7 @@ impl PathResolvableEntry for UsnEntry {
     fn parent_fid(&self) -> Fid {
         self.parent_fid
     }
-    fn file_name(&self) -> &OsString {
+    fn file_name(&self) -> &OsStr {
         &self.file_name
     }
     fn is_dir(&self) -> bool {

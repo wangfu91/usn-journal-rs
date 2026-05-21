@@ -2,8 +2,8 @@
 //!
 //! This benchmark compares three path resolution approaches:
 //! 1. Pure syscall (no caching)
-//! 2. Default syscall resolver with LRU cache
-//! 3. In-memory directory tree (one-time scan)
+//! 2. Default syscall resolver with a directory cache
+//! 3. Raw-MFT-optimized resolver (one-time scan)
 //!
 //! Run on an elevated shell with:
 //!
@@ -16,7 +16,6 @@
 //! is not elevated.
 
 use std::env;
-use std::num::NonZeroUsize;
 
 use divan::Bencher;
 use usn_journal_rs::{
@@ -97,7 +96,7 @@ fn resolver_syscall_no_cache(bencher: Bencher) {
     }
 
     bencher.bench_local(|| {
-        let mut resolver = PathResolver::new(&volume).without_lru_cache();
+        let mut resolver = PathResolver::new(&volume).with_directory_cache(0);
         let mut count = 0u64;
 
         for entry in &entries {
@@ -109,9 +108,9 @@ fn resolver_syscall_no_cache(bencher: Bencher) {
     });
 }
 
-/// Resolve paths with LRU cache (8192 capacity).
+/// Resolve paths with a directory cache (8192 capacity).
 #[divan::bench]
-fn resolver_syscall_lru_cache(bencher: Bencher) {
+fn resolver_syscall_directory_cache(bencher: Bencher) {
     let Some(volume) = open_volume() else { return };
     let entries = collect_test_entries(&volume);
 
@@ -121,10 +120,7 @@ fn resolver_syscall_lru_cache(bencher: Bencher) {
     }
 
     bencher.bench_local(|| {
-        let Some(cache_capacity) = NonZeroUsize::new(8192) else {
-            return divan::black_box(0u64);
-        };
-        let mut resolver = PathResolver::new(&volume).with_lru_cache(cache_capacity);
+        let mut resolver = PathResolver::new(&volume).with_directory_cache(8192);
 
         // Warm-up pass to populate cache
         for entry in &entries {
@@ -142,9 +138,9 @@ fn resolver_syscall_lru_cache(bencher: Bencher) {
     });
 }
 
-/// Resolve paths using in-memory directory tree (one-time full $MFT scan).
+/// Resolve paths using the RawMft-optimized resolver (one-time full $MFT scan).
 #[divan::bench]
-fn resolver_in_memory_tree(bencher: Bencher) {
+fn resolver_raw_mft_optimized(bencher: Bencher) {
     let Some(volume) = open_volume() else { return };
 
     let mft = match RawMft::new(&volume) {
@@ -163,7 +159,7 @@ fn resolver_in_memory_tree(bencher: Bencher) {
     }
 
     bencher.bench_local(|| {
-        let mut resolver = match PathResolver::new(&volume).with_in_memory_tree(&mft) {
+        let mut resolver = match mft.path_resolver() {
             Ok(r) => r,
             Err(e) => {
                 eprintln!("skipping: {e}");

@@ -51,6 +51,7 @@ use std::sync::Arc;
 
 use crate::{
     errors::UsnError,
+    path::PathResolver,
     raw_mft::{
         entry_build::EntryBuildOptions,
         io::VolumeReader,
@@ -101,6 +102,11 @@ pub struct RawMft<'a> {
 }
 
 impl<'a> RawMft<'a> {
+    /// Internal access to the bound volume for crate-level helpers.
+    pub(crate) fn volume(&self) -> &'a Volume {
+        self.volume
+    }
+
     /// Total number of FILE records this MFT can address.
     #[must_use]
     #[inline]
@@ -120,6 +126,16 @@ impl<'a> RawMft<'a> {
     #[inline]
     pub fn file_record_size(&self) -> u64 {
         self.boot.file_record_size
+    }
+
+    /// Create a [`PathResolver`] optimized for entries produced by this raw `$MFT` reader.
+    ///
+    /// This builds the crate's internal path index once from the current
+    /// raw-`$MFT` scan and uses it for O(1)-style path resolution during
+    /// subsequent `resolve_path` calls. It is intended for bulk raw-`$MFT`
+    /// iteration, not general-purpose journal or FSCTL-based enumeration.
+    pub fn path_resolver(&self) -> crate::UsnResult<PathResolver<'a>> {
+        PathResolver::from_raw_mft(self)
     }
 
     /// Read a single record by number. Returns `Ok(None)` when the

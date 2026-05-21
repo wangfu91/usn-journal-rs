@@ -3,9 +3,9 @@
 //! Builds a `RawMft` for C:, collects every 1 000th entry (up to 50),
 //! then resolves each entry with three independent resolvers:
 //!
-//!  1. Syscall-based, no cache (`PathResolver::new(...).without_lru_cache()`).
-//!  2. LRU-cached resolver (warm-cache path on second call).
-//!  3. In-memory directory-tree (`PathResolver::new(...).with_in_memory_tree`).
+//!  1. Syscall-based, no cache (`PathResolver::new(...).with_directory_cache(0)`).
+//!  2. Directory-cached resolver (warm-cache path on second call).
+//!  3. Raw-MFT-optimized resolver (`raw_mft.path_resolver()`).
 //!
 //! Asserts that ≥ 90 % of entries produce identical paths across all three
 //! strategies (case-insensitive, to accommodate Windows path normalisation).
@@ -13,7 +13,6 @@
 //!
 //! Skips gracefully on non-elevated runs.
 
-use std::num::NonZeroUsize;
 use usn_journal_rs::{
     errors::UsnError,
     path::PathResolver,
@@ -62,15 +61,14 @@ fn all_three_resolvers_agree() {
     }
 
     // Build the three resolvers.
-    let mut resolver1 = PathResolver::new(&volume).without_lru_cache();
+    let mut resolver1 = PathResolver::new(&volume).with_directory_cache(0);
 
-    let mut resolver2 = PathResolver::new(&volume)
-        .with_lru_cache(NonZeroUsize::new(1024).expect("1024 is non-zero"));
+    let mut resolver2 = PathResolver::new(&volume).with_directory_cache(1024);
 
-    let mut resolver3 = match PathResolver::new(&volume).with_in_memory_tree(&raw_mft) {
+    let mut resolver3 = match raw_mft.path_resolver() {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("path_resolver_consistency: with_in_memory_tree failed: {e}");
+            eprintln!("path_resolver_consistency: raw_mft.path_resolver failed: {e}");
             return;
         }
     };

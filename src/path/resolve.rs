@@ -3,7 +3,7 @@
 use lru::LruCache;
 use std::{
     cell::RefCell,
-    ffi::{OsString, c_void},
+    ffi::{OsStr, OsString, c_void},
     mem::size_of,
     os::windows::ffi::OsStringExt,
     path::{Path, PathBuf},
@@ -24,7 +24,7 @@ pub(super) fn resolve_path(
     volume: &Volume,
     fid: Fid,
     parent_fid: Fid,
-    file_name: &OsString,
+    file_name: &OsStr,
     buffer: &RefCell<Vec<u8>>,
 ) -> Option<PathBuf> {
     if let Ok(resolved_parent_path) = file_id_to_path(volume, parent_fid, buffer) {
@@ -41,14 +41,14 @@ pub(super) fn resolve_path_with_cache(
     volume: &Volume,
     fid: Fid,
     parent_fid: Fid,
-    file_name: &OsString,
+    file_name: &OsStr,
     is_dir: bool,
     cache: &mut DirLruCache,
     buffer: &RefCell<Vec<u8>>,
 ) -> Option<PathBuf> {
     // 1. Check cache for the current FID.
     if let Some((cached_path, cached_file_name)) = cache.get(&fid) {
-        if cached_file_name == file_name {
+        if cached_file_name.as_os_str() == file_name {
             return Some(cached_path.to_path_buf());
         } else {
             cache.pop(&fid);
@@ -77,7 +77,7 @@ pub(super) fn resolve_path_with_cache(
     // 4. If the current item is a directory, cache its path and current name.
     if is_dir {
         let arc_current: Arc<Path> = Arc::from(current_path.as_path());
-        cache.put(fid, (arc_current, file_name.clone()));
+        cache.put(fid, (arc_current, file_name.to_os_string()));
     }
 
     Some(current_path)

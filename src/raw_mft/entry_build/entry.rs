@@ -1,6 +1,6 @@
 //! Rich per-record metadata extracted from a single FILE record.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::os::windows::ffi::OsStringExt;
 
 use log::warn;
@@ -458,7 +458,7 @@ impl PathResolvableEntry for RawMftEntry {
     fn parent_fid(&self) -> Fid {
         self.parent_reference
     }
-    fn file_name(&self) -> &OsString {
+    fn file_name(&self) -> &OsStr {
         &self.file_name
     }
     fn is_dir(&self) -> bool {

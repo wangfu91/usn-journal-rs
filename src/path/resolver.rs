@@ -3,16 +3,15 @@
 use lru::LruCache;
 use std::{cell::RefCell, num::NonZeroUsize, path::PathBuf};
 
-use crate::{raw_mft::RawMft, volume::Volume};
+use crate::{UsnResult, raw_mft::RawMft, volume::Volume};
 
 use super::{
     InMemoryDirTree, PathResolvableEntry,
     resolve::{DirLruCache, resolve_path, resolve_path_with_cache},
 };
 
-/// Default number of directory paths cached by [`PathResolver::new`].
 #[allow(clippy::useless_nonzero_new_unchecked)]
-pub const DEFAULT_LRU_CACHE_CAPACITY: NonZeroUsize = unsafe {
+const DEFAULT_DIRECTORY_CACHE_CAPACITY: NonZeroUsize = unsafe {
     // SAFETY: `4096` is a non-zero constant.
     NonZeroUsize::new_unchecked(4096)
 };
@@ -23,21 +22,25 @@ pub const DEFAULT_LRU_CACHE_CAPACITY: NonZeroUsize = unsafe {
 ///
 /// ```no_run
 /// use usn_journal_rs::{volume::Volume, path::PathResolver};
-/// use std::num::NonZeroUsize;
 ///
 /// let volume = Volume::from_drive_letter('C').unwrap();
 ///
-/// // Default resolver — syscall resolution with an LRU directory cache:
+/// // Default resolver — syscall resolution with a directory cache:
 /// let resolver = PathResolver::new(&volume);
 ///
-/// // Tune the LRU directory cache for repeated lookups in the same directory:
-/// let resolver = PathResolver::new(&volume)
-///     .with_lru_cache(NonZeroUsize::new(8_192).unwrap());
+/// // Tune the directory cache capacity (plain integer, no NonZeroUsize):
+/// let resolver = PathResolver::new(&volume).with_directory_cache(8_192);
+///
+/// // Disable the directory cache entirely (pass 0):
+/// let resolver = PathResolver::new(&volume).with_directory_cache(0);
 /// ```
 ///
+/// For full raw-`$MFT` scans, prefer [`crate::raw_mft::RawMft::path_resolver`]
+/// to enable the crate's internal fast path automatically.
+///
 /// `PathResolver` is intentionally `!Sync` — it carries an internal
-/// scratch buffer (and optional in-memory tree) accessed via interior
-/// mutability to keep the public `resolve_path` signature ergonomic.
+/// scratch buffer (and optional internal path index) accessed via
+/// interior mutability to keep the public `resolve_path` signature ergonomic.
 #[derive(Debug)]
 pub struct PathResolver<'a> {
     /// Volume on which file IDs will be resolved.
@@ -51,53 +54,59 @@ pub struct PathResolver<'a> {
 }
 
 impl<'a> PathResolver<'a> {
-    /// Create a resolver with the given `volume` and the default LRU directory cache.
+    /// Create a resolver with the given `volume` and the default directory cache.
     ///
-    /// Use [`Self::with_lru_cache`] to resize the cache,
-    /// [`Self::without_lru_cache`] to force uncached syscall resolution, or
-    /// [`Self::with_in_memory_tree`] to add the raw-`$MFT` directory tree.
+    /// Use [`Self::with_directory_cache`] to resize or disable the cache.
+    ///
+    /// For raw-`$MFT` scans, prefer [`crate::raw_mft::RawMft::path_resolver`]
+    /// instead of manually constructing a resolver.
     #[must_use]
     pub fn new(volume: &'a Volume) -> Self {
         Self {
             volume,
-            dir_fid_path_cache: Some(LruCache::new(DEFAULT_LRU_CACHE_CAPACITY)),
+            dir_fid_path_cache: Some(LruCache::new(DEFAULT_DIRECTORY_CACHE_CAPACITY)),
             buffer: RefCell::new(Vec::new()),
             in_memory_tree: None,
         }
     }
 
-    /// Enable or resize the LRU directory path cache.
-    #[must_use]
-    pub fn with_lru_cache(mut self, capacity: NonZeroUsize) -> Self {
-        self.dir_fid_path_cache = Some(LruCache::new(capacity));
-        self
-    }
-
-    /// Disable the LRU directory path cache.
+    /// Set the directory path cache capacity.
     ///
-    /// Resolution still uses the in-memory directory tree when one is
-    /// configured; otherwise each lookup falls back to direct syscalls.
+    /// Pass a positive `capacity` to enable (or resize) the cache; pass `0`
+    /// to disable it entirely.  When the cache is disabled, each directory
+    /// lookup falls back to direct `OpenFileById` syscalls.
+    ///
+    /// The default resolver created by [`Self::new`] already has a built-in
+    /// cache capacity.
     #[must_use]
-    pub fn without_lru_cache(mut self) -> Self {
-        self.dir_fid_path_cache = None;
+    pub fn with_directory_cache(mut self, capacity: usize) -> Self {
+        self.dir_fid_path_cache = NonZeroUsize::new(capacity).map(LruCache::new);
         self
     }
 
-    /// Add an in-memory raw-`$MFT` directory tree for O(1) full-scan path resolution.
-    pub fn with_in_memory_tree(mut self, raw_mft: &RawMft<'_>) -> crate::UsnResult<Self> {
-        self.in_memory_tree = Some(InMemoryDirTree::from_raw_mft(raw_mft)?);
-        Ok(self)
+    /// Create a resolver that uses the internal raw-`$MFT` path index.
+    ///
+    /// This constructor is crate-internal so the raw-`$MFT` fast path stays
+    /// tied to [`crate::raw_mft::RawMft::path_resolver`] instead of leaking
+    /// the index-building detail through the public `path` API.
+    pub(crate) fn from_raw_mft(raw_mft: &RawMft<'a>) -> UsnResult<Self> {
+        Ok(Self {
+            volume: raw_mft.volume(),
+            dir_fid_path_cache: None,
+            buffer: RefCell::new(Vec::new()),
+            in_memory_tree: Some(InMemoryDirTree::try_from(raw_mft)?),
+        })
     }
 
     /// Resolve `entry` to a full path, using the in-memory tree (if
-    /// configured), then the LRU cache (if configured), falling back to
+    /// configured), then the directory cache (if configured), falling back to
     /// `OpenFileById` syscalls.
     ///
     /// Standard 64-bit NTFS IDs can use all resolver strategies. Extended
     /// 128-bit IDs (for example ReFS `USN_RECORD_V3` entries) skip the
     /// in-memory raw-`$MFT` tree and are resolved via `OpenFileById`.
     #[must_use]
-    pub fn resolve_path<E: PathResolvableEntry>(&mut self, entry: &E) -> Option<PathBuf> {
+    pub fn resolve_path<E: PathResolvableEntry + ?Sized>(&mut self, entry: &E) -> Option<PathBuf> {
         if let Some(tree) = &self.in_memory_tree
             && let Some(p) =
                 tree.resolve_with_optional_drive(entry.fid(), self.volume.drive_letter())

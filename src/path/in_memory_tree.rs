@@ -30,15 +30,17 @@ struct DirEntry {
 /// a pointer chase up to the root with no syscalls and no `PathBuf`
 /// allocations until the final assembly.
 #[derive(Debug, Default, Clone)]
-pub struct InMemoryDirTree {
+pub(crate) struct InMemoryDirTree {
     /// Map from 48-bit NTFS record number to its parent/name pair.
     entries: FxHashMap<u64, DirEntry>,
 }
 
 impl InMemoryDirTree {
-    /// Build the tree from a raw `$MFT` reader. Iterates every record
-    /// once. Skips entries marked unused in the `$MFT $BITMAP`.
-    pub fn from_raw_mft(raw_mft: &RawMft<'_>) -> crate::UsnResult<Self> {
+    /// Build the internal path index from a raw `$MFT` reader.
+    ///
+    /// This is kept private so callers go through `RawMft::path_resolver`
+    /// instead of depending on the index representation directly.
+    fn build_from_raw_mft(raw_mft: &RawMft<'_>) -> crate::UsnResult<Self> {
         let record_count = raw_mft.record_count() as usize;
         let estimated_used_records = if record_count < 2_048 {
             record_count
@@ -76,6 +78,7 @@ impl InMemoryDirTree {
     }
 
     /// Number of entries currently stored.
+    #[cfg(test)]
     #[must_use]
     #[inline]
     pub fn len(&self) -> usize {
@@ -83,6 +86,7 @@ impl InMemoryDirTree {
     }
 
     /// Returns `true` if the tree has no entries.
+    #[cfg(test)]
     #[must_use]
     #[inline]
     pub fn is_empty(&self) -> bool {
@@ -107,12 +111,14 @@ impl InMemoryDirTree {
     /// Walks parents up to the root and returns the resolved path
     /// (without drive prefix). Returns `None` if the chain breaks or a
     /// cycle is detected.
+    #[cfg(test)]
     #[must_use]
     pub fn resolve(&self, fid: Fid) -> Option<PathBuf> {
         self.resolve_with_optional_drive(fid, None)
     }
 
     /// Walks parents and prepends `<drive>:\` to the resolved path.
+    #[cfg(test)]
     #[must_use]
     pub fn resolve_with_drive_letter(&self, fid: Fid, drive: char) -> Option<PathBuf> {
         self.resolve_with_optional_drive(fid, Some(drive))
@@ -158,5 +164,13 @@ impl InMemoryDirTree {
             path.push(OsString::from_wide(units));
         }
         Some(path)
+    }
+}
+
+impl TryFrom<&RawMft<'_>> for InMemoryDirTree {
+    type Error = crate::UsnError;
+
+    fn try_from(raw_mft: &RawMft<'_>) -> Result<Self, Self::Error> {
+        Self::build_from_raw_mft(raw_mft)
     }
 }
