@@ -70,13 +70,15 @@ fn main() -> Result<(), UsnError> {
 
 ## Examples
 
-| Example          | Description                                 | Run                                  |
-| ---------------- | ------------------------------------------- | ------------------------------------ |
-| `read_journal`   | Iterate all USN journal records on a volume | `cargo run --example read_journal`   |
-| `enum_mft`       | Enumerate every MFT entry via FSCTL         | `cargo run --example enum_mft`       |
-| `raw_mft`        | Parse raw `$MFT` records with full metadata | `cargo run --example raw_mft`        |
-| `change_monitor` | Watch for live filesystem changes via USN   | `cargo run --example change_monitor` |
-| `pretty_print`   | Multi-line formatted output for USN entries | `cargo run --example pretty_print`   |
+| Example                   | Description                                                      | Run                                            |
+| ------------------------- | ---------------------------------------------------------------- | ---------------------------------------------- |
+| `read_journal`            | Iterate all USN journal records on a volume                      | `cargo run --example read_journal`             |
+| `enum_mft`                | Enumerate every MFT entry via FSCTL                              | `cargo run --example enum_mft`                 |
+| `raw_mft_serial_read`     | Parse raw `$MFT` records with full metadata                      | `cargo run --example raw_mft_serial_read -- C` |
+| `raw_mft_parallel_chunks` | Measure parallel chunk parsing on the raw `$MFT`                 | `cargo run --example raw_mft_parallel_chunks`  |
+| `deletion_forensic`       | List unused raw `$MFT` records with best-effort historical paths | `cargo run --example deletion_forensic -- C`   |
+| `change_monitor`          | Watch for live filesystem changes via USN                        | `cargo run --example change_monitor`           |
+| `journal_pretty_print`    | Multi-line formatted output for USN entries                      | `cargo run --example journal_pretty_print`     |
 
 All examples require Administrator privileges.
 
@@ -124,8 +126,8 @@ The raw-`$MFT` ingest harness also understands a few environment variables:
 ### Raw `$MFT` ingest benchmark notes
 
 Recent Criterion runs on a large `C:` NTFS volume used the current benchmark
-shape, where both chunk planning and scanning keep `skip_unused(true)`, but
-chunk planning still uses dense logical bands and only drops fully unused
+shape, where both chunk planning and scanning exclude unused records
+(`include_unused_records(false)`), but chunk planning still uses dense logical bands and only drops fully unused
 bands:
 
 - ~3,059,968 addressable records
@@ -142,12 +144,12 @@ Observed results from the current tuning passes:
 
 Representative medians from the latest sweeps:
 
-| Config | Median time |
-| ---- | ----------: |
-| Dynamic, 11 workers, 2048 chunks, 256 KiB / 16 KiB buffers | ~2.35 s |
-| Dynamic, 11 workers, 2048 chunks, 512 KiB / 16 KiB buffers | ~2.38 s |
-| Dynamic, 11 workers, 2048 chunks, 256 KiB / 64 KiB buffers | ~2.64 s |
-| Contiguous, 11 workers, 2048 chunks, 512 KiB / 16 KiB buffers | ~3.67 s |
+| Config                                                        | Median time |
+| ------------------------------------------------------------- | ----------: |
+| Dynamic, 11 workers, 2048 chunks, 256 KiB / 16 KiB buffers    |     ~2.35 s |
+| Dynamic, 11 workers, 2048 chunks, 512 KiB / 16 KiB buffers    |     ~2.38 s |
+| Dynamic, 11 workers, 2048 chunks, 256 KiB / 64 KiB buffers    |     ~2.64 s |
+| Contiguous, 11 workers, 2048 chunks, 512 KiB / 16 KiB buffers |     ~3.67 s |
 
 That is why the ingest benchmark defaults now cap the automatic worker count at
 10 instead of following all available logical CPUs, use `2048` logical records

@@ -38,8 +38,8 @@ copied in, while leaving `src\raw_mft\*.rs` at `HEAD`.
 
 The earlier `2 workers is best` conclusion was discarded and re-measured with
 the current Criterion harness on a large `C:` NTFS volume. After that, the
-benchmark defaults were corrected so `skip_unused(true)` is used consistently in
-both chunk planning and scanning. That initially regressed badly because chunk
+benchmark defaults were corrected so both chunk planning and scanning exclude
+unused records (`include_unused_records(false)`). That initially regressed badly because chunk
 planning split at every used-record run. The planner was then changed again so
 it keeps dense logical chunk bands and only drops bands that are fully unused.
 The results below are from that optimized planner.
@@ -56,7 +56,7 @@ retuning the benchmark defaults:
 - start record: `24`
 - end record: `full`
 
-The current planner still honors `skip_unused(true)`, but it only omits chunk
+The current planner still honors `include_unused_records(false)`, but it only omits chunk
 bands that are completely unused. Bands that contain any used record stay dense,
 so worker tasks remain coarse enough for buffered volume reads and channel/
 drain overhead stays low.

@@ -118,7 +118,7 @@ fn load_mft_bitmap(
     if let Some(bitmap_runs) = bitmap_runs {
         Ok(read_nonresident(reader, &bitmap_runs, cluster_size, bitmap_size)?.into())
     } else {
-        warn!("raw_mft: no $MFT $BITMAP; skip_unused will be ignored");
+        warn!("raw_mft: no $MFT $BITMAP; unused-record filtering will be unavailable");
         Ok(Vec::new().into())
     }
 }

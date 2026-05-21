@@ -6,7 +6,7 @@
 //! Run with administrator privileges:
 //!
 //! ```text
-//! cargo run --example raw_mft -- C
+//! cargo run --example raw_mft_serial_read -- C
 //! ```
 
 use std::env;
@@ -48,7 +48,7 @@ fn run() -> Result<(), UsnError> {
 
     let mut count = 0u64;
     let options = RawMftScanOptions::builder()
-        .skip_unused(false)
+        .include_unused_records(true)
         .collect_alternate_data_streams(true)
         .collect_data_run_summary(true)
         .collect_dos_file_name_links(true)

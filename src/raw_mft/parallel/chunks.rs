@@ -40,7 +40,7 @@ impl<'a> RawMft<'a> {
             range.start_record(),
             end_record,
             options.max_records_per_chunk(),
-            options.skip_unused(),
+            options.include_unused_records(),
             |record_number| self.bitmap_used(record_number),
         )
     }

@@ -137,8 +137,7 @@ impl<'a> RawMft<'a> {
     }
 
     /// Read a single record by number. Returns `Ok(None)` when the
-    /// record falls in a sparse hole or is unused (and `skip_unused` is
-    /// implied here).
+    /// record falls in a sparse hole or does not contain a valid FILE record.
     #[must_use = "the returned record is discarded if not inspected"]
     pub fn read_record(&self, number: u64) -> Result<Option<RawMftEntry>, UsnError> {
         let mut reader = VolumeReader::new(self.volume.handle, self.boot.bytes_per_sector as u64)?;

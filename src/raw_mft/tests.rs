@@ -5,7 +5,7 @@ fn options_defaults_are_sensible() {
     let o = RawMftScanOptions::default();
     assert_eq!(o.buffers().main(), DEFAULT_BUFFER_BYTES);
     assert_eq!(o.buffers().attr(), DEFAULT_ATTR_BUFFER_BYTES);
-    assert!(o.skip_unused());
+    assert!(!o.include_unused_records());
     assert!(o.entry().collect_alternate_data_streams());
     assert!(o.entry().collect_data_run_summary());
     assert!(o.entry().collect_dos_file_name_links());

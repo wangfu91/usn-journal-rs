@@ -129,7 +129,7 @@ impl RawMftEntryOptions {
 /// Options controlling raw `$MFT` scan behavior.
 ///
 /// Use [`RawMftScanOptions::builder`] for the fluent builder API.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct RawMftScanOptions {
     /// Read-buffer sizing.
     pub(crate) buffers: RawMftReadBuffers,
@@ -137,19 +137,8 @@ pub struct RawMftScanOptions {
     pub(crate) range: RawMftRecordRange,
     /// Entry materialization choices.
     pub(crate) entry: RawMftEntryOptions,
-    /// Honor the `$MFT` `$BITMAP` to skip unused records.
-    pub(crate) skip_unused: bool,
-}
-
-impl Default for RawMftScanOptions {
-    fn default() -> Self {
-        Self {
-            buffers: RawMftReadBuffers::default(),
-            range: RawMftRecordRange::default(),
-            entry: RawMftEntryOptions::default(),
-            skip_unused: true,
-        }
-    }
+    /// Whether raw `$MFT` scans should include records marked unused in the `$MFT` `$BITMAP`.
+    pub(crate) include_unused_records: bool,
 }
 
 impl RawMftScanOptions {
@@ -176,10 +165,10 @@ impl RawMftScanOptions {
         self.entry
     }
 
-    /// Whether unused records are skipped using the `$MFT` bitmap.
+    /// Whether records marked unused in the `$MFT` bitmap are still returned.
     #[must_use]
-    pub const fn skip_unused(&self) -> bool {
-        self.skip_unused
+    pub const fn include_unused_records(&self) -> bool {
+        self.include_unused_records
     }
 }
 
@@ -216,9 +205,9 @@ impl RawMftScanOptionsBuilder {
         self
     }
 
-    /// Whether to honor the `$MFT` `$BITMAP` and skip unused records.
-    pub fn skip_unused(mut self, v: bool) -> Self {
-        self.inner.skip_unused = v;
+    /// Whether raw `$MFT` scans should include records marked unused in the `$MFT` bitmap.
+    pub fn include_unused_records(mut self, v: bool) -> Self {
+        self.inner.include_unused_records = v;
         self
     }
 

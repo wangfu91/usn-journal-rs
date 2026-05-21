@@ -24,9 +24,9 @@ impl RawMftWorkChunk {
 /// Options controlling logical work-chunk planning for raw `$MFT` parsing.
 #[derive(Debug, Clone)]
 pub struct RawMftChunkPlanOptions {
-    /// Whether fully unused logical chunk bands should be dropped using the
-    /// `$MFT` bitmap.
-    pub(crate) skip_unused: bool,
+    /// Whether fully unused logical chunk bands should be retained instead of
+    /// being dropped via the `$MFT` bitmap.
+    pub(crate) include_unused_records: bool,
     /// Logical record range to consider.
     pub(crate) range: RawMftRecordRange,
     /// Maximum logical records per chunk.
@@ -36,7 +36,7 @@ pub struct RawMftChunkPlanOptions {
 impl Default for RawMftChunkPlanOptions {
     fn default() -> Self {
         Self {
-            skip_unused: true,
+            include_unused_records: false,
             range: RawMftRecordRange::new(FIRST_NORMAL_RECORD, None),
             max_records_per_chunk: NonZeroU64::new(16 * 1024).unwrap_or(NonZeroU64::MIN),
         }
@@ -49,10 +49,10 @@ impl RawMftChunkPlanOptions {
         RawMftChunkPlanOptionsBuilder::default()
     }
 
-    /// Whether fully unused logical chunk bands are dropped using the `$MFT` bitmap.
+    /// Whether fully unused logical chunk bands are retained in the plan.
     #[must_use]
-    pub const fn skip_unused(&self) -> bool {
-        self.skip_unused
+    pub const fn include_unused_records(&self) -> bool {
+        self.include_unused_records
     }
 
     /// Logical record range to consider.
@@ -76,9 +76,9 @@ pub struct RawMftChunkPlanOptionsBuilder {
 }
 
 impl RawMftChunkPlanOptionsBuilder {
-    /// Whether fully unused logical chunk bands should be dropped using the `$MFT` bitmap.
-    pub fn skip_unused(mut self, v: bool) -> Self {
-        self.inner.skip_unused = v;
+    /// Whether fully unused logical chunk bands should be retained in the plan.
+    pub fn include_unused_records(mut self, v: bool) -> Self {
+        self.inner.include_unused_records = v;
         self
     }
 
@@ -117,14 +117,14 @@ impl RawMftChunkPlanOptionsBuilder {
 ///
 /// Chunk sizing always follows the logical record range so worker tasks stay
 /// coarse enough for parallel scheduling and buffered volume reads. When
-/// `skip_unused` is `true`, bands that contain no used records at all are
-/// omitted; bands with at least one used record are still kept as dense logical
-/// ranges and the scan path skips individual unused records later.
+/// `include_unused_records` is `false`, bands that contain no used records at
+/// all are omitted; bands with at least one used record are still kept as dense
+/// logical ranges and the scan path can skip individual unused records later.
 pub(crate) fn build_work_chunks<F>(
     start_record: u64,
     end_record: u64,
     max_records_per_chunk: NonZeroU64,
-    skip_unused: bool,
+    include_unused_records: bool,
     mut is_used: F,
 ) -> Vec<RawMftWorkChunk>
 where
@@ -141,7 +141,7 @@ where
         let chunk_end = chunk_start
             .saturating_add(max_records_per_chunk)
             .min(end_record);
-        let keep_chunk = !skip_unused || (chunk_start..chunk_end).any(&mut is_used);
+        let keep_chunk = include_unused_records || (chunk_start..chunk_end).any(&mut is_used);
         if keep_chunk {
             chunks.push(RawMftWorkChunk {
                 start_record: chunk_start,
@@ -160,13 +160,15 @@ mod tests {
     use std::num::NonZeroU64;
 
     #[test]
-    fn skip_unused_drops_fully_unused_bands_but_keeps_dense_ranges() -> Result<(), String> {
+    fn exclude_unused_records_drops_fully_unused_bands_but_keeps_dense_ranges() -> Result<(), String>
+    {
         let Some(chunk_size) = NonZeroU64::new(8) else {
             return Err("chunk size must be non-zero".into());
         };
         let used = [false, true, true, false, true, true, true, false];
-        let chunks =
-            build_work_chunks(0, used.len() as u64, chunk_size, true, |n| used[n as usize]);
+        let chunks = build_work_chunks(0, used.len() as u64, chunk_size, false, |n| {
+            used[n as usize]
+        });
         assert_eq!(
             chunks,
             vec![RawMftWorkChunk {
@@ -178,15 +180,16 @@ mod tests {
     }
 
     #[test]
-    fn skip_unused_omits_fully_empty_bands() -> Result<(), String> {
+    fn exclude_unused_records_omits_fully_empty_bands() -> Result<(), String> {
         let Some(chunk_size) = NonZeroU64::new(4) else {
             return Err("chunk size must be non-zero".into());
         };
         let used = [
             false, true, false, false, false, false, false, false, true, false, false, false,
         ];
-        let chunks =
-            build_work_chunks(0, used.len() as u64, chunk_size, true, |n| used[n as usize]);
+        let chunks = build_work_chunks(0, used.len() as u64, chunk_size, false, |n| {
+            used[n as usize]
+        });
         assert_eq!(
             chunks,
             vec![

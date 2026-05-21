@@ -164,7 +164,7 @@ From those decoded runs the constructor builds:
 - `extent_map: Arc<ExtentMap>` from `$MFT::$DATA`,
 - `bitmap: Arc<[u8]>` by reading `$MFT::$BITMAP` into memory.
 
-The bitmap is fully materialized once so later `skip_unused` checks are just in-memory bit tests.
+The bitmap is fully materialized once so later unused-record filtering checks are just in-memory bit tests.
 
 The final `RawMft` value contains:
 
@@ -192,9 +192,9 @@ The second reader is deliberate. Extension reads are random-access and would oth
 
 `RawMftIter::next` walks `next_record..end` and applies the following steps for each record number.
 
-#### 1. Skip unused records if requested
+#### 1. Exclude unused records unless requested
 
-If `options.skip_unused` is enabled, the iterator calls `bitmap_used(record_number)`.
+If `options.include_unused_records` is `false`, the iterator calls `bitmap_used(record_number)` and skips records whose bit is clear.
 
 This is an in-memory bit lookup against the bitmap loaded during `RawMft::new`.
 
@@ -329,7 +329,7 @@ That distinction matters because:
 
 `RawMftChunkPlanOptions::default()` uses:
 
-- `skip_unused = true`,
+- `include_unused_records = false`,
 - `start_record = FIRST_NORMAL_RECORD` (24),
 - `end_record = None` meaning `record_count()`,
 - `max_records_per_chunk = 16 * 1024`.
@@ -338,20 +338,20 @@ That distinction matters because:
 
 `build_work_chunks` walks the requested record-number range and creates chunks using two rules:
 
-1. If `skip_unused` is true, unused bitmap gaps terminate the current chunk.
+1. If `include_unused_records` is false, chunk bands with no used records at all are omitted.
 2. A chunk never grows beyond `max_records_per_chunk` records.
 
 That means the default planner tends to produce chunks that:
 
-- only cover used runs of records,
+- drop fully unused chunk bands,
 - remain bounded in size,
 - preserve increasing record order.
 
-If `skip_unused` is false, the planner ignores bitmap gaps and simply emits dense fixed-width logical windows.
+If `include_unused_records` is true, the planner emits dense fixed-width logical windows even when a band is fully unused.
 
 ### Why planner behavior can differ from parser behavior
 
-The planner and the parser each have their own `skip_unused` setting.
+The planner and the parser each have their own `include_unused_records` setting.
 
 That allows patterns like the ingest benchmark, which deliberately plans dense record-number windows but still lets each worker skip unused entries during parsing.
 
@@ -487,14 +487,14 @@ It also tunes the reader buffers:
 
 The benchmark's `RawMftChunkPlanOptions` use:
 
-- `skip_unused: false`,
+- `include_unused_records: true`,
 - `start_record`: configurable, default 24,
 - `end_record`: optional,
 - `max_records_per_chunk`: configurable, default 16384 records.
 
 This is a subtle but important choice.
 
-The benchmark plans dense logical windows but still parses with `RawMftScanOptions::default()` for `skip_unused`, which remains true unless explicitly changed. In other words:
+The benchmark plans dense logical windows but still parses with `RawMftScanOptions::default()` for `include_unused_records`, which remains false unless explicitly changed. In other words:
 
 - chunk planning does not split at unused-record gaps,
 - the parser inside each worker still skips unused records.
@@ -535,9 +535,9 @@ The raw-MFT reader applies one configurable filter plus one built-in
 normalization step to produce a "current live filesystem" view — the same set
 of entries Windows Explorer shows.
 
-### In-use filtering (`skip_unused`, default `true`)
+### In-use filtering (`include_unused_records`, default `false`)
 
-When `skip_unused` is true, the reader consults the `$MFT` `$BITMAP` loaded during
+When `include_unused_records` is `false`, the reader consults the `$MFT` `$BITMAP` loaded during
 `RawMft::new` before touching a FILE record on disk.
 
 - The `$BITMAP` is loaded once into memory (`Arc<[u8]>`) at construction time.
@@ -545,10 +545,10 @@ When `skip_unused` is true, the reader consults the `$MFT` `$BITMAP` loaded duri
 - Records whose bit is clear are skipped before the extent translation, buffer
   borrow, validation, and parse steps, making the check essentially free.
 
-If `$BITMAP` is unavailable, `bitmap_used` returns `true` for all records and the
-reader falls back to the header `IN_USE` flag as a secondary guard; in that case
-every record is fully parsed and only records with `flags & 0x0001 == 0` are
-discarded.
+If `$BITMAP` is unavailable, `bitmap_used` returns `true` for all records, so
+the reader can no longer reject unused slots early. In that case iteration falls
+back to best-effort parsing of every addressable record and callers must inspect
+`RawMftEntry::is_used` themselves.
 
 ### Extension-record filtering (always on)
 
@@ -626,7 +626,7 @@ diff against an older snapshot), call `Fid::sequence()` and compare it against
 
 With factory defaults, each record number passes through these gates in order:
 
-1. **Bitmap check** (`skip_unused = true`): skip if bit clear → most deleted
+1. **Bitmap check** (`include_unused_records = false`): skip if bit clear → most deleted
    records are rejected here, before any disk I/O on the record itself.
 2. **Extent translation**: skip sparse holes.
 3. **Buffer borrow**: bring record bytes into the aligned reader buffer.
