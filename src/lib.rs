@@ -59,7 +59,6 @@ pub mod path;
 pub mod privilege;
 pub mod raw_mft;
 pub mod types;
-mod unaligned;
 mod usn_record;
 
 // Re-export commonly used types
