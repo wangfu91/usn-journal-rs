@@ -4,7 +4,6 @@
 //! numbers to `(parent, UTF-16 name)` pairs. Once constructed, resolving a
 //! file path to the root is a pure pointer-chase with no syscalls.
 
-use super::util::{NTFS_ROOT_RECORD_NUMBER, mask_fid_to_record_number};
 use crate::{Fid, raw_mft::RawMft};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::{
@@ -12,6 +11,14 @@ use std::{
     os::windows::ffi::{OsStrExt, OsStringExt},
     path::PathBuf,
 };
+
+/// NTFS root directory MFT record number (`$Root`).
+const NTFS_ROOT_RECORD_NUMBER: u64 = 5;
+
+/// Mask a standard 64-bit NTFS file reference down to its 48-bit record number.
+fn mask_fid_to_record_number(fid: Fid) -> Option<u64> {
+    fid.record_number()
+}
 
 /// Directory entry in the in-memory tree. Stores the parent file
 /// reference number (full 64-bit, not masked) and the leaf name as raw
@@ -79,6 +86,7 @@ impl InMemoryDirTree {
 
     /// Number of entries currently stored.
     #[cfg(test)]
+    #[allow(dead_code)]
     #[must_use]
     #[inline]
     pub fn len(&self) -> usize {

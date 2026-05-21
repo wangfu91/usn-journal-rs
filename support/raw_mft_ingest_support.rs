@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 //! Shared helpers for the raw-MFT parallel ingest benchmark and profiling example.
 
 use std::{
@@ -9,12 +11,14 @@ use std::{
 };
 
 use rustc_hash::FxHashMap;
-
-use crate::{Fid, errors::UsnError, volume::Volume};
-
-use super::{
-    FileNameNamespace, RawMft, RawMftBatchEntry, RawMftChunkPlanOptions, RawMftEntry, RawMftLink,
-    RawMftScanOptions, RawMftWorkChunk, parallel::ChunkScheduling,
+use usn_journal_rs::{
+    Fid,
+    errors::UsnError,
+    raw_mft::{
+        FileNameNamespace, RawMft, RawMftBatchEntry, RawMftChunkPlanOptions, RawMftEntry,
+        RawMftLink, RawMftParallelScheduling, RawMftScanOptions, RawMftWorkChunk,
+    },
+    volume::Volume,
 };
 
 /// Default main read buffer size for the parallel ingest path.
@@ -44,7 +48,7 @@ pub struct BenchConfig {
     /// Optional exclusive end record number.
     pub end_record: Option<u64>,
     /// Worker scheduling mode used by the parallel executor.
-    scheduling: ChunkScheduling,
+    scheduling: RawMftParallelScheduling,
 }
 
 /// Benchmark-visible scheduling mode.
@@ -55,10 +59,10 @@ pub enum BenchScheduling {
 }
 
 impl BenchScheduling {
-    fn as_executor_mode(self) -> ChunkScheduling {
+    fn as_executor_mode(self) -> RawMftParallelScheduling {
         match self {
-            Self::Dynamic => ChunkScheduling::Dynamic,
-            Self::Contiguous => ChunkScheduling::Contiguous,
+            Self::Dynamic => RawMftParallelScheduling::Dynamic,
+            Self::Contiguous => RawMftParallelScheduling::Contiguous,
         }
     }
 }
@@ -146,8 +150,8 @@ impl BenchConfig {
     #[must_use]
     pub fn scheduling_label(&self) -> &'static str {
         match self.scheduling {
-            ChunkScheduling::Dynamic => "dynamic",
-            ChunkScheduling::Contiguous => "contiguous",
+            RawMftParallelScheduling::Dynamic => "dynamic",
+            RawMftParallelScheduling::Contiguous => "contiguous",
         }
     }
 }
@@ -277,9 +281,7 @@ pub fn summary_run_count() -> NonZeroUsize {
 pub fn workload_shape(mft: &RawMft<'_>, config: &BenchConfig) -> BenchWorkloadShape {
     BenchWorkloadShape {
         record_count: mft.record_count(),
-        planned_chunks: mft
-            .plan_chunks_with_options(config.chunk_plan_options())
-            .len(),
+        planned_chunks: mft.plan_chunks_with_options(config.chunk_plan_options()).len(),
         file_record_size: mft.file_record_size(),
         cluster_size: mft.cluster_size(),
     }
@@ -677,7 +679,7 @@ mod tests {
                 .expect("chunk size must be non-zero"),
             start_record: FIRST_NORMAL_RECORD,
             end_record: None,
-            scheduling: ChunkScheduling::Dynamic,
+            scheduling: RawMftParallelScheduling::Dynamic,
         }
     }
 

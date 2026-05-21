@@ -34,9 +34,6 @@ mod attr_list;
 mod bootstrap;
 mod chunk_plan;
 mod entry_build;
-/// Hidden support helpers shared by the raw-MFT ingest benchmark and tooling examples.
-#[doc(hidden)]
-pub mod ingest_support;
 mod io;
 mod layout;
 mod options;
@@ -70,6 +67,7 @@ pub use options::{
     RawMftScanOptionsBuilder,
 };
 pub use parallel::RawMftParallelScan;
+pub use parallel::RawMftParallelScheduling;
 pub use serial::RawMftIter;
 
 /// Default I/O buffer size for raw `$MFT` iteration.

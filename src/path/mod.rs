@@ -6,7 +6,6 @@ mod entry;
 mod in_memory_tree;
 mod resolve;
 mod resolver;
-mod util;
 
 pub use entry::PathResolvableEntry;
 pub(crate) use in_memory_tree::InMemoryDirTree;

@@ -33,13 +33,15 @@ use std::{
 };
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use usn_journal_rs::raw_mft::{
-    RawMft,
-    ingest_support::{
-        self, BenchScheduling, bench_config, include_serial_bench, open_volume, print_bench_config,
-        print_summary_enabled, run_parallel_ingest, run_serial_ingest, scheduling_sweep_values,
-        summary_run_count, worker_sweep_values, workload_shape,
-    },
+use usn_journal_rs::raw_mft::RawMft;
+
+#[path = "../support/raw_mft_ingest_support.rs"]
+mod ingest_support;
+
+use ingest_support::{
+    BenchScheduling, bench_config, include_serial_bench, open_volume, print_bench_config,
+    print_summary_enabled, run_parallel_ingest, run_serial_ingest, scheduling_sweep_values,
+    summary_run_count, worker_sweep_values, workload_shape,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
