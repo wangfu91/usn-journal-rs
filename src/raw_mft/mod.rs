@@ -34,6 +34,7 @@ mod attr_list;
 mod bootstrap;
 mod chunk_plan;
 mod entry_build;
+pub mod history;
 mod io;
 mod layout;
 mod options;
