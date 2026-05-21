@@ -19,7 +19,11 @@ use std::env;
 
 use divan::Bencher;
 use usn_journal_rs::{
-    errors::UsnError, mft::MftEntry, path::PathResolver, raw_mft::RawMft, volume::Volume,
+    errors::UsnError,
+    mft::MftEntry,
+    path::PathResolver,
+    raw_mft::{RawMft, RawMftEntry},
+    volume::Volume,
 };
 
 /// Run the Divan benchmark harness.
@@ -76,6 +80,28 @@ fn collect_test_entries(volume: &Volume) -> Vec<MftEntry> {
                 file_attributes: usn_journal_rs::FileAttributes::empty(),
             };
             entries.push(mft_entry);
+            if entries.len() >= NUM_TEST_ENTRIES {
+                break;
+            }
+        }
+    }
+    entries
+}
+
+/// Collect a list of raw `$MFT` entries up to NUM_TEST_ENTRIES.
+fn collect_raw_test_entries(volume: &Volume) -> Vec<RawMftEntry> {
+    let mft = match RawMft::new(volume) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("skipping: {e}");
+            return Vec::new();
+        }
+    };
+
+    let mut entries = Vec::new();
+    if let Ok(it) = mft.try_iter() {
+        for entry in it.flatten() {
+            entries.push(entry);
             if entries.len() >= NUM_TEST_ENTRIES {
                 break;
             }
@@ -151,7 +177,7 @@ fn resolver_raw_mft_optimized(bencher: Bencher) {
         }
     };
 
-    let entries = collect_test_entries(&volume);
+    let entries = collect_raw_test_entries(&volume);
 
     if entries.is_empty() {
         eprintln!("skipping: no entries collected");
@@ -159,7 +185,7 @@ fn resolver_raw_mft_optimized(bencher: Bencher) {
     }
 
     bencher.bench_local(|| {
-        let mut resolver = match mft.path_resolver() {
+        let resolver = match mft.path_resolver() {
             Ok(r) => r,
             Err(e) => {
                 eprintln!("skipping: {e}");

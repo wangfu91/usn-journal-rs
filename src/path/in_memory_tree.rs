@@ -133,7 +133,7 @@ impl InMemoryDirTree {
     }
 
     /// Resolve a path and optionally prepend a drive-letter prefix.
-    pub(super) fn resolve_with_optional_drive(
+    pub(crate) fn resolve_with_optional_drive(
         &self,
         fid: Fid,
         drive: Option<char>,

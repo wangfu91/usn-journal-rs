@@ -1,6 +1,6 @@
 //! Rich per-record metadata extracted from a single FILE record.
 
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsString;
 use std::os::windows::ffi::OsStringExt;
 
 use log::warn;
@@ -14,7 +14,6 @@ use super::{
 use crate::{
     Fid, FileAttributes, Filetime,
     file_attributes::FileAttributeView,
-    path::PathResolvableEntry,
     raw_mft::layout::{
         attribute::{FileNameNamespace, NtfsAttribute, file_attr_flags},
         data_run::{DataRunSummary, summarize_runs},
@@ -451,21 +450,6 @@ impl FileAttributeView for RawMftEntry {
     }
 }
 
-impl PathResolvableEntry for RawMftEntry {
-    fn fid(&self) -> Fid {
-        self.file_reference
-    }
-    fn parent_fid(&self) -> Fid {
-        self.parent_reference
-    }
-    fn file_name(&self) -> &OsStr {
-        &self.file_name
-    }
-    fn is_dir(&self) -> bool {
-        self.is_directory
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -654,15 +638,15 @@ mod tests {
     }
 
     #[test]
-    fn path_resolvable_returns_unmasked_fids() {
+    fn raw_mft_entry_exposes_unmasked_fids() {
         let mut buf = build_test_record(42);
         let rec = FileRecord::parse(42, None, &mut buf).expect("parse");
         let (entry, _) = RawMftEntry::from_record_with_attr_list(&rec, EntryBuildOptions::full());
         // file_reference = (seq << 48) | record_number; with seq=1, record=42
-        assert_eq!(entry.fid(), Fid::new((1u64 << 48) | 42));
+        assert_eq!(entry.file_reference, Fid::new((1u64 << 48) | 42));
         // parent_directory_reference was built as (5 << 48) | 5
-        assert_eq!(entry.parent_fid(), Fid::new((5u64 << 48) | 5));
-        assert_eq!(entry.file_name(), &OsString::from("hello.txt"));
-        assert!(!entry.is_dir());
+        assert_eq!(entry.parent_reference, Fid::new((5u64 << 48) | 5));
+        assert_eq!(entry.file_name, OsString::from("hello.txt"));
+        assert!(!entry.is_directory);
     }
 }

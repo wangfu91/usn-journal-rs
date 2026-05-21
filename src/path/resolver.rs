@@ -3,10 +3,10 @@
 use lru::LruCache;
 use std::{cell::RefCell, num::NonZeroUsize, path::PathBuf};
 
-use crate::{UsnResult, raw_mft::RawMft, volume::Volume};
+use crate::volume::Volume;
 
 use super::{
-    InMemoryDirTree, PathResolvableEntry,
+    PathResolvableEntry,
     resolve::{DirLruCache, resolve_path, resolve_path_with_cache},
 };
 
@@ -16,7 +16,7 @@ const DEFAULT_DIRECTORY_CACHE_CAPACITY: NonZeroUsize = unsafe {
     NonZeroUsize::new_unchecked(4096)
 };
 
-/// Resolves file paths from file IDs on an NTFS/ReFS volume.
+/// Resolves current on-disk paths from file IDs on an NTFS/ReFS volume.
 ///
 /// Use [`PathResolver::new`] to configure and construct an instance:
 ///
@@ -35,12 +35,12 @@ const DEFAULT_DIRECTORY_CACHE_CAPACITY: NonZeroUsize = unsafe {
 /// let resolver = PathResolver::new(&volume).with_directory_cache(0);
 /// ```
 ///
-/// For full raw-`$MFT` scans, prefer [`crate::raw_mft::RawMft::path_resolver`]
-/// to enable the crate's internal fast path automatically.
+/// For raw-`$MFT` snapshot resolution, use
+/// [`crate::raw_mft::RawMft::path_resolver`] instead.
 ///
-/// `PathResolver` is intentionally `!Sync` — it carries an internal
-/// scratch buffer (and optional internal path index) accessed via
-/// interior mutability to keep the public `resolve_path` signature ergonomic.
+/// `PathResolver` is intentionally `!Sync` — it carries an internal scratch
+/// buffer accessed via interior mutability to keep the public `resolve_path`
+/// signature ergonomic.
 #[derive(Debug)]
 pub struct PathResolver<'a> {
     /// Volume on which file IDs will be resolved.
@@ -49,8 +49,6 @@ pub struct PathResolver<'a> {
     pub(super) dir_fid_path_cache: Option<DirLruCache>,
     /// Reusable heap buffer for `GetFileInformationByHandleEx` calls.
     buffer: RefCell<Vec<u8>>,
-    /// Optional fully in-memory NTFS directory tree.
-    pub(super) in_memory_tree: Option<InMemoryDirTree>,
 }
 
 impl<'a> PathResolver<'a> {
@@ -58,15 +56,15 @@ impl<'a> PathResolver<'a> {
     ///
     /// Use [`Self::with_directory_cache`] to resize or disable the cache.
     ///
-    /// For raw-`$MFT` scans, prefer [`crate::raw_mft::RawMft::path_resolver`]
-    /// instead of manually constructing a resolver.
+    /// This resolver is intended for live/current path resolution against the
+    /// mounted volume. For raw-`$MFT` snapshot scans, prefer
+    /// [`crate::raw_mft::RawMft::path_resolver`].
     #[must_use]
     pub fn new(volume: &'a Volume) -> Self {
         Self {
             volume,
             dir_fid_path_cache: Some(LruCache::new(DEFAULT_DIRECTORY_CACHE_CAPACITY)),
             buffer: RefCell::new(Vec::new()),
-            in_memory_tree: None,
         }
     }
 
@@ -84,35 +82,13 @@ impl<'a> PathResolver<'a> {
         self
     }
 
-    /// Create a resolver that uses the internal raw-`$MFT` path index.
+    /// Resolve `entry` to its current on-disk path, using the directory cache
+    /// when configured and falling back to `OpenFileById` syscalls.
     ///
-    /// This constructor is crate-internal so the raw-`$MFT` fast path stays
-    /// tied to [`crate::raw_mft::RawMft::path_resolver`] instead of leaking
-    /// the index-building detail through the public `path` API.
-    pub(crate) fn from_raw_mft(raw_mft: &RawMft<'a>) -> UsnResult<Self> {
-        Ok(Self {
-            volume: raw_mft.volume(),
-            dir_fid_path_cache: None,
-            buffer: RefCell::new(Vec::new()),
-            in_memory_tree: Some(InMemoryDirTree::try_from(raw_mft)?),
-        })
-    }
-
-    /// Resolve `entry` to a full path, using the in-memory tree (if
-    /// configured), then the directory cache (if configured), falling back to
-    /// `OpenFileById` syscalls.
-    ///
-    /// Standard 64-bit NTFS IDs can use all resolver strategies. Extended
-    /// 128-bit IDs (for example ReFS `USN_RECORD_V3` entries) skip the
-    /// in-memory raw-`$MFT` tree and are resolved via `OpenFileById`.
+    /// Standard 64-bit NTFS IDs and extended 128-bit IDs (for example ReFS
+    /// `USN_RECORD_V3` entries) are both resolved via the live volume.
     #[must_use]
     pub fn resolve_path<E: PathResolvableEntry + ?Sized>(&mut self, entry: &E) -> Option<PathBuf> {
-        if let Some(tree) = &self.in_memory_tree
-            && let Some(p) =
-                tree.resolve_with_optional_drive(entry.fid(), self.volume.drive_letter())
-        {
-            return Some(p);
-        }
         if let Some(cache) = &mut self.dir_fid_path_cache {
             resolve_path_with_cache(
                 self.volume,

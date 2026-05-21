@@ -4,8 +4,20 @@ use std::ffi::OsStr;
 
 use crate::{Fid, journal::UsnEntry, mft::MftEntry};
 
-/// Trait for entries that can be resolved to a file path.
-pub trait PathResolvableEntry {
+pub(crate) mod sealed {
+    use crate::{journal::UsnEntry, mft::MftEntry};
+
+    pub trait Sealed {}
+
+    impl Sealed for MftEntry {}
+    impl Sealed for UsnEntry {}
+}
+
+/// Trait for live/current entries that can be resolved by [`crate::path::PathResolver`].
+///
+/// This trait is sealed to crate-defined entry types so the live path resolver
+/// stays aligned with the semantics of the underlying enumeration APIs.
+pub trait PathResolvableEntry: sealed::Sealed {
     /// Return the entry's file identifier.
     fn fid(&self) -> Fid;
     /// Return the parent directory's file identifier.

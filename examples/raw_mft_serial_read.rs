@@ -36,8 +36,7 @@ fn run() -> Result<(), UsnError> {
 
     let volume = Volume::from_drive_letter(drive_letter)?;
     let mft = RawMft::new(&volume)?;
-    let mut resolver = mft.path_resolver()?;
-    //let mut resolver = PathResolver::new(&volume);
+    let resolver = mft.path_resolver()?;
 
     println!(
         "$MFT: {} records, cluster_size={}, file_record_size={}",

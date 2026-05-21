@@ -37,7 +37,7 @@ fn raw_mft_path_resolver_paths_exist_on_disk() {
         Err(e) => panic!("RawMft::new failed unexpectedly: {e}"),
     };
 
-    let mut resolver = raw_mft
+    let resolver = raw_mft
         .path_resolver()
         .expect("RawMft::path_resolver should not fail on NTFS");
 

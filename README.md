@@ -90,9 +90,9 @@ Benchmarks are run with [Divan](https://github.com/nvzqz/divan) on a 200 k-recor
   zero-copy fixup parsing (`VolumeReader::borrow_at`) and elimination of per-record memcpy.
 - **Default syscall path resolution** — `PathResolver::new(&volume)` now includes an
   LRU directory cache out of the box, so USN/MFT scans avoid the old uncached-by-default
-  behavior unless you explicitly opt out with `.without_lru_cache()`.
-- **In-memory directory-tree path resolution** — ~40× faster than the syscall-based resolver
-  for full-volume scans (<500 ms vs ~21 s). Use `PathResolver::new(v).with_in_memory_tree(&raw_mft)?`.
+  behavior unless you explicitly opt out with `.with_directory_cache(0)`.
+- **Raw-`$MFT` snapshot path resolution** — ~40× faster than the syscall-based resolver
+  for full-volume scans (<500 ms vs ~21 s). Use `raw_mft.path_resolver()?`.
 - **Buffer size** — tune with `RawMftScanOptions::builder().buffer_bytes(NonZeroUsize::new(256 * 1024).unwrap()).build()`.
 
 For the newer raw-`$MFT` ingest throughput work, use the Criterion harness in

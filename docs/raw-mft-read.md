@@ -610,10 +610,10 @@ A sequence-number mismatch between a stored reference and the current record hea
 means the record has been reused — the original file was deleted and a new one now
 occupies that slot.
 
-The current `PathResolver::with_in_memory_tree` implementation intentionally
-discards the sequence bits when keying the directory tree by record number.  A
-stale file reference therefore resolves to the *current occupant* of that record
-number rather than returning `None`.  This is a deliberate trade-off: the in-memory
+The current `RawMftPathResolver` implementation intentionally discards the
+sequence bits when keying the directory tree by record number.  A stale file
+reference therefore resolves to the *current occupant* of that record number
+rather than returning `None`.  This is a deliberate trade-off: the in-memory
 tree is built from a single-point-in-time MFT scan so internal references are
 always consistent within that snapshot, and the simpler lookup avoids a separate
 sequence-validation step per path component.

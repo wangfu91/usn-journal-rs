@@ -194,7 +194,13 @@ fn raw_mft_and_mft_api_agree_on_sampled_entries() {
 
     // Fallback for environments that only surface extended MFT IDs.
     let mut raw_paths = HashSet::with_capacity(PATH_TARGET);
-    let mut raw_path_resolver = PathResolver::new(&volume);
+    let raw_path_resolver = match raw_mft.path_resolver() {
+        Ok(resolver) => resolver,
+        Err(e) => {
+            eprintln!("raw_mft_mft_consistency: skipping raw path fallback ({e})");
+            return;
+        }
+    };
     for raw_entry in raw_mft
         .try_iter()
         .expect("RawMft::try_iter failed")

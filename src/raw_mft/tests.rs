@@ -18,7 +18,6 @@ fn options_defaults_are_sensible() {
 
 mod integration_tests {
     use super::super::*;
-    use crate::path::PathResolver;
     use crate::volume::Volume;
     use std::env;
 
@@ -54,7 +53,7 @@ mod integration_tests {
             Err(UsnError::UnsupportedFilesystem(_)) => return,
             Err(e) => panic!("RawMft::new failed: {e}"),
         };
-        let mut resolver = PathResolver::new(&volume).with_directory_cache(4096);
+        let resolver = mft.path_resolver().expect("raw mft path resolver");
         let mut resolved_any = false;
         // Cap the search so the test stays bounded on huge volumes.
         for r in mft.try_iter().expect("iter").flatten().take(20_000) {

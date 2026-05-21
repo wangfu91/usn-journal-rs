@@ -39,6 +39,7 @@ mod io;
 mod layout;
 mod options;
 mod parallel;
+mod path_resolver;
 mod reader;
 mod serial;
 #[cfg(test)]
@@ -49,7 +50,6 @@ use std::sync::Arc;
 
 use crate::{
     errors::UsnError,
-    path::PathResolver,
     raw_mft::{
         entry_build::EntryBuildOptions,
         io::VolumeReader,
@@ -69,6 +69,7 @@ pub use options::{
 };
 pub use parallel::RawMftParallelScan;
 pub use parallel::RawMftParallelScheduling;
+pub use path_resolver::RawMftPathResolver;
 pub use serial::RawMftIter;
 
 /// Default I/O buffer size for raw `$MFT` iteration.
@@ -127,14 +128,13 @@ impl<'a> RawMft<'a> {
         self.boot.file_record_size
     }
 
-    /// Create a [`PathResolver`] optimized for entries produced by this raw `$MFT` reader.
+    /// Create a [`RawMftPathResolver`] for entries produced by this raw `$MFT` reader.
     ///
-    /// This builds the crate's internal path index once from the current
-    /// raw-`$MFT` scan and uses it for O(1)-style path resolution during
-    /// subsequent `resolve_path` calls. It is intended for bulk raw-`$MFT`
-    /// iteration, not general-purpose journal or FSCTL-based enumeration.
-    pub fn path_resolver(&self) -> crate::UsnResult<PathResolver<'a>> {
-        PathResolver::from_raw_mft(self)
+    /// The returned resolver uses a snapshot-local in-memory directory tree by
+    /// default. Call [`RawMftPathResolver::with_live_fallback`] if you explicitly
+    /// want best-effort current-volume fallback for snapshot misses.
+    pub fn path_resolver(&self) -> crate::UsnResult<RawMftPathResolver<'a>> {
+        RawMftPathResolver::new(self)
     }
 
     /// Read a single record by number. Returns `Ok(None)` when the

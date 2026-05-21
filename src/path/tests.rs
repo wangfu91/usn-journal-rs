@@ -1,3 +1,4 @@
+use super::entry::sealed::Sealed;
 use super::*;
 
 use crate::{Fid, mft::MftEntry, usn_record::UsnRecordView, volume::Volume};
@@ -19,6 +20,8 @@ struct MockEntry {
     file_name: OsString,
     is_dir: bool,
 }
+
+impl Sealed for MockEntry {}
 
 impl PathResolvableEntry for MockEntry {
     fn fid(&self) -> Fid {
@@ -310,7 +313,6 @@ fn resolver_default_has_directory_cache_and_no_tree() {
     let volume = create_mock_volume();
     let resolver = PathResolver::new(&volume);
     assert!(resolver.dir_fid_path_cache.is_some());
-    assert!(resolver.in_memory_tree.is_none());
 }
 
 #[test]
@@ -318,7 +320,6 @@ fn resolver_without_directory_cache_disables_cache() {
     let volume = create_mock_volume();
     let resolver = PathResolver::new(&volume).with_directory_cache(0);
     assert!(resolver.dir_fid_path_cache.is_none());
-    assert!(resolver.in_memory_tree.is_none());
 }
 
 #[test]
@@ -326,7 +327,6 @@ fn builder_with_directory_cache_sets_cache() {
     let volume = create_mock_volume();
     let resolver = PathResolver::new(&volume).with_directory_cache(64);
     assert!(resolver.dir_fid_path_cache.is_some());
-    assert!(resolver.in_memory_tree.is_none());
 }
 
 #[test]

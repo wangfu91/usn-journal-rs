@@ -72,7 +72,11 @@ pub type UsnResult<T> = std::result::Result<T, UsnError>;
 pub mod prelude {
     pub use crate::{
         Fid, FileAttributes, Filetime, Usn, UsnError, UsnReason, UsnResult, UsnSourceInfo,
-        journal::UsnJournal, mft::Mft, path::PathResolver, raw_mft::RawMft, volume::Volume,
+        journal::UsnJournal,
+        mft::Mft,
+        path::PathResolver,
+        raw_mft::{RawMft, RawMftPathResolver},
+        volume::Volume,
     };
 }
 
@@ -98,6 +102,7 @@ mod tests {
         accepts::<prelude::UsnJournal>();
         accepts::<prelude::Mft>();
         accepts::<prelude::RawMft<'_>>();
+        accepts::<prelude::RawMftPathResolver<'_>>();
         accepts::<prelude::PathResolver<'_>>();
         accepts::<prelude::UsnError>();
         accepts::<prelude::Usn>();

@@ -20,7 +20,7 @@ use crate::{Fid, volume::Volume};
 pub(super) type DirLruCache = LruCache<Fid, (Arc<Path>, OsString)>;
 
 /// Resolve a path without using the directory cache.
-pub(super) fn resolve_path(
+pub(crate) fn resolve_path(
     volume: &Volume,
     fid: Fid,
     parent_fid: Fid,

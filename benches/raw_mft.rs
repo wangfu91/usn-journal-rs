@@ -13,9 +13,7 @@
 use std::env;
 
 use divan::Bencher;
-use usn_journal_rs::{
-    errors::UsnError, mft::Mft, path::PathResolver, raw_mft::RawMft, volume::Volume,
-};
+use usn_journal_rs::{errors::UsnError, mft::Mft, raw_mft::RawMft, volume::Volume};
 
 /// Run the Divan benchmark harness.
 fn main() {
@@ -92,7 +90,7 @@ fn usn_mft_iter(bencher: Bencher) {
     });
 }
 
-/// Benchmark raw `$MFT` iteration with uncached path resolution.
+/// Benchmark raw `$MFT` iteration with snapshot-local path resolution.
 #[divan::bench]
 fn raw_mft_iter_with_path_resolver(bencher: Bencher) {
     let Some(volume) = open_volume() else { return };
@@ -104,7 +102,13 @@ fn raw_mft_iter_with_path_resolver(bencher: Bencher) {
         }
     };
     bencher.bench_local(|| {
-        let mut resolver = PathResolver::new(&volume);
+        let resolver = match mft.path_resolver() {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("skipping: {e}");
+                return divan::black_box(0u64);
+            }
+        };
         let mut count = 0u64;
         if let Ok(it) = mft.try_iter() {
             for r in it.flatten().take(BENCH_RECORD_LIMIT) {
@@ -116,7 +120,7 @@ fn raw_mft_iter_with_path_resolver(bencher: Bencher) {
     });
 }
 
-/// Benchmark raw `$MFT` iteration with the default cached resolver.
+/// Benchmark raw `$MFT` iteration with snapshot resolution plus explicit live fallback.
 #[divan::bench]
 fn raw_mft_iter_with_cached_resolver(bencher: Bencher) {
     let Some(volume) = open_volume() else { return };
@@ -128,7 +132,13 @@ fn raw_mft_iter_with_cached_resolver(bencher: Bencher) {
         }
     };
     bencher.bench_local(|| {
-        let mut resolver = PathResolver::new(&volume);
+        let resolver = match mft.path_resolver() {
+            Ok(r) => r.with_live_fallback(),
+            Err(e) => {
+                eprintln!("skipping: {e}");
+                return divan::black_box(0u64);
+            }
+        };
         let mut count = 0u64;
         if let Ok(it) = mft.try_iter() {
             for r in it.flatten().take(BENCH_RECORD_LIMIT) {
