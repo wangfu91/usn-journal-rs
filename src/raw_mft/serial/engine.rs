@@ -21,7 +21,6 @@ pub(in crate::raw_mft) struct SerialParseState {
     offset_cursor: ExtentLookupCursor,
     record_size: usize,
     skip_unused: bool,
-    skip_extension_records: bool,
 }
 
 impl SerialParseState {
@@ -47,7 +46,6 @@ impl SerialParseState {
             offset_cursor: ExtentLookupCursor::default(),
             record_size: mft.boot.file_record_size as usize,
             skip_unused: options.skip_unused,
-            skip_extension_records: options.skip_extension_records,
         }
     }
 }
@@ -97,7 +95,7 @@ where
             }
         };
 
-        if state.skip_extension_records && record.base_reference() != 0 {
+        if record.base_reference() != 0 {
             continue;
         }
 

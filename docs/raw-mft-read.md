@@ -228,13 +228,13 @@ If that succeeds, it calls `FileRecord::parse`, which applies the USA fixup in p
 
 Parse failures are logged and skipped. They do not terminate the whole scan.
 
-#### 5. Reject extension records early (when `skip_extension_records` is true)
+#### 5. Reject extension records early
 
 Before building the high-level entry, the iterator reads `base_reference` from the
 parsed FILE record header.
 
-If `skip_extension_records` is true (the default) and `base_reference != 0`, the
-iterator discards the record immediately.  No attribute walk is performed.
+If `base_reference != 0`, the iterator discards the record immediately. No
+attribute walk is performed.
 
 Extension records are explained in detail in the
 [Record filtering for Explorer-like output](#record-filtering-for-explorer-like-output)
@@ -474,7 +474,6 @@ The benchmark is not trying to expose every bit of `RawMftEntry`. It is measurin
 
 So it deliberately trims work by using iterator options that disable several expensive or unnecessary pieces of metadata:
 
-- `skip_extension_records(true)`
 - `collect_alternate_data_streams(false)`
 - `collect_data_run_summary(false)`
 - `collect_dos_file_name_links(false)`
@@ -530,10 +529,11 @@ The current reader gets most of its performance from a small number of deliberat
 - Deterministic ordered merge at chunk granularity instead of record granularity.
 - Folded parallel ingestion when the consumer does not need to retain full batch objects.
 
-## Record filtering for Explorer-like output
+## Record filtering and normalization for Explorer-like output
 
-The raw-MFT reader exposes two independent filters that together produce a
-"current live filesystem" view — the same set of entries Windows Explorer shows.
+The raw-MFT reader applies one configurable filter plus one built-in
+normalization step to produce a "current live filesystem" view — the same set
+of entries Windows Explorer shows.
 
 ### In-use filtering (`skip_unused`, default `true`)
 
@@ -550,7 +550,7 @@ reader falls back to the header `IN_USE` flag as a secondary guard; in that case
 every record is fully parsed and only records with `flags & 0x0001 == 0` are
 discarded.
 
-### Extension-record filtering (`skip_extension_records`, default `true`)
+### Extension-record filtering (always on)
 
 #### What extension records are
 
@@ -583,9 +583,9 @@ If extension records are not filtered, the iterator yields one entry per FILE
 record, so the same file appears multiple times — once as the base entry and once
 (or more) as partial, attribute-incomplete extension views.
 
-With `skip_extension_records = true` (the default) the reader rejects each
-extension record immediately after the USA fixup and before the expensive attribute
-walk, keeping one output entry per unique file or directory.
+The reader always rejects each extension record immediately after the USA fixup
+and before the expensive attribute walk, keeping one output entry per unique
+file or directory.
 
 #### Interaction with `$ATTRIBUTE_LIST` enrichment
 
@@ -632,8 +632,8 @@ With factory defaults, each record number passes through these gates in order:
 3. **Buffer borrow**: bring record bytes into the aligned reader buffer.
 4. **Signature check** (`FileRecord::is_valid`): reject non-FILE records.
 5. **USA fixup** (`FileRecord::parse`): verify and repair sector trailers.
-6. **Extension-record check** (`skip_extension_records = true`): reject records
-   whose `base_reference != 0` before the attribute walk.
+6. **Extension-record check**: reject records whose `base_reference != 0`
+   before the attribute walk.
 7. **Attribute walk + entry build**: produce one `RawMftEntry` per base record.
 8. **`$ATTRIBUTE_LIST` enrichment** (when needed): load overflow attributes from
    extension records and merge them into the base entry.
@@ -648,7 +648,7 @@ that Windows Explorer presents.
 - Sparse regions in the extent map are skipped.
 - Parallel chunk parsing requires the original `Volume` to be reopenable from a drive letter or mount point.
 - Attribute-list enrichment is intentionally one level deep.
-- `skip_extension_records` changes what is yielded, but base records can still be enriched from extension records.
+- Extension records are never yielded as standalone entries, but base records can still be enriched from them.
 
 ## Practical mental model
 

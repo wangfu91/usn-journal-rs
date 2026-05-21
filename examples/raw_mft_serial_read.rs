@@ -10,7 +10,11 @@
 //! ```
 
 use std::env;
-use usn_journal_rs::{errors::UsnError, path::PathResolver, raw_mft::RawMft, volume::Volume};
+use usn_journal_rs::{
+    errors::UsnError,
+    raw_mft::{RawMft, RawMftScanOptions},
+    volume::Volume,
+};
 
 const MAX_ENTRIES: usize = 1_000;
 
@@ -32,7 +36,8 @@ fn run() -> Result<(), UsnError> {
 
     let volume = Volume::from_drive_letter(drive_letter)?;
     let mft = RawMft::new(&volume)?;
-    let mut resolver = PathResolver::new(&volume);
+    let mut resolver = mft.path_resolver()?;
+    //let mut resolver = PathResolver::new(&volume);
 
     println!(
         "$MFT: {} records, cluster_size={}, file_record_size={}",
@@ -42,7 +47,13 @@ fn run() -> Result<(), UsnError> {
     );
 
     let mut count = 0u64;
-    for result in mft.try_iter()?.take(MAX_ENTRIES) {
+    let options = RawMftScanOptions::builder()
+        .skip_unused(false)
+        .collect_alternate_data_streams(true)
+        .collect_data_run_summary(true)
+        .collect_dos_file_name_links(true)
+        .build();
+    for result in mft.try_iter_with_options(options)?.take(MAX_ENTRIES) {
         match result {
             Ok(entry) => {
                 let path = resolver.resolve_path(&entry);

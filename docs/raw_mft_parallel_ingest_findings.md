@@ -93,45 +93,45 @@ Observed medians from the current chunk-size sweep (`workers=10`, `dynamic`,
 default buffers at the time):
 
 | Chunk records | Planned chunks | Median time |
-| --- | ---: | ---: |
-| 1,024 | 2,595 | ~2.53 s |
-| 2,048 | 1,329 | ~2.49 s |
-| 4,096 | 680 | ~2.51 s |
-| 8,192 | 351 | ~2.56 s |
+| ------------- | -------------: | ----------: |
+| 1,024         |          2,595 |     ~2.53 s |
+| 2,048         |          1,329 |     ~2.49 s |
+| 4,096         |            680 |     ~2.51 s |
+| 8,192         |            351 |     ~2.56 s |
 
 Observed medians from the follow-up worker and scheduling sweeps with
 `chunk_records=2048`:
 
-| Mode | Workers | Median time |
-| --- | ---: | ---: |
-| Dynamic | 8 | ~2.55 s |
-| Dynamic | 10 | ~2.50 s |
-| Dynamic | 11 | ~2.48 s |
-| Dynamic | 12 | ~2.51 s |
-| Contiguous | 11 | ~3.67 s |
+| Mode       | Workers | Median time |
+| ---------- | ------: | ----------: |
+| Dynamic    |       8 |     ~2.55 s |
+| Dynamic    |      10 |     ~2.50 s |
+| Dynamic    |      11 |     ~2.48 s |
+| Dynamic    |      12 |     ~2.51 s |
+| Contiguous |      11 |     ~3.67 s |
 
 Observed medians from the main-buffer sweep with `chunk_records=2048`,
 `workers=11`, `dynamic`, and `attr_buffer=16 KiB`:
 
 | Main buffer | Median time |
-| --- | ---: |
-| 64 KiB | ~2.51 s |
-| 128 KiB | ~2.38 s |
-| 256 KiB | ~2.35 s |
-| 512 KiB | ~2.38 s |
-| 1 MiB | ~2.41 s |
-| 2 MiB | ~2.44 s |
+| ----------- | ----------: |
+| 64 KiB      |     ~2.51 s |
+| 128 KiB     |     ~2.38 s |
+| 256 KiB     |     ~2.35 s |
+| 512 KiB     |     ~2.38 s |
+| 1 MiB       |     ~2.41 s |
+| 2 MiB       |     ~2.44 s |
 
 Observed medians from the attribute-buffer sweep with `chunk_records=2048`,
 `workers=11`, `dynamic`, and `main_buffer=256 KiB`:
 
 | Attribute buffer | Median time |
-| --- | ---: |
-| 4 KiB | ~2.39 s |
-| 8 KiB | ~2.35 s |
-| 16 KiB | ~2.35 s |
-| 32 KiB | ~2.41 s |
-| 64 KiB | ~2.64 s |
+| ---------------- | ----------: |
+| 4 KiB            |     ~2.39 s |
+| 8 KiB            |     ~2.35 s |
+| 16 KiB           |     ~2.35 s |
+| 32 KiB           |     ~2.41 s |
+| 64 KiB           |     ~2.64 s |
 
 Conclusion for this workload:
 
@@ -149,10 +149,10 @@ require manually copying every median out of the Criterion log.
 
 ### Current worktree vs detached `HEAD` with the same harness
 
-| Revision | Result |
-| --- | --- |
+| Revision                          | Result                               |
+| --------------------------------- | ------------------------------------ |
 | Detached `HEAD` + current harness | `time: [3.4421 s 3.4763 s 3.5208 s]` |
-| Current worktree | `time: [3.4310 s 3.4428 s 3.4544 s]` |
+| Current worktree                  | `time: [3.4310 s 3.4428 s 3.4544 s]` |
 
 Conclusion: the current parser-side diff is still a real win and was **kept**.
 
@@ -160,9 +160,9 @@ Conclusion: the current parser-side diff is still a real win and was **kept**.
 
 The saved `round2-start` baseline in the current worktree was:
 
-| Baseline | Result |
-| --- | --- |
-| `round2-start` | `time: [3.6494 s 3.6835 s 3.7254 s]` |
+| Baseline               | Result                               |
+| ---------------------- | ------------------------------------ |
+| `round2-start`         | `time: [3.6494 s 3.6835 s 3.7254 s]` |
 | Current worktree rerun | `time: [3.4310 s 3.4428 s 3.4544 s]` |
 
 Criterion also reported:
@@ -194,21 +194,21 @@ work and also was **not** kept as a code change:
 Initial sweep at `11` workers, `2048` chunk records, and `256 KiB` / `16 KiB`
 buffers looked mildly promising for the 2-chunk batch:
 
-| Scheduling | Median time |
-| --- | ---: |
-| Dynamic | ~2.43 s |
-| Dynamic batched, 2 chunks | ~2.38 s |
-| Dynamic batched, 4 chunks | ~2.43 s |
-| Dynamic batched, 8 chunks | ~2.51 s |
-| Contiguous | ~3.36 s |
+| Scheduling                | Median time |
+| ------------------------- | ----------: |
+| Dynamic                   |     ~2.43 s |
+| Dynamic batched, 2 chunks |     ~2.38 s |
+| Dynamic batched, 4 chunks |     ~2.43 s |
+| Dynamic batched, 8 chunks |     ~2.51 s |
+| Contiguous                |     ~3.36 s |
 
 But two follow-up confirmation runs with fixed worker counts did **not** hold up
 that apparent win:
 
 | Workers | Dynamic | Dynamic batched, 2 chunks |
-| ---: | ---: | ---: |
-| 10 | ~2.34 s | ~2.36 s |
-| 11 | ~2.35 s | ~2.36 s |
+| ------: | ------: | ------------------------: |
+|      10 | ~2.34 s |                   ~2.36 s |
+|      11 | ~2.35 s |                   ~2.36 s |
 
 Conclusion: batching chunk claims may slightly reduce the atomic scheduling rate,
 but on this workload it does not produce a stable enough locality win to beat or
@@ -272,16 +272,16 @@ wpr -stop tmp\raw_mft_parallel_ingest_validation\etw\raw_mft_parallel_ingest_con
 Profile elapsed times from the matched runs:
 
 | Scheduling | Profile elapsed |
-| --- | ---: |
-| Dynamic | ~2.692 s |
-| Contiguous | ~4.410 s |
+| ---------- | --------------: |
+| Dynamic    |        ~2.692 s |
+| Contiguous |        ~4.410 s |
 
 Quick `xperf -a diskio -detail` summaries for the profile process showed:
 
 | Scheduling | Read count | Read MiB | Avg read I/O us | Avg read service us | Avg read QD start |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Dynamic | 58,693 | ~3228.0 | ~186.7 | ~38.0 | ~5.08 |
-| Contiguous | 58,546 | ~3205.6 | ~154.7 | ~56.8 | ~2.21 |
+| ---------- | ---------: | -------: | --------------: | ------------------: | ----------------: |
+| Dynamic    |     58,693 |  ~3228.0 |          ~186.7 |               ~38.0 |             ~5.08 |
+| Contiguous |     58,546 |  ~3205.6 |          ~154.7 |               ~56.8 |             ~2.21 |
 
 So both runs issue almost the same total amount of read traffic, but they do not
 exercise the disk in the same way:
@@ -312,9 +312,9 @@ process (`\Device\HarddiskVolume2`) was sorted by request start time and the
 byte-offset jump between consecutive reads was summarized:
 
 | Scheduling | Exact sequential % | Jump <= 1 MiB % | Median abs jump |
-| --- | ---: | ---: | ---: |
-| Dynamic | `0.09%` | `3.91%` | ~`88.6 MiB` |
-| Contiguous | `0.92%` | `7.63%` | ~`885.9 MiB` |
+| ---------- | -----------------: | --------------: | --------------: |
+| Dynamic    |            `0.09%` |         `3.91%` |     ~`88.6 MiB` |
+| Contiguous |            `0.92%` |         `7.63%` |    ~`885.9 MiB` |
 
 These numbers are noisy because requests from multiple workers are interleaved on
 one time axis, and they show a mixed picture rather than one single locality
@@ -422,7 +422,7 @@ Even after switching back to dense logical chunk bands, chunk cost still is not
 uniform because the amount of *useful* work inside each band differs:
 
 - how many valid base FILE records they contain
-- how many extension records get skipped by `skip_extension_records(true)`
+- how many extension records get discarded before entry materialization
 - how often `$ATTRIBUTE_LIST` enrichment fires
 - how much string/link materialization each surviving base record needs
 

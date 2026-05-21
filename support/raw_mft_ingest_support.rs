@@ -109,7 +109,6 @@ impl BenchConfig {
             .buffer_bytes(self.main_buffer_bytes)
             .attr_buffer_bytes(self.attr_buffer_bytes)
             .skip_unused(true)
-            .skip_extension_records(true)
             .collect_alternate_data_streams(false)
             .collect_data_run_summary(false)
             .collect_dos_file_name_links(false)
@@ -692,7 +691,6 @@ mod tests {
         let chunk_options = config.chunk_plan_options();
 
         assert!(iter_options.skip_unused());
-        assert!(iter_options.skip_extension_records());
         assert!(chunk_options.skip_unused());
     }
 }
