@@ -86,7 +86,7 @@ pub const DEFAULT_BUFFER_BYTES: NonZeroUsize = unsafe {
 #[allow(clippy::useless_nonzero_new_unchecked)]
 pub const DEFAULT_ATTR_BUFFER_BYTES: NonZeroUsize = unsafe {
     // SAFETY: `64 * 1024` is a non-zero constant.
-    NonZeroUsize::new_unchecked(64 * 1024)
+    NonZeroUsize::new_unchecked(16 * 1024)
 };
 
 /// Raw `$MFT` reader bound to an open [`Volume`].
