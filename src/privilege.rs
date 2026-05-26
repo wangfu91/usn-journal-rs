@@ -1,21 +1,43 @@
 use std::mem::size_of;
 
 use windows::Win32::{
-    Foundation::HANDLE,
+    Foundation::{CloseHandle, HANDLE},
     Security::{GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation},
     System::Threading::{GetCurrentProcess, OpenProcessToken},
 };
 
+struct ScopedHandle(HANDLE);
+
+impl ScopedHandle {
+    fn new(handle: HANDLE) -> Self {
+        Self(handle)
+    }
+
+    fn raw(&self) -> HANDLE {
+        self.0
+    }
+}
+
+impl Drop for ScopedHandle {
+    fn drop(&mut self) {
+        if !self.0.is_invalid() {
+            let _ = unsafe { CloseHandle(self.0) };
+            self.0 = HANDLE::default();
+        }
+    }
+}
+
 pub(crate) fn is_elevated() -> windows::core::Result<bool> {
     let mut handle: HANDLE = HANDLE::default();
     unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut handle)? };
+    let handle = ScopedHandle::new(handle);
 
     let mut elevation = TOKEN_ELEVATION::default();
     let mut returned_length = 0;
 
     unsafe {
         GetTokenInformation(
-            handle,
+            handle.raw(),
             TokenElevation,
             Some(&mut elevation as *mut _ as *mut _),
             size_of::<TOKEN_ELEVATION>() as u32,
