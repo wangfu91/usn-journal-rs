@@ -14,7 +14,6 @@ use log::{debug, warn};
 use std::path::Path;
 use std::{ffi::OsString, os::windows::ffi::OsStringExt, time::SystemTime};
 use std::{ffi::c_void, mem::size_of};
-use windows::Win32::Foundation::HANDLE;
 use windows::Win32::Storage::FileSystem::{
     FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_HIDDEN, FILE_FLAGS_AND_ATTRIBUTES,
 };
@@ -116,7 +115,7 @@ impl<'a> UsnJournal<'a> {
     pub fn iter(&self) -> UsnResult<UsnJournalIter> {
         let journal_data = self.query(true)?;
         Ok(UsnJournalIter {
-            volume_handle: self.volume.handle,
+            volume: self.volume.clone(),
             journal_id: journal_data.journal_id,
             buffer: vec![0u8; DEFAULT_BUFFER_SIZE],
             bytes_read: 0,
@@ -136,7 +135,7 @@ impl<'a> UsnJournal<'a> {
     pub fn iter_with_options(&self, options: EnumOptions) -> UsnResult<UsnJournalIter> {
         let journal_data = self.query(true)?;
         Ok(UsnJournalIter {
-            volume_handle: self.volume.handle,
+            volume: self.volume.clone(),
             journal_id: journal_data.journal_id,
             buffer: vec![0u8; options.buffer_size],
             bytes_read: 0,
@@ -277,7 +276,7 @@ impl<'a> UsnJournal<'a> {
 ///
 /// This iterator yields `Result<UsnEntry, UsnError>` items.
 pub struct UsnJournalIter {
-    volume_handle: HANDLE,
+    volume: Volume,
     journal_id: u64,
     buffer: Vec<u8>,
     bytes_read: u32,
@@ -305,7 +304,7 @@ impl UsnJournalIter {
 
         if let Err(err) = unsafe {
             DeviceIoControl(
-                self.volume_handle,
+                self.volume.handle,
                 FSCTL_READ_USN_JOURNAL,
                 Some(&read_data as *const _ as *mut _),
                 size_of::<READ_USN_JOURNAL_DATA_V0>() as u32,
