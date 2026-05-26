@@ -186,8 +186,8 @@ impl<'a> UsnJournal<'a> {
 
     /// Core function to query the USN journal state.
     fn query_core(&self) -> std::result::Result<USN_JOURNAL_DATA_V0, windows::core::Error> {
-        let journal_data = USN_JOURNAL_DATA_V0::default();
-        let bytes_return = 0u32;
+        let mut journal_data = USN_JOURNAL_DATA_V0::default();
+        let mut bytes_return = 0u32;
 
         unsafe {
             // https://learn.microsoft.com/en-us/windows/win32/fileio/using-the-change-journal-identifier
@@ -202,9 +202,9 @@ impl<'a> UsnJournal<'a> {
                 FSCTL_QUERY_USN_JOURNAL,
                 None,
                 0,
-                Some(&journal_data as *const _ as *mut _),
+                Some((&mut journal_data as *mut USN_JOURNAL_DATA_V0).cast()),
                 std::mem::size_of::<USN_JOURNAL_DATA_V0>() as u32,
-                Some(&bytes_return as *const _ as *mut _),
+                Some(&mut bytes_return),
                 None,
             )
         }?;
