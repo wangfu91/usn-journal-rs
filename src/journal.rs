@@ -12,8 +12,9 @@ use crate::{
 use chrono::{DateTime, Local};
 use log::{debug, warn};
 use std::path::Path;
-use std::{ffi::OsString, os::windows::ffi::OsStringExt, sync::Arc, time::SystemTime};
+use std::{ffi::OsString, os::windows::ffi::OsStringExt, time::SystemTime};
 use std::{ffi::c_void, mem::size_of};
+use std::rc::Rc;
 use windows::{
     core::Owned,
     Win32::{
@@ -119,8 +120,7 @@ impl<'a> UsnJournal<'a> {
     pub fn iter(&self) -> UsnResult<UsnJournalIter> {
         let journal_data = self.query(true)?;
         Ok(UsnJournalIter {
-            _handle_owner: self.volume.shared_handle(),
-            handle: self.volume.handle(),
+            handle: self.volume.shared_handle(),
             journal_id: journal_data.journal_id,
             buffer: vec![0u8; DEFAULT_BUFFER_SIZE],
             bytes_read: 0,
@@ -140,8 +140,7 @@ impl<'a> UsnJournal<'a> {
     pub fn iter_with_options(&self, options: EnumOptions) -> UsnResult<UsnJournalIter> {
         let journal_data = self.query(true)?;
         Ok(UsnJournalIter {
-            _handle_owner: self.volume.shared_handle(),
-            handle: self.volume.handle(),
+            handle: self.volume.shared_handle(),
             journal_id: journal_data.journal_id,
             buffer: vec![0u8; options.buffer_size],
             bytes_read: 0,
@@ -282,8 +281,7 @@ impl<'a> UsnJournal<'a> {
 ///
 /// This iterator yields `Result<UsnEntry, UsnError>` items.
 pub struct UsnJournalIter {
-    _handle_owner: Arc<Owned<HANDLE>>,
-    handle: HANDLE,
+    handle: Rc<Owned<HANDLE>>,
     journal_id: u64,
     buffer: Vec<u8>,
     bytes_read: u32,
@@ -311,7 +309,7 @@ impl UsnJournalIter {
 
         if let Err(err) = unsafe {
             DeviceIoControl(
-                self.handle,
+                **self.handle,
                 FSCTL_READ_USN_JOURNAL,
                 Some(&read_data as *const _ as *mut _),
                 size_of::<READ_USN_JOURNAL_DATA_V0>() as u32,
@@ -415,15 +413,12 @@ impl UsnEntry {
             unsafe { std::slice::from_raw_parts(record.FileName.as_ptr(), file_name_len) };
         let file_name = OsString::from_wide(file_name_data);
 
-        let sys_time = match time::filetime_to_systemtime(record.TimeStamp) {
-            Ok(system_time) => system_time,
-            Err(e) => {
-                warn!(
+        let sys_time = time::filetime_to_systemtime(record.TimeStamp).unwrap_or_else(|e| {
+            warn!(
                     "Failed to convert FILETIME to SystemTime: {e}. Using current system time as fallback."
                 );
-                SystemTime::now()
-            }
-        };
+            SystemTime::now()
+        });
         UsnEntry {
             usn: record.Usn,
             time: sys_time,
