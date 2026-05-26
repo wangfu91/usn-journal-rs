@@ -67,5 +67,5 @@ pub type Usn = i64;
 pub(crate) const DEFAULT_BUFFER_SIZE: usize = 64 * 1024; // 64KB
 
 pub const DEFAULT_JOURNAL_MAX_SIZE: u64 = 32 * 1024 * 1024; // 32MB
-pub const DEFAULT_JOURNAL_ALLOCATION_DELTA: u64 = 8 * 1024 * 1024; // 4MB
+pub const DEFAULT_JOURNAL_ALLOCATION_DELTA: u64 = 8 * 1024 * 1024; // 8MB
 pub const USN_REASON_MASK_ALL: u32 = 0xFFFFFFFF;
