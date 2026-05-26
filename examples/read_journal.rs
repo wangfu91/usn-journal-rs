@@ -1,3 +1,5 @@
+mod common;
+
 use usn_journal_rs::{errors::UsnError, volume::Volume};
 
 fn main() {
@@ -7,7 +9,7 @@ fn main() {
 }
 
 fn run() -> Result<(), UsnError> {
-    let drive_letter = 'D';
+    let drive_letter = common::drive_letter_from_args_or('D');
     let volume = Volume::from_drive_letter(drive_letter)?;
     let usn_journal = volume.journal();
 

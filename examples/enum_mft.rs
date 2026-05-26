@@ -1,3 +1,5 @@
+mod common;
+
 use usn_journal_rs::{errors::UsnError, volume::Volume};
 
 fn main() {
@@ -7,7 +9,7 @@ fn main() {
 }
 
 fn run() -> Result<(), UsnError> {
-    let drive_letter = 'C';
+    let drive_letter = common::drive_letter_from_args_or('C');
     let volume = Volume::from_drive_letter(drive_letter)?;
     let mft = volume.mft();
     let mut path_resolver = volume.path_resolver_with_cache();
