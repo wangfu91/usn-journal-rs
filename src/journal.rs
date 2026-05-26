@@ -466,7 +466,7 @@ fn parse_usn_record_v2(
                 UsnError::OtherError("USN record missing FileNameOffset field".to_string())
             })? as usize;
 
-    if file_name_len % std::mem::size_of::<u16>() != 0 {
+    if !file_name_len.is_multiple_of(size_of::<u16>()) {
         return Err(UsnError::OtherError(
             "USN record file name length is not UTF-16 aligned".to_string(),
         ));

@@ -330,7 +330,7 @@ fn parse_mft_usn_record_v2(
                 UsnError::OtherError("MFT record missing FileNameOffset field".to_string())
             })? as usize;
 
-    if file_name_len % std::mem::size_of::<u16>() != 0 {
+    if !file_name_len.is_multiple_of(size_of::<u16>()) {
         return Err(UsnError::OtherError(
             "MFT record file name length is not UTF-16 aligned".to_string(),
         ));

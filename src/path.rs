@@ -5,7 +5,7 @@
 use crate::{journal::UsnEntry, mft::MftEntry, volume::Volume};
 use lru::LruCache;
 use std::{
-    ffi::{OsString, c_void},
+    ffi::{c_void, OsString},
     num::NonZeroUsize,
     os::windows::ffi::OsStringExt,
     path::PathBuf,
@@ -15,7 +15,7 @@ use windows::{
     Win32::{
         Foundation,
         Storage::FileSystem::{
-            self, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAGS_AND_ATTRIBUTES, FILE_ID_DESCRIPTOR,
+            self, FILE_FLAG_BACKUP_SEMANTICS, FILE_ID_DESCRIPTOR,
         },
     },
 };
@@ -264,7 +264,7 @@ fn file_id_to_path(volume: &Volume, file_id: u64) -> windows::core::Result<PathB
             "Invalid FILE_NAME_INFO header",
         )
     })? as usize;
-    if file_name_len_bytes % size_of::<u16>() != 0 {
+    if !file_name_len_bytes.is_multiple_of(size_of::<u16>()) {
         return Err(windows::core::Error::new(
             Foundation::ERROR_INVALID_DATA.to_hresult(),
             "Invalid UTF-16 file name length",
