@@ -14,7 +14,9 @@ use windows::{
     core::Owned,
     Win32::{
         Foundation,
-        Storage::FileSystem::{self, FILE_FLAGS_AND_ATTRIBUTES, FILE_ID_DESCRIPTOR},
+        Storage::FileSystem::{
+            self, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAGS_AND_ATTRIBUTES, FILE_ID_DESCRIPTOR,
+        },
     },
 };
 
@@ -219,7 +221,7 @@ fn file_id_to_path(volume: &Volume, file_id: u64) -> windows::core::Result<PathB
                 | FileSystem::FILE_SHARE_WRITE
                 | FileSystem::FILE_SHARE_DELETE,
             None,
-            FILE_FLAGS_AND_ATTRIBUTES::default(),
+            FILE_FLAG_BACKUP_SEMANTICS,
         )?)
     };
 
