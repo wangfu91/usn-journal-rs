@@ -52,6 +52,7 @@ pub mod journal;
 pub mod mft;
 pub mod path;
 mod privilege;
+mod usn_record;
 
 // Re-export commonly used types
 pub use errors::UsnError;

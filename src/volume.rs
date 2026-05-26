@@ -2,17 +2,17 @@
 
 use crate::{errors::UsnError, journal::UsnJournal, mft::Mft, path::PathResolver, privilege};
 use log::{debug, warn};
-use std::rc::Rc;
 use std::path::Path;
+use std::rc::Rc;
 use windows::{
-    core::{Owned, HSTRING},
     Win32::{
         Foundation::{ERROR_ACCESS_DENIED, HANDLE},
         Storage::FileSystem::{
-            CreateFileW, GetVolumeNameForVolumeMountPointW, FILE_FLAGS_AND_ATTRIBUTES, FILE_GENERIC_READ,
-            FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+            CreateFileW, FILE_FLAGS_AND_ATTRIBUTES, FILE_GENERIC_READ, FILE_SHARE_READ,
+            FILE_SHARE_WRITE, GetVolumeNameForVolumeMountPointW, OPEN_EXISTING,
         },
     },
+    core::{HSTRING, Owned},
 };
 
 #[derive(Debug, Clone)]
@@ -181,7 +181,10 @@ mod tests {
             let drive_letter = 'C';
             match Volume::from_drive_letter(drive_letter) {
                 Ok(volume) => {
-                    assert!(!volume.handle().is_invalid(), "Volume handle should be valid");
+                    assert!(
+                        !volume.handle().is_invalid(),
+                        "Volume handle should be valid"
+                    );
                     assert_eq!(
                         volume.drive_letter,
                         Some(drive_letter),
@@ -204,9 +207,19 @@ mod tests {
                 Ok(volume) => {
                     let cloned = volume.clone();
 
-                    assert!(!volume.handle().is_invalid(), "Original handle should be valid");
-                    assert!(!cloned.handle().is_invalid(), "Cloned handle should be valid");
-                    assert_eq!(volume.handle(), cloned.handle(), "Clone should share the same handle");
+                    assert!(
+                        !volume.handle().is_invalid(),
+                        "Original handle should be valid"
+                    );
+                    assert!(
+                        !cloned.handle().is_invalid(),
+                        "Cloned handle should be valid"
+                    );
+                    assert_eq!(
+                        volume.handle(),
+                        cloned.handle(),
+                        "Clone should share the same handle"
+                    );
                     assert!(Rc::ptr_eq(&volume.handle, &cloned.handle));
                     assert_eq!(volume.drive_letter, cloned.drive_letter);
                     assert_eq!(volume.mount_point, cloned.mount_point);

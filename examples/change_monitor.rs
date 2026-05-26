@@ -1,8 +1,4 @@
-use usn_journal_rs::{
-    errors::UsnError,
-    journal,
-    volume::Volume,
-};
+use usn_journal_rs::{errors::UsnError, journal, volume::Volume};
 
 fn main() {
     if let Err(e) = run() {

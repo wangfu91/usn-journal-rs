@@ -5,19 +5,17 @@
 use crate::{journal::UsnEntry, mft::MftEntry, volume::Volume};
 use lru::LruCache;
 use std::{
-    ffi::{c_void, OsString},
+    ffi::{OsString, c_void},
     num::NonZeroUsize,
     os::windows::ffi::OsStringExt,
     path::PathBuf,
 };
 use windows::{
-    core::Owned,
     Win32::{
         Foundation,
-        Storage::FileSystem::{
-            self, FILE_FLAG_BACKUP_SEMANTICS, FILE_ID_DESCRIPTOR,
-        },
+        Storage::FileSystem::{self, FILE_FLAG_BACKUP_SEMANTICS, FILE_ID_DESCRIPTOR},
     },
+    core::Owned,
 };
 
 const LRU_CACHE_CAPACITY: usize = 4 * 1024; // 4K
@@ -271,14 +269,12 @@ fn file_id_to_path(volume: &Volume, file_id: u64) -> windows::core::Result<PathB
         ));
     }
     let name_start = size_of::<u32>();
-    let name_end = name_start
-        .checked_add(file_name_len_bytes)
-        .ok_or_else(|| {
-            windows::core::Error::new(
-                Foundation::ERROR_INVALID_DATA.to_hresult(),
-                "FILE_NAME_INFO length overflow",
-            )
-        })?;
+    let name_end = name_start.checked_add(file_name_len_bytes).ok_or_else(|| {
+        windows::core::Error::new(
+            Foundation::ERROR_INVALID_DATA.to_hresult(),
+            "FILE_NAME_INFO length overflow",
+        )
+    })?;
     let name_bytes = info_buffer.get(name_start..name_end).ok_or_else(|| {
         windows::core::Error::new(
             Foundation::ERROR_INVALID_DATA.to_hresult(),
@@ -319,8 +315,8 @@ fn read_u32_le(buffer: &[u8], offset: usize) -> Option<u32> {
 mod tests {
     use super::*;
     use crate::{mft::MftEntry, volume::Volume};
-    use std::{ffi::OsString, mem, ptr};
-    use windows::Win32::{Foundation::HANDLE, System::Ioctl::USN_RECORD_V2};
+    use std::{ffi::OsString, time::SystemTime};
+    use windows::Win32::Foundation::HANDLE;
 
     // Mock implementations of PathResolvableEntry
     #[derive(Debug)]
@@ -368,58 +364,16 @@ mod tests {
 
     #[test]
     fn test_usn_entry_path_resolvable_trait() {
-        // Create a mock USN_RECORD_V2 to generate a UsnEntry
-        let file_name = "document.txt";
-        let file_name_utf16: Vec<u16> = file_name.encode_utf16().collect();
-        let file_name_len = file_name_utf16.len() * mem::size_of::<u16>();
-        let base_size = mem::size_of::<USN_RECORD_V2>();
-        let total_size = base_size + file_name_len;
-        let aligned_size = (total_size + 7) & !7; // 8-byte align
-
-        let mut buffer = vec![0u8; aligned_size];
-
-        // Create USN_RECORD_V2 header
-        let record = USN_RECORD_V2 {
-            RecordLength: aligned_size as u32,
-            MajorVersion: 2,
-            MinorVersion: 0,
-            FileReferenceNumber: 0x789ABC,
-            ParentFileReferenceNumber: 0xDEF123,
-            Usn: 0x2000,
-            TimeStamp: 0x12345678ABCDEF01i64,
-            Reason: 0x80000000, // USN_REASON_FILE_CREATE
-            SourceInfo: 0,
-            SecurityId: 0,
-            FileAttributes: 0,
-            FileNameLength: file_name_len as u16,
-            FileNameOffset: mem::offset_of!(USN_RECORD_V2, FileName) as u16,
-            FileName: [0; 1],
+        let entry = crate::journal::UsnEntry {
+            usn: 0x2000,
+            time: SystemTime::UNIX_EPOCH,
+            fid: 0x789ABC,
+            parent_fid: 0xDEF123,
+            reason: 0x80000000,
+            source_info: 0,
+            file_name: OsString::from("document.txt"),
+            file_attributes: 0,
         };
-
-        // Copy the record header (without the FileName part which we'll handle separately)
-        unsafe {
-            ptr::copy_nonoverlapping(
-                &record as *const USN_RECORD_V2 as *const u8,
-                buffer.as_mut_ptr(),
-                base_size - mem::size_of::<u16>(), // Exclude the [u16; 1] FileName field
-            );
-        }
-
-        // Copy the actual filename starting at the FileName offset
-        unsafe {
-            let filename_ptr = buffer
-                .as_mut_ptr()
-                .add(mem::offset_of!(USN_RECORD_V2, FileName));
-            ptr::copy_nonoverlapping(
-                file_name_utf16.as_ptr() as *const u8,
-                filename_ptr,
-                file_name_len,
-            );
-        }
-
-        let record_ref = unsafe { &*(buffer.as_ptr() as *const USN_RECORD_V2) };
-
-        let entry = crate::journal::UsnEntry::new(record_ref);
 
         assert_eq!(entry.fid(), 0x789ABC);
         assert_eq!(entry.parent_fid(), 0xDEF123);

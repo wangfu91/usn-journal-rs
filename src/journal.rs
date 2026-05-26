@@ -4,19 +4,18 @@
 //! It provides safe Rust abstractions over the Windows API for monitoring file system changes efficiently.
 //!
 
-use crate::{errors::UsnError, volume::Volume};
 use crate::{
     DEFAULT_BUFFER_SIZE, DEFAULT_JOURNAL_ALLOCATION_DELTA, DEFAULT_JOURNAL_MAX_SIZE,
     USN_REASON_MASK_ALL, Usn, UsnResult, time,
 };
+use crate::{errors::UsnError, usn_record, volume::Volume};
 use chrono::{DateTime, Local};
 use log::{debug, warn};
 use std::path::Path;
-use std::{ffi::OsString, os::windows::ffi::OsStringExt, time::SystemTime};
-use std::{ffi::c_void, mem::size_of};
 use std::rc::Rc;
+use std::{ffi::OsString, time::SystemTime};
+use std::{ffi::c_void, mem::size_of};
 use windows::{
-    core::Owned,
     Win32::{
         Foundation::{ERROR_HANDLE_EOF, ERROR_JOURNAL_NOT_ACTIVE, HANDLE},
         Storage::FileSystem::{
@@ -28,9 +27,9 @@ use windows::{
                 CREATE_USN_JOURNAL_DATA, DELETE_USN_JOURNAL_DATA, FSCTL_CREATE_USN_JOURNAL,
                 FSCTL_DELETE_USN_JOURNAL, FSCTL_QUERY_USN_JOURNAL, FSCTL_READ_USN_JOURNAL,
                 READ_USN_JOURNAL_DATA_V0, USN_DELETE_FLAG_DELETE, USN_DELETE_FLAG_NOTIFY,
-                USN_DELETE_FLAGS, USN_JOURNAL_DATA_V0, USN_RECORD_V2,
-                USN_REASON_BASIC_INFO_CHANGE, USN_REASON_CLOSE, USN_REASON_COMPRESSION_CHANGE,
-                USN_REASON_DATA_EXTEND, USN_REASON_DATA_OVERWRITE, USN_REASON_DATA_TRUNCATION,
+                USN_DELETE_FLAGS, USN_JOURNAL_DATA_V0, USN_REASON_BASIC_INFO_CHANGE,
+                USN_REASON_CLOSE, USN_REASON_COMPRESSION_CHANGE, USN_REASON_DATA_EXTEND,
+                USN_REASON_DATA_OVERWRITE, USN_REASON_DATA_TRUNCATION,
                 USN_REASON_DESIRED_STORAGE_CLASS_CHANGE, USN_REASON_EA_CHANGE,
                 USN_REASON_ENCRYPTION_CHANGE, USN_REASON_FILE_CREATE, USN_REASON_FILE_DELETE,
                 USN_REASON_HARD_LINK_CHANGE, USN_REASON_INDEXABLE_CHANGE,
@@ -38,11 +37,11 @@ use windows::{
                 USN_REASON_NAMED_DATA_OVERWRITE, USN_REASON_NAMED_DATA_TRUNCATION,
                 USN_REASON_OBJECT_ID_CHANGE, USN_REASON_RENAME_NEW_NAME,
                 USN_REASON_RENAME_OLD_NAME, USN_REASON_REPARSE_POINT_CHANGE,
-                USN_REASON_SECURITY_CHANGE, USN_REASON_STREAM_CHANGE,
-                USN_REASON_TRANSACTED_CHANGE,
+                USN_REASON_SECURITY_CHANGE, USN_REASON_STREAM_CHANGE, USN_REASON_TRANSACTED_CHANGE,
             },
         },
     },
+    core::Owned,
 };
 
 #[derive(Debug, Clone)]
@@ -185,7 +184,7 @@ impl<'a> UsnJournal<'a> {
     }
 
     /// Core function to query the USN journal state.
-    fn query_core(&self) -> std::result::Result<USN_JOURNAL_DATA_V0, windows::core::Error> {
+    fn query_core(&self) -> Result<USN_JOURNAL_DATA_V0, windows::core::Error> {
         let mut journal_data = USN_JOURNAL_DATA_V0::default();
         let mut bytes_return = 0u32;
 
@@ -203,7 +202,7 @@ impl<'a> UsnJournal<'a> {
                 None,
                 0,
                 Some((&mut journal_data as *mut USN_JOURNAL_DATA_V0).cast()),
-                std::mem::size_of::<USN_JOURNAL_DATA_V0>() as u32,
+                size_of::<USN_JOURNAL_DATA_V0>() as u32,
                 Some(&mut bytes_return),
                 None,
             )
@@ -335,7 +334,8 @@ impl UsnJournalIter {
     /// Returns `Ok(Some(UsnEntry))` if a record is found, `Ok(None)` if EOF, or an error.
     fn find_next_entry(&mut self) -> UsnResult<Option<UsnEntry>> {
         if self.offset < self.bytes_read {
-            let (entry, record_len) = parse_usn_record_v2(&self.buffer, self.offset, self.bytes_read)?;
+            let (entry, record_len) =
+                parse_usn_record_v2(&self.buffer, self.offset, self.bytes_read)?;
             self.offset += record_len;
             return Ok(Some(entry));
         }
@@ -345,10 +345,13 @@ impl UsnJournalIter {
             // https://learn.microsoft.com/en-us/windows/win32/fileio/walking-a-buffer-of-change-journal-records
             // The USN returned as the first item in the output buffer is the USN of the next record number to be retrieved.
             // Use this value to continue reading records from the end boundary forward.
-            self.next_start_usn = read_i64_le(&self.buffer, 0).ok_or_else(|| {
-                UsnError::OtherError("USN data buffer missing next-start USN header".to_string())
-            })?;
-            self.offset = std::mem::size_of::<Usn>() as u32;
+            self.next_start_usn = usn_record::read_unaligned_from::<Usn>(&self.buffer, 0)
+                .ok_or_else(|| {
+                    UsnError::OtherError(
+                        "USN data buffer missing next-start USN header".to_string(),
+                    )
+                })?;
+            self.offset = size_of::<Usn>() as u32;
 
             if self.offset < self.bytes_read {
                 let (entry, record_len) =
@@ -378,133 +381,33 @@ impl Iterator for UsnJournalIter {
     }
 }
 
-fn read_u16_le(buffer: &[u8], offset: usize) -> Option<u16> {
-    let bytes = buffer.get(offset..offset + 2)?;
-    Some(u16::from_le_bytes([bytes[0], bytes[1]]))
-}
-
-fn read_u32_le(buffer: &[u8], offset: usize) -> Option<u32> {
-    let bytes = buffer.get(offset..offset + 4)?;
-    Some(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
-}
-
-fn read_u64_le(buffer: &[u8], offset: usize) -> Option<u64> {
-    let bytes = buffer.get(offset..offset + 8)?;
-    Some(u64::from_le_bytes([
-        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
-    ]))
-}
-
-fn read_i64_le(buffer: &[u8], offset: usize) -> Option<i64> {
-    Some(read_u64_le(buffer, offset)? as i64)
-}
-
 fn parse_usn_record_v2(
     buffer: &[u8],
     offset: u32,
     bytes_read: u32,
 ) -> Result<(UsnEntry, u32), UsnError> {
     let base = offset as usize;
-    let read_end = bytes_read as usize;
-    let record_len = read_u32_le(buffer, base)
-        .ok_or_else(|| UsnError::OtherError("USN record missing RecordLength field".to_string()))?;
-    if record_len == 0 {
-        return Err(UsnError::OtherError(
-            "USN record contains invalid zero RecordLength".to_string(),
-        ));
-    }
+    let (header, record_len) =
+        usn_record::parse_usn_record_v2_header(buffer, offset, bytes_read, "USN record")?;
+    let file_name = usn_record::parse_usn_record_v2_name(buffer, base, &header, "USN record")?;
 
-    let record_len_usize = record_len as usize;
-    let record_end = base
-        .checked_add(record_len_usize)
-        .ok_or_else(|| UsnError::OtherError("USN record length overflow".to_string()))?;
-    if record_end > read_end {
-        return Err(UsnError::OtherError(
-            "USN record extends past buffer bounds".to_string(),
-        ));
-    }
-
-    let major_version = read_u16_le(buffer, base + std::mem::offset_of!(USN_RECORD_V2, MajorVersion))
-        .ok_or_else(|| UsnError::OtherError("USN record missing MajorVersion field".to_string()))?;
-    if major_version != 2 {
-        return Err(UsnError::OtherError(format!(
-            "Unsupported USN record version: {major_version}"
-        )));
-    }
-
-    let usn = read_i64_le(buffer, base + std::mem::offset_of!(USN_RECORD_V2, Usn))
-        .ok_or_else(|| UsnError::OtherError("USN record missing Usn field".to_string()))?;
-    let fid = read_u64_le(
-        buffer,
-        base + std::mem::offset_of!(USN_RECORD_V2, FileReferenceNumber),
-    )
-    .ok_or_else(|| UsnError::OtherError("USN record missing FileReferenceNumber".to_string()))?;
-    let parent_fid = read_u64_le(
-        buffer,
-        base + std::mem::offset_of!(USN_RECORD_V2, ParentFileReferenceNumber),
-    )
-    .ok_or_else(|| {
-        UsnError::OtherError("USN record missing ParentFileReferenceNumber".to_string())
-    })?;
-    let timestamp = read_i64_le(buffer, base + std::mem::offset_of!(USN_RECORD_V2, TimeStamp))
-        .ok_or_else(|| UsnError::OtherError("USN record missing TimeStamp field".to_string()))?;
-    let reason = read_u32_le(buffer, base + std::mem::offset_of!(USN_RECORD_V2, Reason))
-        .ok_or_else(|| UsnError::OtherError("USN record missing Reason field".to_string()))?;
-    let source_info = read_u32_le(buffer, base + std::mem::offset_of!(USN_RECORD_V2, SourceInfo))
-        .ok_or_else(|| UsnError::OtherError("USN record missing SourceInfo field".to_string()))?;
-    let file_attributes =
-        read_u32_le(buffer, base + std::mem::offset_of!(USN_RECORD_V2, FileAttributes))
-            .ok_or_else(|| {
-                UsnError::OtherError("USN record missing FileAttributes field".to_string())
-            })?;
-    let file_name_len = read_u16_le(buffer, base + std::mem::offset_of!(USN_RECORD_V2, FileNameLength))
-        .ok_or_else(|| UsnError::OtherError("USN record missing FileNameLength field".to_string()))?
-        as usize;
-    let file_name_offset =
-        read_u16_le(buffer, base + std::mem::offset_of!(USN_RECORD_V2, FileNameOffset))
-            .ok_or_else(|| {
-                UsnError::OtherError("USN record missing FileNameOffset field".to_string())
-            })? as usize;
-
-    if !file_name_len.is_multiple_of(size_of::<u16>()) {
-        return Err(UsnError::OtherError(
-            "USN record file name length is not UTF-16 aligned".to_string(),
-        ));
-    }
-    if file_name_offset
-        .checked_add(file_name_len)
-        .filter(|end| *end <= record_len_usize)
-        .is_none()
-    {
-        return Err(UsnError::OtherError(
-            "USN record file name range is out of bounds".to_string(),
-        ));
-    }
-
-    let name_start = base + file_name_offset;
-    let name_end = name_start + file_name_len;
-    let name_bytes = &buffer[name_start..name_end];
-    let mut name_units = Vec::with_capacity(file_name_len / 2);
-    for chunk in name_bytes.chunks_exact(2) {
-        name_units.push(u16::from_le_bytes([chunk[0], chunk[1]]));
-    }
-    let file_name = OsString::from_wide(&name_units);
-
-    let time = time::filetime_to_systemtime(timestamp).unwrap_or_else(|e| {
-        warn!("Failed to convert FILETIME to SystemTime: {e}. Using current system time as fallback.");
+    let time = time::filetime_to_systemtime(header.timestamp).unwrap_or_else(|e| {
+        warn!(
+            "Failed to convert FILETIME to SystemTime: {e}. Using current system time as fallback."
+        );
         SystemTime::now()
     });
 
     Ok((
         UsnEntry {
-            usn,
+            usn: header.usn,
             time,
-            fid,
-            parent_fid,
-            reason,
-            source_info,
+            fid: header.file_reference_number,
+            parent_fid: header.parent_file_reference_number,
+            reason: header.reason,
+            source_info: header.source_info,
             file_name,
-            file_attributes,
+            file_attributes: header.file_attributes,
         },
         record_len,
     ))
@@ -524,44 +427,6 @@ pub struct UsnEntry {
 }
 
 impl UsnEntry {
-    /// Create a new `UsnEntry` from a raw USN_RECORD_V2 record.
-    ///
-    /// # Arguments
-    /// * `record` - Reference to a USN_RECORD_V2 structure from the Windows API.
-    ///
-    /// # Returns
-    /// A parsed `UsnEntry` with decoded fields and file name.
-    pub(crate) fn new(record: &USN_RECORD_V2) -> Self {
-        let file_name_len = record.FileNameLength as usize / std::mem::size_of::<u16>();
-
-        // https://learn.microsoft.com/en-us/windows/win32/api/winioctl/ns-winioctl-usn_record_v2
-        // When working with FileName, do not count on the file name that contains a trailing '\0' delimiter,
-        // but instead determine the length of the file name by using FileNameLength.
-        // Do not perform any compile-time pointer arithmetic using FileName.
-        // Instead, make necessary calculations at run time by using the value of the FileNameOffset member.
-        // Doing so helps make your code compatible with any future versions of USN_RECORD_V2.
-        let file_name_data =
-            unsafe { std::slice::from_raw_parts(record.FileName.as_ptr(), file_name_len) };
-        let file_name = OsString::from_wide(file_name_data);
-
-        let sys_time = time::filetime_to_systemtime(record.TimeStamp).unwrap_or_else(|e| {
-            warn!(
-                    "Failed to convert FILETIME to SystemTime: {e}. Using current system time as fallback."
-                );
-            SystemTime::now()
-        });
-        UsnEntry {
-            usn: record.Usn,
-            time: sys_time,
-            fid: record.FileReferenceNumber,
-            parent_fid: record.ParentFileReferenceNumber,
-            reason: record.Reason,
-            source_info: record.SourceInfo,
-            file_name,
-            file_attributes: record.FileAttributes,
-        }
-    }
-
     /// Returns true if this entry represents a directory.
     pub fn is_dir(&self) -> bool {
         let attributes = FILE_FLAGS_AND_ATTRIBUTES(self.file_attributes);
@@ -701,7 +566,7 @@ impl UsnEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{ffi::OsString, mem, ptr};
+    use std::{ffi::OsString, mem::offset_of, ptr};
     use windows::Win32::System::Ioctl::{USN_JOURNAL_DATA_V0, USN_RECORD_V2};
 
     // Mock data generators
@@ -726,8 +591,8 @@ mod tests {
         file_attributes: u32,
     ) -> Vec<u8> {
         let file_name_utf16: Vec<u16> = file_name.encode_utf16().collect();
-        let file_name_len = file_name_utf16.len() * mem::size_of::<u16>();
-        let base_size = mem::size_of::<USN_RECORD_V2>();
+        let file_name_len = file_name_utf16.len() * size_of::<u16>();
+        let base_size = size_of::<USN_RECORD_V2>();
         let total_size = base_size + file_name_len;
         let aligned_size = (total_size + 7) & !7; // 8-byte align
 
@@ -747,7 +612,7 @@ mod tests {
             SecurityId: 0,
             FileAttributes: file_attributes,
             FileNameLength: file_name_len as u16,
-            FileNameOffset: mem::offset_of!(USN_RECORD_V2, FileName) as u16,
+            FileNameOffset: offset_of!(USN_RECORD_V2, FileName) as u16,
             FileName: [0; 1],
         };
 
@@ -756,15 +621,13 @@ mod tests {
             ptr::copy_nonoverlapping(
                 &record as *const USN_RECORD_V2 as *const u8,
                 buffer.as_mut_ptr(),
-                base_size - mem::size_of::<u16>(), // Exclude the [u16; 1] FileName field
+                base_size - size_of::<u16>(), // Exclude the [u16; 1] FileName field
             );
         }
 
         // Copy the actual filename starting at the FileName offset
         unsafe {
-            let filename_ptr = buffer
-                .as_mut_ptr()
-                .add(mem::offset_of!(USN_RECORD_V2, FileName));
+            let filename_ptr = buffer.as_mut_ptr().add(offset_of!(USN_RECORD_V2, FileName));
             ptr::copy_nonoverlapping(
                 file_name_utf16.as_ptr() as *const u8,
                 filename_ptr,
@@ -773,6 +636,12 @@ mod tests {
         }
 
         buffer
+    }
+
+    fn parse_mock_usn_entry(record_data: &[u8]) -> UsnEntry {
+        parse_usn_record_v2(record_data, 0, record_data.len() as u32)
+            .unwrap()
+            .0
     }
 
     #[test]
@@ -795,21 +664,16 @@ mod tests {
             0x2000,
             0x123456,
             0x654321,
-            windows::Win32::System::Ioctl::USN_REASON_FILE_CREATE,
+            USN_REASON_FILE_CREATE,
             "test.txt",
             0,
         );
 
-        let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
-
-        let entry = UsnEntry::new(record);
+        let entry = parse_mock_usn_entry(&record_data);
         assert_eq!(entry.usn, 0x2000);
         assert_eq!(entry.fid, 0x123456);
         assert_eq!(entry.parent_fid, 0x654321);
-        assert_eq!(
-            entry.reason,
-            windows::Win32::System::Ioctl::USN_REASON_FILE_CREATE
-        );
+        assert_eq!(entry.reason, USN_REASON_FILE_CREATE);
         assert_eq!(entry.file_name, OsString::from("test.txt"));
         assert!(!entry.is_dir());
         assert!(!entry.is_hidden());
@@ -821,14 +685,12 @@ mod tests {
             0x3000,
             0x789ABC,
             0x654321,
-            windows::Win32::System::Ioctl::USN_REASON_FILE_CREATE,
+            USN_REASON_FILE_CREATE,
             "folder",
             FILE_ATTRIBUTE_DIRECTORY.0,
         );
 
-        let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
-
-        let entry = UsnEntry::new(record);
+        let entry = parse_mock_usn_entry(&record_data);
         assert!(entry.is_dir());
         assert!(!entry.is_hidden());
     }
@@ -839,14 +701,12 @@ mod tests {
             0x4000,
             0xDEF123,
             0x654321,
-            windows::Win32::System::Ioctl::USN_REASON_FILE_CREATE,
+            USN_REASON_FILE_CREATE,
             "hidden.txt",
             FILE_ATTRIBUTE_HIDDEN.0,
         );
 
-        let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
-
-        let entry = UsnEntry::new(record);
+        let entry = parse_mock_usn_entry(&record_data);
         assert!(!entry.is_dir());
         assert!(entry.is_hidden());
     }
@@ -862,9 +722,7 @@ mod tests {
             0,
         );
 
-        let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
-
-        let entry = UsnEntry::new(record);
+        let entry = parse_mock_usn_entry(&record_data);
         let reason_string = entry.get_reason_string();
 
         assert!(reason_string.contains("FILE_CREATE"));
@@ -880,9 +738,7 @@ mod tests {
             "test.txt", 0,
         );
 
-        let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
-
-        let entry = UsnEntry::new(record);
+        let entry = parse_mock_usn_entry(&record_data);
         let reason_string = entry.get_reason_string();
         assert_eq!(reason_string, "UNKNOWN");
     }
@@ -898,11 +754,8 @@ mod tests {
             0,
         );
 
-        let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
-
-        let entry = UsnEntry::new(record);
-        let formatted =
-            entry.pretty_format(Some(std::path::Path::new("C:\\Documents\\document.txt")));
+        let entry = parse_mock_usn_entry(&record_data);
+        let formatted = entry.pretty_format(Some(Path::new("C:\\Documents\\document.txt")));
 
         assert!(formatted.contains("USN"));
         assert!(formatted.contains("0x7000"));
@@ -930,10 +783,8 @@ mod tests {
             0,
         );
 
-        let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
-
-        let entry = UsnEntry::new(record);
-        let formatted: String = entry.pretty_format(None as Option<&std::path::Path>);
+        let entry = parse_mock_usn_entry(&record_data);
+        let formatted: String = entry.pretty_format(None as Option<&Path>);
 
         assert!(formatted.contains("USN"));
         assert!(formatted.contains("0x8000"));

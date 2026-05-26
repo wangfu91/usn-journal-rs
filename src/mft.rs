@@ -4,12 +4,11 @@
 //! from the MFT using the Windows FSCTL_ENUM_USN_DATA control code. It manages the buffer and state
 //! required to sequentially retrieve and parse USN records from the volume.
 
-use crate::{DEFAULT_BUFFER_SIZE, Usn, UsnResult, errors::UsnError, volume::Volume};
+use crate::{DEFAULT_BUFFER_SIZE, Usn, UsnResult, errors::UsnError, usn_record, volume::Volume};
 use log::debug;
-use std::{ffi::OsString, mem::size_of, os::windows::ffi::OsStringExt, path::Path};
 use std::rc::Rc;
+use std::{ffi::OsString, mem::size_of, path::Path};
 use windows::{
-    core::Owned,
     Win32::{
         Foundation::{ERROR_HANDLE_EOF, HANDLE},
         Storage::FileSystem::{
@@ -17,9 +16,10 @@ use windows::{
         },
         System::{
             IO::DeviceIoControl,
-            Ioctl::{self, USN_RECORD_V2},
+            Ioctl::{self},
         },
     },
+    core::Owned,
 };
 
 /// Represents a single entry in the Master File Table (MFT).
@@ -33,22 +33,6 @@ pub struct MftEntry {
 }
 
 impl MftEntry {
-    /// Creates a new `MftEntry` from a raw USN_RECORD_V2 record.
-    pub(crate) fn new(record: &USN_RECORD_V2) -> Self {
-        let file_name_len = record.FileNameLength as usize / std::mem::size_of::<u16>();
-        let file_name_data =
-            unsafe { std::slice::from_raw_parts(record.FileName.as_ptr(), file_name_len) };
-        let file_name = OsString::from_wide(file_name_data);
-
-        MftEntry {
-            usn: record.Usn,
-            fid: record.FileReferenceNumber,
-            parent_fid: record.ParentFileReferenceNumber,
-            file_name,
-            file_attributes: record.FileAttributes,
-        }
-    }
-
     /// Returns true if this entry represents a directory.
     pub fn is_dir(&self) -> bool {
         let attributes = FILE_FLAGS_AND_ATTRIBUTES(self.file_attributes);
@@ -211,7 +195,8 @@ impl MftIter {
     /// Returns `Ok(Some(MftEntry))` if a record is found, `Ok(None)` if EOF, or an error.
     fn find_next_entry(&mut self) -> Result<Option<MftEntry>, UsnError> {
         if self.offset < self.bytes_read {
-            let (entry, record_len) = parse_mft_usn_record_v2(&self.buffer, self.offset, self.bytes_read)?;
+            let (entry, record_len) =
+                parse_mft_usn_record_v2(&self.buffer, self.offset, self.bytes_read)?;
             self.offset += record_len;
             return Ok(Some(entry));
         }
@@ -219,9 +204,12 @@ impl MftIter {
         // We need to read more data
         if self.get_data()? {
             // Each call to FSCTL_ENUM_USN_DATA retrieves the starting point for the subsequent call as the first entry in the output buffer.
-            self.next_start_fid = read_u64_le(&self.buffer, 0).ok_or_else(|| {
-                UsnError::OtherError("MFT data buffer missing next-start FID header".to_string())
-            })?;
+            self.next_start_fid = usn_record::read_unaligned_from::<u64>(&self.buffer, 0)
+                .ok_or_else(|| {
+                    UsnError::OtherError(
+                        "MFT data buffer missing next-start FID header".to_string(),
+                    )
+                })?;
             self.offset = size_of::<u64>() as u32;
             if self.offset < self.bytes_read {
                 let (entry, record_len) =
@@ -251,116 +239,23 @@ impl Iterator for MftIter {
     }
 }
 
-fn read_u16_le(buffer: &[u8], offset: usize) -> Option<u16> {
-    let bytes = buffer.get(offset..offset + 2)?;
-    Some(u16::from_le_bytes([bytes[0], bytes[1]]))
-}
-
-fn read_u32_le(buffer: &[u8], offset: usize) -> Option<u32> {
-    let bytes = buffer.get(offset..offset + 4)?;
-    Some(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
-}
-
-fn read_u64_le(buffer: &[u8], offset: usize) -> Option<u64> {
-    let bytes = buffer.get(offset..offset + 8)?;
-    Some(u64::from_le_bytes([
-        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
-    ]))
-}
-
 fn parse_mft_usn_record_v2(
     buffer: &[u8],
     offset: u32,
     bytes_read: u32,
 ) -> Result<(MftEntry, u32), UsnError> {
     let base = offset as usize;
-    let read_end = bytes_read as usize;
-    let record_len = read_u32_le(buffer, base)
-        .ok_or_else(|| UsnError::OtherError("MFT record missing RecordLength field".to_string()))?;
-    if record_len == 0 {
-        return Err(UsnError::OtherError(
-            "MFT record contains invalid zero RecordLength".to_string(),
-        ));
-    }
-
-    let record_len_usize = record_len as usize;
-    let record_end = base
-        .checked_add(record_len_usize)
-        .ok_or_else(|| UsnError::OtherError("MFT record length overflow".to_string()))?;
-    if record_end > read_end {
-        return Err(UsnError::OtherError(
-            "MFT record extends past buffer bounds".to_string(),
-        ));
-    }
-
-    let major_version = read_u16_le(buffer, base + std::mem::offset_of!(USN_RECORD_V2, MajorVersion))
-        .ok_or_else(|| UsnError::OtherError("MFT record missing MajorVersion field".to_string()))?;
-    if major_version != 2 {
-        return Err(UsnError::OtherError(format!(
-            "Unsupported MFT USN record version: {major_version}"
-        )));
-    }
-
-    let usn = read_u64_le(buffer, base + std::mem::offset_of!(USN_RECORD_V2, Usn))
-        .ok_or_else(|| UsnError::OtherError("MFT record missing Usn field".to_string()))?
-        as i64;
-    let fid = read_u64_le(
-        buffer,
-        base + std::mem::offset_of!(USN_RECORD_V2, FileReferenceNumber),
-    )
-    .ok_or_else(|| UsnError::OtherError("MFT record missing FileReferenceNumber".to_string()))?;
-    let parent_fid = read_u64_le(
-        buffer,
-        base + std::mem::offset_of!(USN_RECORD_V2, ParentFileReferenceNumber),
-    )
-    .ok_or_else(|| {
-        UsnError::OtherError("MFT record missing ParentFileReferenceNumber".to_string())
-    })?;
-    let file_attributes =
-        read_u32_le(buffer, base + std::mem::offset_of!(USN_RECORD_V2, FileAttributes))
-            .ok_or_else(|| {
-                UsnError::OtherError("MFT record missing FileAttributes field".to_string())
-            })?;
-    let file_name_len = read_u16_le(buffer, base + std::mem::offset_of!(USN_RECORD_V2, FileNameLength))
-        .ok_or_else(|| UsnError::OtherError("MFT record missing FileNameLength field".to_string()))?
-        as usize;
-    let file_name_offset =
-        read_u16_le(buffer, base + std::mem::offset_of!(USN_RECORD_V2, FileNameOffset))
-            .ok_or_else(|| {
-                UsnError::OtherError("MFT record missing FileNameOffset field".to_string())
-            })? as usize;
-
-    if !file_name_len.is_multiple_of(size_of::<u16>()) {
-        return Err(UsnError::OtherError(
-            "MFT record file name length is not UTF-16 aligned".to_string(),
-        ));
-    }
-    if file_name_offset
-        .checked_add(file_name_len)
-        .filter(|end| *end <= record_len_usize)
-        .is_none()
-    {
-        return Err(UsnError::OtherError(
-            "MFT record file name range is out of bounds".to_string(),
-        ));
-    }
-
-    let name_start = base + file_name_offset;
-    let name_end = name_start + file_name_len;
-    let name_bytes = &buffer[name_start..name_end];
-    let mut name_units = Vec::with_capacity(file_name_len / 2);
-    for chunk in name_bytes.chunks_exact(2) {
-        name_units.push(u16::from_le_bytes([chunk[0], chunk[1]]));
-    }
-    let file_name = OsString::from_wide(&name_units);
+    let (header, record_len) =
+        usn_record::parse_usn_record_v2_header(buffer, offset, bytes_read, "MFT record")?;
+    let file_name = usn_record::parse_usn_record_v2_name(buffer, base, &header, "MFT record")?;
 
     Ok((
         MftEntry {
-            usn,
-            fid,
-            parent_fid,
+            usn: header.usn,
+            fid: header.file_reference_number,
+            parent_fid: header.parent_file_reference_number,
             file_name,
-            file_attributes,
+            file_attributes: header.file_attributes,
         },
         record_len,
     ))
@@ -432,6 +327,12 @@ mod tests {
         buffer
     }
 
+    fn parse_mock_mft_entry(record_data: &[u8]) -> MftEntry {
+        parse_mft_usn_record_v2(record_data, 0, record_data.len() as u32)
+            .unwrap()
+            .0
+    }
+
     // Unit tests for MftEntry
     mod mft_entry_tests {
         use super::*;
@@ -445,8 +346,7 @@ mod tests {
                 "test.txt", 0x20, // FILE_ATTRIBUTE_ARCHIVE
             );
 
-            let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
-            let entry = MftEntry::new(record);
+            let entry = parse_mock_mft_entry(&record_data);
 
             assert_eq!(entry.usn, 100);
             assert_eq!(entry.fid, 12345);
@@ -461,8 +361,7 @@ mod tests {
                 100, 12345, 67890, "folder", 0x10, // FILE_ATTRIBUTE_DIRECTORY
             );
 
-            let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
-            let entry = MftEntry::new(record);
+            let entry = parse_mock_mft_entry(&record_data);
 
             assert!(entry.is_dir());
             assert!(!entry.is_hidden());
@@ -474,8 +373,7 @@ mod tests {
                 100, 12345, 67890, "file.txt", 0x20, // FILE_ATTRIBUTE_ARCHIVE
             );
 
-            let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
-            let entry = MftEntry::new(record);
+            let entry = parse_mock_mft_entry(&record_data);
 
             assert!(!entry.is_dir());
             assert!(!entry.is_hidden());
@@ -487,8 +385,7 @@ mod tests {
                 100, 12345, 67890, ".hidden", 0x02, // FILE_ATTRIBUTE_HIDDEN
             );
 
-            let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
-            let entry = MftEntry::new(record);
+            let entry = parse_mock_mft_entry(&record_data);
 
             assert!(entry.is_hidden());
             assert!(!entry.is_dir());
@@ -504,8 +401,7 @@ mod tests {
                 0x12, // FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_HIDDEN
             );
 
-            let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
-            let entry = MftEntry::new(record);
+            let entry = parse_mock_mft_entry(&record_data);
 
             assert!(entry.is_dir());
             assert!(entry.is_hidden());
@@ -521,8 +417,7 @@ mod tests {
                 0x20,
             );
 
-            let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
-            let entry = MftEntry::new(record);
+            let entry = parse_mock_mft_entry(&record_data);
 
             assert_eq!(entry.file_name.to_string_lossy(), "测试文件.txt");
         }
@@ -531,8 +426,7 @@ mod tests {
         fn test_mft_entry_empty_filename() {
             let record_data = create_mock_usn_record(100, 12345, 67890, "", 0x20);
 
-            let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
-            let entry = MftEntry::new(record);
+            let entry = parse_mock_mft_entry(&record_data);
 
             assert!(entry.file_name.is_empty());
         }
@@ -541,8 +435,7 @@ mod tests {
         fn test_mft_entry_pretty_format_with_path() {
             let record_data = create_mock_usn_record(100, 0x12345, 0x67890, "test.txt", 0x20);
 
-            let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
-            let entry = MftEntry::new(record);
+            let entry = parse_mock_mft_entry(&record_data);
 
             let formatted =
                 entry.pretty_format(Some(std::path::Path::new("C:\\full\\path\\test.txt")));
@@ -559,8 +452,7 @@ mod tests {
                 100, 0x12345, 0x67890, "test.txt", 0x10, // Directory
             );
 
-            let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
-            let entry = MftEntry::new(record);
+            let entry = parse_mock_mft_entry(&record_data);
 
             let formatted = entry.pretty_format(None::<&std::path::Path>);
 
