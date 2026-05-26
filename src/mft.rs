@@ -208,27 +208,26 @@ impl MftIter {
 
     /// Finds the next USN record in the buffer, reading more data if needed.
     ///
-    /// Returns `Ok(Some(&USN_RECORD_V2))` if a record is found, `Ok(None)` if EOF, or an error.
-    fn find_next_entry(&mut self) -> Result<Option<&USN_RECORD_V2>, UsnError> {
+    /// Returns `Ok(Some(MftEntry))` if a record is found, `Ok(None)` if EOF, or an error.
+    fn find_next_entry(&mut self) -> Result<Option<MftEntry>, UsnError> {
         if self.offset < self.bytes_read {
-            let record = unsafe {
-                &*(self.buffer.as_ptr().offset(self.offset as isize) as *const USN_RECORD_V2)
-            };
-            self.offset += record.RecordLength;
-            return Ok(Some(record));
+            let (entry, record_len) = parse_mft_usn_record_v2(&self.buffer, self.offset, self.bytes_read)?;
+            self.offset += record_len;
+            return Ok(Some(entry));
         }
 
         // We need to read more data
         if self.get_data()? {
             // Each call to FSCTL_ENUM_USN_DATA retrieves the starting point for the subsequent call as the first entry in the output buffer.
-            self.next_start_fid = unsafe { std::ptr::read(self.buffer.as_ptr() as *const u64) };
+            self.next_start_fid = read_u64_le(&self.buffer, 0).ok_or_else(|| {
+                UsnError::OtherError("MFT data buffer missing next-start FID header".to_string())
+            })?;
             self.offset = size_of::<u64>() as u32;
             if self.offset < self.bytes_read {
-                let record = unsafe {
-                    &*(self.buffer.as_ptr().offset(self.offset as isize) as *const USN_RECORD_V2)
-                };
-                self.offset += record.RecordLength;
-                return Ok(Some(record));
+                let (entry, record_len) =
+                    parse_mft_usn_record_v2(&self.buffer, self.offset, self.bytes_read)?;
+                self.offset += record_len;
+                return Ok(Some(entry));
             }
         }
 
@@ -242,7 +241,7 @@ impl Iterator for MftIter {
 
     fn next(&mut self) -> Option<Self::Item> {
         match self.find_next_entry() {
-            Ok(Some(record)) => Some(Ok(MftEntry::new(record))),
+            Ok(Some(entry)) => Some(Ok(entry)),
             Ok(None) => None,
             Err(err) => {
                 debug!("Error finding next MFT entry: {err}");
@@ -250,6 +249,121 @@ impl Iterator for MftIter {
             }
         }
     }
+}
+
+fn read_u16_le(buffer: &[u8], offset: usize) -> Option<u16> {
+    let bytes = buffer.get(offset..offset + 2)?;
+    Some(u16::from_le_bytes([bytes[0], bytes[1]]))
+}
+
+fn read_u32_le(buffer: &[u8], offset: usize) -> Option<u32> {
+    let bytes = buffer.get(offset..offset + 4)?;
+    Some(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+}
+
+fn read_u64_le(buffer: &[u8], offset: usize) -> Option<u64> {
+    let bytes = buffer.get(offset..offset + 8)?;
+    Some(u64::from_le_bytes([
+        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+    ]))
+}
+
+fn parse_mft_usn_record_v2(
+    buffer: &[u8],
+    offset: u32,
+    bytes_read: u32,
+) -> Result<(MftEntry, u32), UsnError> {
+    let base = offset as usize;
+    let read_end = bytes_read as usize;
+    let record_len = read_u32_le(buffer, base)
+        .ok_or_else(|| UsnError::OtherError("MFT record missing RecordLength field".to_string()))?;
+    if record_len == 0 {
+        return Err(UsnError::OtherError(
+            "MFT record contains invalid zero RecordLength".to_string(),
+        ));
+    }
+
+    let record_len_usize = record_len as usize;
+    let record_end = base
+        .checked_add(record_len_usize)
+        .ok_or_else(|| UsnError::OtherError("MFT record length overflow".to_string()))?;
+    if record_end > read_end {
+        return Err(UsnError::OtherError(
+            "MFT record extends past buffer bounds".to_string(),
+        ));
+    }
+
+    let major_version = read_u16_le(buffer, base + std::mem::offset_of!(USN_RECORD_V2, MajorVersion))
+        .ok_or_else(|| UsnError::OtherError("MFT record missing MajorVersion field".to_string()))?;
+    if major_version != 2 {
+        return Err(UsnError::OtherError(format!(
+            "Unsupported MFT USN record version: {major_version}"
+        )));
+    }
+
+    let usn = read_u64_le(buffer, base + std::mem::offset_of!(USN_RECORD_V2, Usn))
+        .ok_or_else(|| UsnError::OtherError("MFT record missing Usn field".to_string()))?
+        as i64;
+    let fid = read_u64_le(
+        buffer,
+        base + std::mem::offset_of!(USN_RECORD_V2, FileReferenceNumber),
+    )
+    .ok_or_else(|| UsnError::OtherError("MFT record missing FileReferenceNumber".to_string()))?;
+    let parent_fid = read_u64_le(
+        buffer,
+        base + std::mem::offset_of!(USN_RECORD_V2, ParentFileReferenceNumber),
+    )
+    .ok_or_else(|| {
+        UsnError::OtherError("MFT record missing ParentFileReferenceNumber".to_string())
+    })?;
+    let file_attributes =
+        read_u32_le(buffer, base + std::mem::offset_of!(USN_RECORD_V2, FileAttributes))
+            .ok_or_else(|| {
+                UsnError::OtherError("MFT record missing FileAttributes field".to_string())
+            })?;
+    let file_name_len = read_u16_le(buffer, base + std::mem::offset_of!(USN_RECORD_V2, FileNameLength))
+        .ok_or_else(|| UsnError::OtherError("MFT record missing FileNameLength field".to_string()))?
+        as usize;
+    let file_name_offset =
+        read_u16_le(buffer, base + std::mem::offset_of!(USN_RECORD_V2, FileNameOffset))
+            .ok_or_else(|| {
+                UsnError::OtherError("MFT record missing FileNameOffset field".to_string())
+            })? as usize;
+
+    if file_name_len % std::mem::size_of::<u16>() != 0 {
+        return Err(UsnError::OtherError(
+            "MFT record file name length is not UTF-16 aligned".to_string(),
+        ));
+    }
+    if file_name_offset
+        .checked_add(file_name_len)
+        .filter(|end| *end <= record_len_usize)
+        .is_none()
+    {
+        return Err(UsnError::OtherError(
+            "MFT record file name range is out of bounds".to_string(),
+        ));
+    }
+
+    let name_start = base + file_name_offset;
+    let name_end = name_start + file_name_len;
+    let name_bytes = &buffer[name_start..name_end];
+    let mut name_units = Vec::with_capacity(file_name_len / 2);
+    for chunk in name_bytes.chunks_exact(2) {
+        name_units.push(u16::from_le_bytes([chunk[0], chunk[1]]));
+    }
+    let file_name = OsString::from_wide(&name_units);
+
+    Ok((
+        MftEntry {
+            usn,
+            fid,
+            parent_fid,
+            file_name,
+            file_attributes,
+        },
+        record_len,
+    ))
 }
 
 #[cfg(test)]

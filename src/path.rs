@@ -237,11 +237,14 @@ fn file_id_to_path(volume: &Volume, file_id: u64) -> windows::core::Result<PathB
         } {
             if err.code() == Foundation::ERROR_MORE_DATA.into() {
                 // Long paths, needs to extend buffer size to hold it.
-                let name_info = unsafe {
-                    std::ptr::read(info_buffer.as_ptr() as *const FileSystem::FILE_NAME_INFO)
-                };
+                let name_len = read_u32_le(&info_buffer, 0).ok_or_else(|| {
+                    windows::core::Error::new(
+                        Foundation::ERROR_INVALID_DATA.to_hresult(),
+                        "Invalid FILE_NAME_INFO header",
+                    )
+                })?;
 
-                let needed_len = name_info.FileNameLength + size_of::<u32>() as u32;
+                let needed_len = name_len + size_of::<u32>() as u32;
                 // expand info_buffer capacity to needed_len to hold the long path
                 info_buffer.resize(needed_len as usize, 0);
                 // try again
@@ -253,14 +256,38 @@ fn file_id_to_path(volume: &Volume, file_id: u64) -> windows::core::Result<PathB
 
         break;
     }
-    // SAFETY: The buffer is guaranteed to be large enough for FILE_NAME_INFO
-    // and the pointer is valid for the lifetime of the buffer.
-    let info: &FileSystem::FILE_NAME_INFO =
-        unsafe { &*(info_buffer.as_ptr() as *const FileSystem::FILE_NAME_INFO) };
-
-    let name_len = info.FileNameLength as usize / size_of::<u16>();
-    let name_u16 = unsafe { std::slice::from_raw_parts(info.FileName.as_ptr(), name_len) };
-    let sub_path = OsString::from_wide(name_u16);
+    let file_name_len_bytes = read_u32_le(&info_buffer, 0).ok_or_else(|| {
+        windows::core::Error::new(
+            Foundation::ERROR_INVALID_DATA.to_hresult(),
+            "Invalid FILE_NAME_INFO header",
+        )
+    })? as usize;
+    if file_name_len_bytes % size_of::<u16>() != 0 {
+        return Err(windows::core::Error::new(
+            Foundation::ERROR_INVALID_DATA.to_hresult(),
+            "Invalid UTF-16 file name length",
+        ));
+    }
+    let name_start = size_of::<u32>();
+    let name_end = name_start
+        .checked_add(file_name_len_bytes)
+        .ok_or_else(|| {
+            windows::core::Error::new(
+                Foundation::ERROR_INVALID_DATA.to_hresult(),
+                "FILE_NAME_INFO length overflow",
+            )
+        })?;
+    let name_bytes = info_buffer.get(name_start..name_end).ok_or_else(|| {
+        windows::core::Error::new(
+            Foundation::ERROR_INVALID_DATA.to_hresult(),
+            "FILE_NAME_INFO buffer too short",
+        )
+    })?;
+    let mut name_u16 = Vec::with_capacity(file_name_len_bytes / 2);
+    for chunk in name_bytes.chunks_exact(2) {
+        name_u16.push(u16::from_le_bytes([chunk[0], chunk[1]]));
+    }
+    let sub_path = OsString::from_wide(&name_u16);
 
     // Create the full path directly with a single allocation
     let mut full_path = PathBuf::new();
@@ -279,6 +306,11 @@ fn file_id_to_path(volume: &Volume, file_id: u64) -> windows::core::Result<PathB
 
     full_path.push(sub_path);
     Ok(full_path)
+}
+
+fn read_u32_le(buffer: &[u8], offset: usize) -> Option<u32> {
+    let bytes = buffer.get(offset..offset + 4)?;
+    Some(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
 }
 
 #[cfg(test)]
