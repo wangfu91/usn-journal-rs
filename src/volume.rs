@@ -5,16 +5,19 @@ use log::{debug, warn};
 use std::path::Path;
 use windows::{
     Win32::{
-        Foundation::{ERROR_ACCESS_DENIED, HANDLE},
+        Foundation::{
+            CloseHandle, DUPLICATE_SAME_ACCESS, DuplicateHandle, ERROR_ACCESS_DENIED, HANDLE,
+        },
         Storage::FileSystem::{
             CreateFileW, FILE_FLAGS_AND_ATTRIBUTES, FILE_GENERIC_READ, FILE_SHARE_READ,
             FILE_SHARE_WRITE, GetVolumeNameForVolumeMountPointW, OPEN_EXISTING,
         },
+        System::Threading::GetCurrentProcess,
     },
     core::HSTRING,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 /// Represents an NTFS/ReFS volume handle and its associated drive letter or mount point.
 pub struct Volume {
     pub(crate) handle: HANDLE,
@@ -41,6 +44,30 @@ impl Volume {
             drive_letter: None,
             mount_point: Some(mount_point.to_string_lossy().to_string()),
         })
+    }
+
+    /// Duplicates the underlying volume handle so the clone owns an independent handle.
+    pub fn try_clone(&self) -> Result<Self, UsnError> {
+        Ok(Volume {
+            handle: duplicate_handle(self.handle)?,
+            drive_letter: self.drive_letter,
+            mount_point: self.mount_point.clone(),
+        })
+    }
+}
+
+impl Clone for Volume {
+    fn clone(&self) -> Self {
+        self.try_clone()
+            .expect("failed to duplicate volume handle while cloning Volume")
+    }
+}
+
+impl Drop for Volume {
+    fn drop(&mut self) {
+        if !self.handle.is_invalid() {
+            let _ = unsafe { CloseHandle(self.handle) };
+        }
     }
 }
 
@@ -121,9 +148,32 @@ fn get_volume_handle_from_mount_point(mount_point: &Path) -> Result<HANDLE, UsnE
     Ok(volume_handle)
 }
 
+fn duplicate_handle(handle: HANDLE) -> Result<HANDLE, UsnError> {
+    if handle.is_invalid() {
+        return Ok(handle);
+    }
+
+    let current_process = unsafe { GetCurrentProcess() };
+    let mut duplicated_handle = HANDLE::default();
+
+    unsafe {
+        DuplicateHandle(
+            current_process,
+            handle,
+            current_process,
+            &mut duplicated_handle,
+            0,
+            false,
+            DUPLICATE_SAME_ACCESS,
+        )?;
+    }
+
+    Ok(duplicated_handle)
+}
+
 #[cfg(test)]
 mod tests {
-    use windows::Win32::Foundation::ERROR_FILE_NOT_FOUND;
+    use windows::Win32::Foundation::{ERROR_FILE_NOT_FOUND, HANDLE};
 
     use crate::{errors::UsnError, volume::Volume};
 
@@ -143,6 +193,27 @@ mod tests {
                         "Drive letter should match"
                     );
                     assert!(volume.mount_point.is_none(), "Mount point should be None");
+                    Ok(())
+                }
+                Err(UsnError::PermissionError) => {
+                    eprintln!("Skipping test - requires admin privileges");
+                    Ok(())
+                }
+                Err(e) => Err(e),
+            }
+        }
+
+        #[test]
+        fn test_clone_duplicates_valid_handle() -> Result<(), UsnError> {
+            match Volume::from_drive_letter('C') {
+                Ok(volume) => {
+                    let cloned = volume.clone();
+
+                    assert!(!volume.handle.is_invalid(), "Original handle should be valid");
+                    assert!(!cloned.handle.is_invalid(), "Cloned handle should be valid");
+                    assert_ne!(volume.handle, cloned.handle, "Clone should own a duplicate handle");
+                    assert_eq!(volume.drive_letter, cloned.drive_letter);
+                    assert_eq!(volume.mount_point, cloned.mount_point);
                     Ok(())
                 }
                 Err(UsnError::PermissionError) => {
@@ -191,5 +262,20 @@ mod tests {
                 "Should return an error for invalid mount point"
             );
         }
+    }
+
+    #[test]
+    fn test_clone_preserves_invalid_mock_handle() {
+        let volume = Volume {
+            handle: HANDLE(std::ptr::null_mut()),
+            drive_letter: Some('T'),
+            mount_point: None,
+        };
+
+        let cloned = volume.clone();
+
+        assert!(cloned.handle.is_invalid());
+        assert_eq!(cloned.drive_letter, Some('T'));
+        assert_eq!(cloned.mount_point, None);
     }
 }
