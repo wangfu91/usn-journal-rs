@@ -150,7 +150,7 @@ impl<'a> Mft<'a> {
             buffer: vec![0u8; options.buffer_size],
             bytes_read: 0,
             offset: 0,
-            next_start_fid: options.low_usn as u64,
+            next_start_fid: 0,
         }
     }
 }
@@ -454,7 +454,30 @@ mod tests {
     }
 
     // Unit tests for EnumOptions
-    mod enum_options_tests {}
+    mod enum_options_tests {
+        use super::*;
+
+        #[test]
+        fn test_iter_with_options_starts_from_first_file_reference() {
+            let volume = Volume {
+                handle: HANDLE(std::ptr::null_mut()),
+                drive_letter: Some('T'),
+                mount_point: None,
+            };
+            let mft = Mft::new(&volume);
+
+            let iter = mft.iter_with_options(EnumOptions {
+                low_usn: 42,
+                high_usn: 2048,
+                buffer_size: 4096,
+            });
+
+            assert_eq!(iter.low_usn, 42);
+            assert_eq!(iter.high_usn, 2048);
+            assert_eq!(iter.buffer.len(), 4096);
+            assert_eq!(iter.next_start_fid, 0);
+        }
+    }
 
     // Simplified mocked test using Injectorpp
     mod mocked_tests {
