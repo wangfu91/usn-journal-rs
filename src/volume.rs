@@ -1,26 +1,25 @@
 //! Volume handle management for NTFS/ReFS
 
-use crate::{errors::UsnError, privilege};
+use crate::{errors::UsnError, journal::UsnJournal, mft::Mft, path::PathResolver, privilege};
 use log::{debug, warn};
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 use windows::{
+    core::{HSTRING, Owned},
     Win32::{
-        Foundation::{
-            CloseHandle, DUPLICATE_SAME_ACCESS, DuplicateHandle, ERROR_ACCESS_DENIED, HANDLE,
-        },
+        Foundation::{ERROR_ACCESS_DENIED, HANDLE},
         Storage::FileSystem::{
             CreateFileW, FILE_FLAGS_AND_ATTRIBUTES, FILE_GENERIC_READ, FILE_SHARE_READ,
             FILE_SHARE_WRITE, GetVolumeNameForVolumeMountPointW, OPEN_EXISTING,
         },
-        System::Threading::GetCurrentProcess,
     },
-    core::HSTRING,
 };
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 /// Represents an NTFS/ReFS volume handle and its associated drive letter or mount point.
+///
+/// Cloning a `Volume` shares ownership of the same underlying OS handle.
 pub struct Volume {
-    pub(crate) handle: HANDLE,
+    handle: Arc<Owned<HANDLE>>,
     pub drive_letter: Option<char>,
     pub mount_point: Option<String>,
 }
@@ -29,45 +28,57 @@ impl Volume {
     /// Creates a new `Volume` instance with the given drive letter.
     pub fn from_drive_letter(drive_letter: char) -> Result<Self, UsnError> {
         let handle = get_volume_handle_from_drive_letter(drive_letter)?;
-        Ok(Volume {
-            handle,
-            drive_letter: Some(drive_letter),
-            mount_point: None,
-        })
+        Ok(Self::from_handle(handle, Some(drive_letter), None))
     }
 
     /// Creates a new `Volume` instance with the given mount point.
     pub fn from_mount_point(mount_point: &Path) -> Result<Self, UsnError> {
         let handle = get_volume_handle_from_mount_point(mount_point)?;
-        Ok(Volume {
+        Ok(Self::from_handle(
             handle,
-            drive_letter: None,
-            mount_point: Some(mount_point.to_string_lossy().to_string()),
-        })
+            None,
+            Some(mount_point.to_string_lossy().to_string()),
+        ))
     }
 
-    /// Duplicates the underlying volume handle so the clone owns an independent handle.
-    pub fn try_clone(&self) -> Result<Self, UsnError> {
-        Ok(Volume {
-            handle: duplicate_handle(self.handle)?,
-            drive_letter: self.drive_letter,
-            mount_point: self.mount_point.clone(),
-        })
+    /// Creates a USN journal view for this volume.
+    pub fn journal(&self) -> UsnJournal<'_> {
+        UsnJournal::new(self)
     }
-}
 
-impl Clone for Volume {
-    fn clone(&self) -> Self {
-        self.try_clone()
-            .expect("failed to duplicate volume handle while cloning Volume")
+    /// Creates an MFT view for this volume.
+    pub fn mft(&self) -> Mft<'_> {
+        Mft::new(self)
     }
-}
 
-impl Drop for Volume {
-    fn drop(&mut self) {
-        if !self.handle.is_invalid() {
-            let _ = unsafe { CloseHandle(self.handle) };
+    /// Creates a path resolver for this volume.
+    pub fn path_resolver(&self) -> PathResolver<'_> {
+        PathResolver::new(self)
+    }
+
+    /// Creates a path resolver with directory-path caching for this volume.
+    pub fn path_resolver_with_cache(&self) -> PathResolver<'_> {
+        PathResolver::new_with_cache(self)
+    }
+
+    pub(crate) fn from_handle(
+        handle: HANDLE,
+        drive_letter: Option<char>,
+        mount_point: Option<String>,
+    ) -> Self {
+        Self {
+            handle: share_handle(handle),
+            drive_letter,
+            mount_point,
         }
+    }
+
+    pub(crate) fn handle(&self) -> HANDLE {
+        **self.handle
+    }
+
+    pub(crate) fn shared_handle(&self) -> Arc<Owned<HANDLE>> {
+        Arc::clone(&self.handle)
     }
 }
 
@@ -148,31 +159,13 @@ fn get_volume_handle_from_mount_point(mount_point: &Path) -> Result<HANDLE, UsnE
     Ok(volume_handle)
 }
 
-fn duplicate_handle(handle: HANDLE) -> Result<HANDLE, UsnError> {
-    if handle.is_invalid() {
-        return Ok(handle);
-    }
-
-    let current_process = unsafe { GetCurrentProcess() };
-    let mut duplicated_handle = HANDLE::default();
-
-    unsafe {
-        DuplicateHandle(
-            current_process,
-            handle,
-            current_process,
-            &mut duplicated_handle,
-            0,
-            false,
-            DUPLICATE_SAME_ACCESS,
-        )?;
-    }
-
-    Ok(duplicated_handle)
+fn share_handle(handle: HANDLE) -> Arc<Owned<HANDLE>> {
+    Arc::new(unsafe { Owned::new(handle) })
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
     use windows::Win32::Foundation::{ERROR_FILE_NOT_FOUND, HANDLE};
 
     use crate::{errors::UsnError, volume::Volume};
@@ -186,7 +179,7 @@ mod tests {
             let drive_letter = 'C';
             match Volume::from_drive_letter(drive_letter) {
                 Ok(volume) => {
-                    assert!(!volume.handle.is_invalid(), "Volume handle should be valid");
+                    assert!(!volume.handle().is_invalid(), "Volume handle should be valid");
                     assert_eq!(
                         volume.drive_letter,
                         Some(drive_letter),
@@ -204,14 +197,15 @@ mod tests {
         }
 
         #[test]
-        fn test_clone_duplicates_valid_handle() -> Result<(), UsnError> {
+        fn test_clone_shares_valid_handle() -> Result<(), UsnError> {
             match Volume::from_drive_letter('C') {
                 Ok(volume) => {
                     let cloned = volume.clone();
 
-                    assert!(!volume.handle.is_invalid(), "Original handle should be valid");
-                    assert!(!cloned.handle.is_invalid(), "Cloned handle should be valid");
-                    assert_ne!(volume.handle, cloned.handle, "Clone should own a duplicate handle");
+                    assert!(!volume.handle().is_invalid(), "Original handle should be valid");
+                    assert!(!cloned.handle().is_invalid(), "Cloned handle should be valid");
+                    assert_eq!(volume.handle(), cloned.handle(), "Clone should share the same handle");
+                    assert!(Arc::ptr_eq(&volume.handle, &cloned.handle));
                     assert_eq!(volume.drive_letter, cloned.drive_letter);
                     assert_eq!(volume.mount_point, cloned.mount_point);
                     Ok(())
@@ -266,15 +260,12 @@ mod tests {
 
     #[test]
     fn test_clone_preserves_invalid_mock_handle() {
-        let volume = Volume {
-            handle: HANDLE(std::ptr::null_mut()),
-            drive_letter: Some('T'),
-            mount_point: None,
-        };
+        let volume = Volume::from_handle(HANDLE(std::ptr::null_mut()), Some('T'), None);
 
         let cloned = volume.clone();
 
-        assert!(cloned.handle.is_invalid());
+        assert!(cloned.handle().is_invalid());
+        assert!(Arc::ptr_eq(&volume.handle, &cloned.handle));
         assert_eq!(cloned.drive_letter, Some('T'));
         assert_eq!(cloned.mount_point, None);
     }

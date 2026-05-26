@@ -6,15 +6,18 @@
 
 use crate::{DEFAULT_BUFFER_SIZE, Usn, UsnResult, errors::UsnError, volume::Volume};
 use log::debug;
-use std::{ffi::OsString, mem::size_of, os::windows::ffi::OsStringExt, path::Path};
-use windows::Win32::{
-    Foundation::ERROR_HANDLE_EOF,
-    Storage::FileSystem::{
-        FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_HIDDEN, FILE_FLAGS_AND_ATTRIBUTES,
-    },
-    System::{
-        IO::DeviceIoControl,
-        Ioctl::{self, USN_RECORD_V2},
+use std::{ffi::OsString, mem::size_of, os::windows::ffi::OsStringExt, path::Path, sync::Arc};
+use windows::{
+    core::Owned,
+    Win32::{
+        Foundation::{ERROR_HANDLE_EOF, HANDLE},
+        Storage::FileSystem::{
+            FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_HIDDEN, FILE_FLAGS_AND_ATTRIBUTES,
+        },
+        System::{
+            IO::DeviceIoControl,
+            Ioctl::{self, USN_RECORD_V2},
+        },
     },
 };
 
@@ -128,7 +131,8 @@ impl<'a> Mft<'a> {
     /// to handle individual entry errors gracefully without stopping iteration.
     pub fn iter(&self) -> MftIter {
         MftIter {
-            volume: self.volume.clone(),
+            _handle_owner: self.volume.shared_handle(),
+            handle: self.volume.handle(),
             low_usn: 0,
             high_usn: i64::MAX,
             buffer: vec![0u8; DEFAULT_BUFFER_SIZE],
@@ -144,7 +148,8 @@ impl<'a> Mft<'a> {
     /// to handle individual entry errors gracefully without stopping iteration.
     pub fn iter_with_options(&self, options: EnumOptions) -> MftIter {
         MftIter {
-            volume: self.volume.clone(),
+            _handle_owner: self.volume.shared_handle(),
+            handle: self.volume.handle(),
             low_usn: options.low_usn,
             high_usn: options.high_usn,
             buffer: vec![0u8; options.buffer_size],
@@ -160,7 +165,8 @@ impl<'a> Mft<'a> {
 /// This iterator yields `Result<MftEntry, UsnError>` items, allowing applications
 /// to handle individual entry errors without stopping the entire iteration process.
 pub struct MftIter {
-    volume: Volume,
+    _handle_owner: Arc<Owned<HANDLE>>,
+    handle: HANDLE,
     low_usn: Usn,
     high_usn: Usn,
     buffer: Vec<u8>,
@@ -184,7 +190,7 @@ impl MftIter {
 
         if let Err(err) = unsafe {
             DeviceIoControl(
-                self.volume.handle,
+                self.handle,
                 Ioctl::FSCTL_ENUM_USN_DATA,
                 Some(&mft_enum_data as *const _ as _),
                 size_of::<Ioctl::MFT_ENUM_DATA_V0>() as u32,
@@ -460,11 +466,7 @@ mod tests {
 
         #[test]
         fn test_iter_with_options_starts_from_first_file_reference() {
-            let volume = Volume {
-                handle: HANDLE(std::ptr::null_mut()),
-                drive_letter: Some('T'),
-                mount_point: None,
-            };
+            let volume = Volume::from_handle(HANDLE(std::ptr::null_mut()), Some('T'), None);
             let mft = Mft::new(&volume);
 
             let iter = mft.iter_with_options(EnumOptions {
@@ -473,10 +475,10 @@ mod tests {
                 buffer_size: 4096,
             });
 
-            assert_eq!(iter.volume.drive_letter, Some('T'));
             assert_eq!(iter.low_usn, 42);
             assert_eq!(iter.high_usn, 2048);
             assert_eq!(iter.buffer.len(), 4096);
+            assert_eq!(iter.handle, volume.handle());
             assert_eq!(iter.next_start_fid, 0);
         }
     }
@@ -518,11 +520,7 @@ mod tests {
                     returns: Err(windows::core::Error::from(ERROR_INVALID_HANDLE))
                 ));
 
-            let volume = Volume {
-                handle: HANDLE(std::ptr::null_mut()),
-                drive_letter: Some('T'),
-                mount_point: None,
-            };
+            let volume = Volume::from_handle(HANDLE(std::ptr::null_mut()), Some('T'), None);
             let mft = Mft::new(&volume);
 
             let mut iter = mft.iter();

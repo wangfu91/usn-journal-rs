@@ -12,11 +12,11 @@
 //!
 //! ## Example: Enumerate USN Journal
 //! ```no_run
-//! use usn_journal_rs::{volume::Volume, journal::UsnJournal};
+//! use usn_journal_rs::volume::Volume;
 //!
 //! let drive_letter = 'C';
 //! let volume = Volume::from_drive_letter(drive_letter).unwrap();
-//! let journal = UsnJournal::new(&volume);
+//! let journal = volume.journal();
 //! for result in journal.iter().unwrap().take(10) {
 //!     match result {
 //!         Ok(entry) => println!("USN entry: {entry:?}"),
@@ -27,11 +27,11 @@
 //!
 //! # Example: Enumerating MFT Entries
 //! ```no_run
-//! use usn_journal_rs::{volume::Volume, mft::Mft};
+//! use usn_journal_rs::volume::Volume;
 //!
 //! let drive_letter = 'C';
 //! let volume = Volume::from_drive_letter(drive_letter).unwrap();
-//! let mft = Mft::new(&volume);
+//! let mft = volume.mft();
 //! for result in mft.iter().take(10) {
 //!     match result {
 //!         Ok(entry) => println!("MFT entry: {entry:?}"),

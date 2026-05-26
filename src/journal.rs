@@ -12,30 +12,34 @@ use crate::{
 use chrono::{DateTime, Local};
 use log::{debug, warn};
 use std::path::Path;
-use std::{ffi::OsString, os::windows::ffi::OsStringExt, time::SystemTime};
+use std::{ffi::OsString, os::windows::ffi::OsStringExt, sync::Arc, time::SystemTime};
 use std::{ffi::c_void, mem::size_of};
-use windows::Win32::Storage::FileSystem::{
-    FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_HIDDEN, FILE_FLAGS_AND_ATTRIBUTES,
-};
-use windows::Win32::System::Ioctl::{
-    USN_REASON_BASIC_INFO_CHANGE, USN_REASON_CLOSE, USN_REASON_COMPRESSION_CHANGE,
-    USN_REASON_DATA_EXTEND, USN_REASON_DATA_OVERWRITE, USN_REASON_DATA_TRUNCATION,
-    USN_REASON_DESIRED_STORAGE_CLASS_CHANGE, USN_REASON_EA_CHANGE, USN_REASON_ENCRYPTION_CHANGE,
-    USN_REASON_FILE_CREATE, USN_REASON_FILE_DELETE, USN_REASON_HARD_LINK_CHANGE,
-    USN_REASON_INDEXABLE_CHANGE, USN_REASON_INTEGRITY_CHANGE, USN_REASON_NAMED_DATA_EXTEND,
-    USN_REASON_NAMED_DATA_OVERWRITE, USN_REASON_NAMED_DATA_TRUNCATION, USN_REASON_OBJECT_ID_CHANGE,
-    USN_REASON_RENAME_NEW_NAME, USN_REASON_RENAME_OLD_NAME, USN_REASON_REPARSE_POINT_CHANGE,
-    USN_REASON_SECURITY_CHANGE, USN_REASON_STREAM_CHANGE, USN_REASON_TRANSACTED_CHANGE,
-};
-use windows::Win32::{
-    Foundation::{ERROR_HANDLE_EOF, ERROR_JOURNAL_NOT_ACTIVE},
-    System::{
-        IO::DeviceIoControl,
-        Ioctl::{
-            CREATE_USN_JOURNAL_DATA, DELETE_USN_JOURNAL_DATA, FSCTL_CREATE_USN_JOURNAL,
-            FSCTL_DELETE_USN_JOURNAL, FSCTL_QUERY_USN_JOURNAL, FSCTL_READ_USN_JOURNAL,
-            READ_USN_JOURNAL_DATA_V0, USN_DELETE_FLAG_DELETE, USN_DELETE_FLAG_NOTIFY,
-            USN_DELETE_FLAGS, USN_JOURNAL_DATA_V0, USN_RECORD_V2,
+use windows::{
+    core::Owned,
+    Win32::{
+        Foundation::{ERROR_HANDLE_EOF, ERROR_JOURNAL_NOT_ACTIVE, HANDLE},
+        Storage::FileSystem::{
+            FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_HIDDEN, FILE_FLAGS_AND_ATTRIBUTES,
+        },
+        System::{
+            IO::DeviceIoControl,
+            Ioctl::{
+                CREATE_USN_JOURNAL_DATA, DELETE_USN_JOURNAL_DATA, FSCTL_CREATE_USN_JOURNAL,
+                FSCTL_DELETE_USN_JOURNAL, FSCTL_QUERY_USN_JOURNAL, FSCTL_READ_USN_JOURNAL,
+                READ_USN_JOURNAL_DATA_V0, USN_DELETE_FLAG_DELETE, USN_DELETE_FLAG_NOTIFY,
+                USN_DELETE_FLAGS, USN_JOURNAL_DATA_V0, USN_RECORD_V2,
+                USN_REASON_BASIC_INFO_CHANGE, USN_REASON_CLOSE, USN_REASON_COMPRESSION_CHANGE,
+                USN_REASON_DATA_EXTEND, USN_REASON_DATA_OVERWRITE, USN_REASON_DATA_TRUNCATION,
+                USN_REASON_DESIRED_STORAGE_CLASS_CHANGE, USN_REASON_EA_CHANGE,
+                USN_REASON_ENCRYPTION_CHANGE, USN_REASON_FILE_CREATE, USN_REASON_FILE_DELETE,
+                USN_REASON_HARD_LINK_CHANGE, USN_REASON_INDEXABLE_CHANGE,
+                USN_REASON_INTEGRITY_CHANGE, USN_REASON_NAMED_DATA_EXTEND,
+                USN_REASON_NAMED_DATA_OVERWRITE, USN_REASON_NAMED_DATA_TRUNCATION,
+                USN_REASON_OBJECT_ID_CHANGE, USN_REASON_RENAME_NEW_NAME,
+                USN_REASON_RENAME_OLD_NAME, USN_REASON_REPARSE_POINT_CHANGE,
+                USN_REASON_SECURITY_CHANGE, USN_REASON_STREAM_CHANGE,
+                USN_REASON_TRANSACTED_CHANGE,
+            },
         },
     },
 };
@@ -115,7 +119,8 @@ impl<'a> UsnJournal<'a> {
     pub fn iter(&self) -> UsnResult<UsnJournalIter> {
         let journal_data = self.query(true)?;
         Ok(UsnJournalIter {
-            volume: self.volume.clone(),
+            _handle_owner: self.volume.shared_handle(),
+            handle: self.volume.handle(),
             journal_id: journal_data.journal_id,
             buffer: vec![0u8; DEFAULT_BUFFER_SIZE],
             bytes_read: 0,
@@ -135,7 +140,8 @@ impl<'a> UsnJournal<'a> {
     pub fn iter_with_options(&self, options: EnumOptions) -> UsnResult<UsnJournalIter> {
         let journal_data = self.query(true)?;
         Ok(UsnJournalIter {
-            volume: self.volume.clone(),
+            _handle_owner: self.volume.shared_handle(),
+            handle: self.volume.handle(),
             journal_id: journal_data.journal_id,
             buffer: vec![0u8; options.buffer_size],
             bytes_read: 0,
@@ -193,7 +199,7 @@ impl<'a> UsnJournal<'a> {
             // you must have system administrator privileges.
             // That is, you must be a member of the Administrators group.
             DeviceIoControl(
-                self.volume.handle,
+                self.volume.handle(),
                 FSCTL_QUERY_USN_JOURNAL,
                 None,
                 0,
@@ -226,7 +232,7 @@ impl<'a> UsnJournal<'a> {
             // FSCTL_CREATE_USN_JOURNAL
             // Creates an update sequence number (USN) change journal stream on a target volume, or modifies an existing change journal stream.
             DeviceIoControl(
-                self.volume.handle,
+                self.volume.handle(),
                 FSCTL_CREATE_USN_JOURNAL,
                 Some(&create_data as *const _ as *mut _),
                 size_of::<CREATE_USN_JOURNAL_DATA>() as u32,
@@ -255,7 +261,7 @@ impl<'a> UsnJournal<'a> {
 
         unsafe {
             DeviceIoControl(
-                self.volume.handle,
+                self.volume.handle(),
                 FSCTL_DELETE_USN_JOURNAL,
                 Some(&delete_data as *const _ as *mut _),
                 size_of::<DELETE_USN_JOURNAL_DATA>() as u32,
@@ -276,7 +282,8 @@ impl<'a> UsnJournal<'a> {
 ///
 /// This iterator yields `Result<UsnEntry, UsnError>` items.
 pub struct UsnJournalIter {
-    volume: Volume,
+    _handle_owner: Arc<Owned<HANDLE>>,
+    handle: HANDLE,
     journal_id: u64,
     buffer: Vec<u8>,
     bytes_read: u32,
@@ -304,7 +311,7 @@ impl UsnJournalIter {
 
         if let Err(err) = unsafe {
             DeviceIoControl(
-                self.volume.handle,
+                self.handle,
                 FSCTL_READ_USN_JOURNAL,
                 Some(&read_data as *const _ as *mut _),
                 size_of::<READ_USN_JOURNAL_DATA_V0>() as u32,

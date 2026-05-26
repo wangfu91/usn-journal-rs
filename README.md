@@ -23,11 +23,11 @@ A Rust library for working with the NTFS USN change journal and enumerating the 
 ### Enumerate USN Journal Entries
 
 ```rust
-use usn_journal_rs::{volume::Volume, journal::UsnJournal};
+use usn_journal_rs::volume::Volume;
 
 let drive_letter = 'C';
 let volume = Volume::from_drive_letter(drive_letter)?;
-let journal = UsnJournal::new(&volume);
+let journal = volume.journal();
 for entry_result in journal.iter()? {
     match entry_result {
         Ok(entry) => println!("USN entry: {:?}", entry),
@@ -39,11 +39,11 @@ for entry_result in journal.iter()? {
 ### Enumerate MFT Entries
 
 ```rust
-use usn_journal_rs::{volume::Volume, mft::Mft};
+use usn_journal_rs::volume::Volume;
 
 let drive_letter = 'C';
 let volume = Volume::from_drive_letter(drive_letter)?;
-let mft = Mft::new(&volume);
+let mft = volume.mft();
 for entry_result in mft.iter() {
     match entry_result {
         Ok(entry) => println!("MFT entry: {:?}", entry),
