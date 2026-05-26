@@ -17,6 +17,37 @@ use windows::Win32::{
 
 const LRU_CACHE_CAPACITY: usize = 4 * 1024; // 4K
 
+struct ScopedHandle(Foundation::HANDLE);
+
+impl ScopedHandle {
+    fn new(handle: Foundation::HANDLE) -> Self {
+        Self(handle)
+    }
+
+    fn raw(&self) -> Foundation::HANDLE {
+        self.0
+    }
+
+    fn close(mut self) -> windows::core::Result<()> {
+        if self.0.is_invalid() {
+            return Ok(());
+        }
+
+        let handle = self.0;
+        self.0 = Foundation::HANDLE::default();
+        unsafe { Foundation::CloseHandle(handle) }
+    }
+}
+
+impl Drop for ScopedHandle {
+    fn drop(&mut self) {
+        if !self.0.is_invalid() {
+            let _ = unsafe { Foundation::CloseHandle(self.0) };
+            self.0 = Foundation::HANDLE::default();
+        }
+    }
+}
+
 /// Trait for entries that can be resolved to a file path.
 pub trait PathResolvableEntry {
     fn fid(&self) -> u64;
@@ -207,7 +238,7 @@ fn file_id_to_path(volume: &Volume, file_id: u64) -> windows::core::Result<PathB
         },
     };
 
-    let file_handle = unsafe {
+    let file_handle = ScopedHandle::new(unsafe {
         FileSystem::OpenFileById(
             volume.handle,
             &file_id_desc,
@@ -218,7 +249,7 @@ fn file_id_to_path(volume: &Volume, file_id: u64) -> windows::core::Result<PathB
             None,
             FILE_FLAGS_AND_ATTRIBUTES::default(),
         )?
-    };
+    });
 
     let init_len = size_of::<u32>() + (Foundation::MAX_PATH as usize) * size_of::<u16>();
     let mut info_buffer = vec![0u8; init_len];
@@ -226,7 +257,7 @@ fn file_id_to_path(volume: &Volume, file_id: u64) -> windows::core::Result<PathB
     loop {
         if let Err(err) = unsafe {
             FileSystem::GetFileInformationByHandleEx(
-                file_handle,
+                file_handle.raw(),
                 FileSystem::FileNameInfo,
                 &mut *info_buffer as *mut _ as *mut c_void,
                 info_buffer.len() as u32,
@@ -251,7 +282,7 @@ fn file_id_to_path(volume: &Volume, file_id: u64) -> windows::core::Result<PathB
         break;
     }
 
-    unsafe { Foundation::CloseHandle(file_handle) }?;
+    file_handle.close()?;
     // SAFETY: The buffer is guaranteed to be large enough for FILE_NAME_INFO
     // and the pointer is valid for the lifetime of the buffer.
     let info: &FileSystem::FILE_NAME_INFO =
