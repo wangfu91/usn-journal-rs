@@ -1,3 +1,15 @@
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::expect_used,
+        clippy::panic,
+        clippy::todo,
+        clippy::unimplemented,
+        clippy::unreachable,
+        clippy::unwrap_used
+    )
+)]
+
 //! # usn-journal-rs
 //!
 //! A Rust library for manipulating the NTFS/ReFS USN change journal and enumerating the NTFS Master File Table (MFT).
@@ -12,11 +24,11 @@
 //!
 //! ## Example: Enumerate USN Journal
 //! ```no_run
-//! use usn_journal_rs::{volume::Volume, journal::UsnJournal};
+//! use usn_journal_rs::volume::Volume;
 //!
 //! let drive_letter = 'C';
 //! let volume = Volume::from_drive_letter(drive_letter).unwrap();
-//! let journal = UsnJournal::new(&volume);
+//! let journal = volume.journal();
 //! for result in journal.iter().unwrap().take(10) {
 //!     match result {
 //!         Ok(entry) => println!("USN entry: {entry:?}"),
@@ -27,11 +39,11 @@
 //!
 //! # Example: Enumerating MFT Entries
 //! ```no_run
-//! use usn_journal_rs::{volume::Volume, mft::Mft};
+//! use usn_journal_rs::volume::Volume;
 //!
 //! let drive_letter = 'C';
 //! let volume = Volume::from_drive_letter(drive_letter).unwrap();
-//! let mft = Mft::new(&volume);
+//! let mft = volume.mft();
 //! for result in mft.iter().take(10) {
 //!     match result {
 //!         Ok(entry) => println!("MFT entry: {entry:?}"),
@@ -52,6 +64,7 @@ pub mod journal;
 pub mod mft;
 pub mod path;
 mod privilege;
+mod usn_record;
 
 // Re-export commonly used types
 pub use errors::UsnError;
@@ -67,5 +80,5 @@ pub type Usn = i64;
 pub(crate) const DEFAULT_BUFFER_SIZE: usize = 64 * 1024; // 64KB
 
 pub const DEFAULT_JOURNAL_MAX_SIZE: u64 = 32 * 1024 * 1024; // 32MB
-pub const DEFAULT_JOURNAL_ALLOCATION_DELTA: u64 = 8 * 1024 * 1024; // 4MB
+pub const DEFAULT_JOURNAL_ALLOCATION_DELTA: u64 = 8 * 1024 * 1024; // 8MB
 pub const USN_REASON_MASK_ALL: u32 = 0xFFFFFFFF;

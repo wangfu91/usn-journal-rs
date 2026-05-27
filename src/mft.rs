@@ -4,18 +4,22 @@
 //! from the MFT using the Windows FSCTL_ENUM_USN_DATA control code. It manages the buffer and state
 //! required to sequentially retrieve and parse USN records from the volume.
 
-use crate::{DEFAULT_BUFFER_SIZE, Usn, UsnResult, errors::UsnError, volume::Volume};
+use crate::{DEFAULT_BUFFER_SIZE, Usn, UsnResult, errors::UsnError, usn_record, volume::Volume};
 use log::debug;
-use std::{ffi::OsString, mem::size_of, os::windows::ffi::OsStringExt, path::Path};
-use windows::Win32::{
-    Foundation::{ERROR_HANDLE_EOF, HANDLE},
-    Storage::FileSystem::{
-        FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_HIDDEN, FILE_FLAGS_AND_ATTRIBUTES,
+use std::rc::Rc;
+use std::{ffi::OsString, mem::size_of, path::Path};
+use windows::{
+    Win32::{
+        Foundation::{ERROR_HANDLE_EOF, HANDLE},
+        Storage::FileSystem::{
+            FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_HIDDEN, FILE_FLAGS_AND_ATTRIBUTES,
+        },
+        System::{
+            IO::DeviceIoControl,
+            Ioctl::{self},
+        },
     },
-    System::{
-        IO::DeviceIoControl,
-        Ioctl::{self, USN_RECORD_V2},
-    },
+    core::Owned,
 };
 
 /// Represents a single entry in the Master File Table (MFT).
@@ -29,22 +33,6 @@ pub struct MftEntry {
 }
 
 impl MftEntry {
-    /// Creates a new `MftEntry` from a raw USN_RECORD_V2 record.
-    pub(crate) fn new(record: &USN_RECORD_V2) -> Self {
-        let file_name_len = record.FileNameLength as usize / std::mem::size_of::<u16>();
-        let file_name_data =
-            unsafe { std::slice::from_raw_parts(record.FileName.as_ptr(), file_name_len) };
-        let file_name = OsString::from_wide(file_name_data);
-
-        MftEntry {
-            usn: record.Usn,
-            fid: record.FileReferenceNumber,
-            parent_fid: record.ParentFileReferenceNumber,
-            file_name,
-            file_attributes: record.FileAttributes,
-        }
-    }
-
     /// Returns true if this entry represents a directory.
     pub fn is_dir(&self) -> bool {
         let attributes = FILE_FLAGS_AND_ATTRIBUTES(self.file_attributes);
@@ -128,7 +116,7 @@ impl<'a> Mft<'a> {
     /// to handle individual entry errors gracefully without stopping iteration.
     pub fn iter(&self) -> MftIter {
         MftIter {
-            volume_handle: self.volume.handle,
+            handle: self.volume.shared_handle(),
             low_usn: 0,
             high_usn: i64::MAX,
             buffer: vec![0u8; DEFAULT_BUFFER_SIZE],
@@ -144,13 +132,13 @@ impl<'a> Mft<'a> {
     /// to handle individual entry errors gracefully without stopping iteration.
     pub fn iter_with_options(&self, options: EnumOptions) -> MftIter {
         MftIter {
-            volume_handle: self.volume.handle,
+            handle: self.volume.shared_handle(),
             low_usn: options.low_usn,
             high_usn: options.high_usn,
             buffer: vec![0u8; options.buffer_size],
             bytes_read: 0,
             offset: 0,
-            next_start_fid: options.low_usn as u64,
+            next_start_fid: 0,
         }
     }
 }
@@ -160,7 +148,7 @@ impl<'a> Mft<'a> {
 /// This iterator yields `Result<MftEntry, UsnError>` items, allowing applications
 /// to handle individual entry errors without stopping the entire iteration process.
 pub struct MftIter {
-    volume_handle: HANDLE,
+    handle: Rc<Owned<HANDLE>>,
     low_usn: Usn,
     high_usn: Usn,
     buffer: Vec<u8>,
@@ -184,7 +172,7 @@ impl MftIter {
 
         if let Err(err) = unsafe {
             DeviceIoControl(
-                self.volume_handle,
+                **self.handle,
                 Ioctl::FSCTL_ENUM_USN_DATA,
                 Some(&mft_enum_data as *const _ as _),
                 size_of::<Ioctl::MFT_ENUM_DATA_V0>() as u32,
@@ -204,27 +192,30 @@ impl MftIter {
 
     /// Finds the next USN record in the buffer, reading more data if needed.
     ///
-    /// Returns `Ok(Some(&USN_RECORD_V2))` if a record is found, `Ok(None)` if EOF, or an error.
-    fn find_next_entry(&mut self) -> Result<Option<&USN_RECORD_V2>, UsnError> {
+    /// Returns `Ok(Some(MftEntry))` if a record is found, `Ok(None)` if EOF, or an error.
+    fn find_next_entry(&mut self) -> Result<Option<MftEntry>, UsnError> {
         if self.offset < self.bytes_read {
-            let record = unsafe {
-                &*(self.buffer.as_ptr().offset(self.offset as isize) as *const USN_RECORD_V2)
-            };
-            self.offset += record.RecordLength;
-            return Ok(Some(record));
+            let (entry, record_len) =
+                parse_mft_usn_record_v2(&self.buffer, self.offset, self.bytes_read)?;
+            self.offset += record_len;
+            return Ok(Some(entry));
         }
 
         // We need to read more data
         if self.get_data()? {
             // Each call to FSCTL_ENUM_USN_DATA retrieves the starting point for the subsequent call as the first entry in the output buffer.
-            self.next_start_fid = unsafe { std::ptr::read(self.buffer.as_ptr() as *const u64) };
+            self.next_start_fid = usn_record::read_unaligned_from::<u64>(&self.buffer, 0)
+                .ok_or_else(|| {
+                    UsnError::OtherError(
+                        "MFT data buffer missing next-start FID header".to_string(),
+                    )
+                })?;
             self.offset = size_of::<u64>() as u32;
             if self.offset < self.bytes_read {
-                let record = unsafe {
-                    &*(self.buffer.as_ptr().offset(self.offset as isize) as *const USN_RECORD_V2)
-                };
-                self.offset += record.RecordLength;
-                return Ok(Some(record));
+                let (entry, record_len) =
+                    parse_mft_usn_record_v2(&self.buffer, self.offset, self.bytes_read)?;
+                self.offset += record_len;
+                return Ok(Some(entry));
             }
         }
 
@@ -238,7 +229,7 @@ impl Iterator for MftIter {
 
     fn next(&mut self) -> Option<Self::Item> {
         match self.find_next_entry() {
-            Ok(Some(record)) => Some(Ok(MftEntry::new(record))),
+            Ok(Some(entry)) => Some(Ok(entry)),
             Ok(None) => None,
             Err(err) => {
                 debug!("Error finding next MFT entry: {err}");
@@ -246,6 +237,28 @@ impl Iterator for MftIter {
             }
         }
     }
+}
+
+fn parse_mft_usn_record_v2(
+    buffer: &[u8],
+    offset: u32,
+    bytes_read: u32,
+) -> Result<(MftEntry, u32), UsnError> {
+    let base = offset as usize;
+    let (header, record_len) =
+        usn_record::parse_usn_record_v2_header(buffer, offset, bytes_read, "MFT record")?;
+    let file_name = usn_record::parse_usn_record_v2_name(buffer, base, &header, "MFT record")?;
+
+    Ok((
+        MftEntry {
+            usn: header.usn,
+            fid: header.file_reference_number,
+            parent_fid: header.parent_file_reference_number,
+            file_name,
+            file_attributes: header.file_attributes,
+        },
+        record_len,
+    ))
 }
 
 #[cfg(test)]
@@ -314,6 +327,12 @@ mod tests {
         buffer
     }
 
+    fn parse_mock_mft_entry(record_data: &[u8]) -> MftEntry {
+        parse_mft_usn_record_v2(record_data, 0, record_data.len() as u32)
+            .unwrap()
+            .0
+    }
+
     // Unit tests for MftEntry
     mod mft_entry_tests {
         use super::*;
@@ -327,8 +346,7 @@ mod tests {
                 "test.txt", 0x20, // FILE_ATTRIBUTE_ARCHIVE
             );
 
-            let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
-            let entry = MftEntry::new(record);
+            let entry = parse_mock_mft_entry(&record_data);
 
             assert_eq!(entry.usn, 100);
             assert_eq!(entry.fid, 12345);
@@ -343,8 +361,7 @@ mod tests {
                 100, 12345, 67890, "folder", 0x10, // FILE_ATTRIBUTE_DIRECTORY
             );
 
-            let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
-            let entry = MftEntry::new(record);
+            let entry = parse_mock_mft_entry(&record_data);
 
             assert!(entry.is_dir());
             assert!(!entry.is_hidden());
@@ -356,8 +373,7 @@ mod tests {
                 100, 12345, 67890, "file.txt", 0x20, // FILE_ATTRIBUTE_ARCHIVE
             );
 
-            let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
-            let entry = MftEntry::new(record);
+            let entry = parse_mock_mft_entry(&record_data);
 
             assert!(!entry.is_dir());
             assert!(!entry.is_hidden());
@@ -369,8 +385,7 @@ mod tests {
                 100, 12345, 67890, ".hidden", 0x02, // FILE_ATTRIBUTE_HIDDEN
             );
 
-            let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
-            let entry = MftEntry::new(record);
+            let entry = parse_mock_mft_entry(&record_data);
 
             assert!(entry.is_hidden());
             assert!(!entry.is_dir());
@@ -386,8 +401,7 @@ mod tests {
                 0x12, // FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_HIDDEN
             );
 
-            let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
-            let entry = MftEntry::new(record);
+            let entry = parse_mock_mft_entry(&record_data);
 
             assert!(entry.is_dir());
             assert!(entry.is_hidden());
@@ -403,8 +417,7 @@ mod tests {
                 0x20,
             );
 
-            let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
-            let entry = MftEntry::new(record);
+            let entry = parse_mock_mft_entry(&record_data);
 
             assert_eq!(entry.file_name.to_string_lossy(), "测试文件.txt");
         }
@@ -413,8 +426,7 @@ mod tests {
         fn test_mft_entry_empty_filename() {
             let record_data = create_mock_usn_record(100, 12345, 67890, "", 0x20);
 
-            let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
-            let entry = MftEntry::new(record);
+            let entry = parse_mock_mft_entry(&record_data);
 
             assert!(entry.file_name.is_empty());
         }
@@ -423,8 +435,7 @@ mod tests {
         fn test_mft_entry_pretty_format_with_path() {
             let record_data = create_mock_usn_record(100, 0x12345, 0x67890, "test.txt", 0x20);
 
-            let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
-            let entry = MftEntry::new(record);
+            let entry = parse_mock_mft_entry(&record_data);
 
             let formatted =
                 entry.pretty_format(Some(std::path::Path::new("C:\\full\\path\\test.txt")));
@@ -441,8 +452,7 @@ mod tests {
                 100, 0x12345, 0x67890, "test.txt", 0x10, // Directory
             );
 
-            let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
-            let entry = MftEntry::new(record);
+            let entry = parse_mock_mft_entry(&record_data);
 
             let formatted = entry.pretty_format(None::<&std::path::Path>);
 
@@ -454,7 +464,28 @@ mod tests {
     }
 
     // Unit tests for EnumOptions
-    mod enum_options_tests {}
+    mod enum_options_tests {
+        use super::*;
+        use windows::Win32::Foundation::HANDLE;
+
+        #[test]
+        fn test_iter_with_options_starts_from_first_file_reference() {
+            let volume = Volume::from_handle(HANDLE(std::ptr::null_mut()), Some('T'), None);
+            let mft = Mft::new(&volume);
+
+            let iter = mft.iter_with_options(EnumOptions {
+                low_usn: 42,
+                high_usn: 2048,
+                buffer_size: 4096,
+            });
+
+            assert_eq!(iter.low_usn, 42);
+            assert_eq!(iter.high_usn, 2048);
+            assert_eq!(iter.buffer.len(), 4096);
+            assert_eq!(iter.handle, volume.shared_handle());
+            assert_eq!(iter.next_start_fid, 0);
+        }
+    }
 
     // Simplified mocked test using Injectorpp
     mod mocked_tests {
@@ -493,11 +524,7 @@ mod tests {
                     returns: Err(windows::core::Error::from(ERROR_INVALID_HANDLE))
                 ));
 
-            let volume = Volume {
-                handle: HANDLE(std::ptr::null_mut()),
-                drive_letter: Some('T'),
-                mount_point: None,
-            };
+            let volume = Volume::from_handle(HANDLE(std::ptr::null_mut()), Some('T'), None);
             let mft = Mft::new(&volume);
 
             let mut iter = mft.iter();

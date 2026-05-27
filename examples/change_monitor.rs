@@ -1,9 +1,6 @@
-use usn_journal_rs::{
-    errors::UsnError,
-    journal::{self, UsnJournal},
-    path::PathResolver,
-    volume::Volume,
-};
+mod common;
+
+use usn_journal_rs::{errors::UsnError, journal, volume::Volume};
 
 fn main() {
     if let Err(e) = run() {
@@ -12,9 +9,9 @@ fn main() {
 }
 
 fn run() -> Result<(), UsnError> {
-    let drive_letter = 'D';
+    let drive_letter = common::drive_letter_from_args_or('C');
     let volume = Volume::from_drive_letter(drive_letter)?;
-    let usn_journal = UsnJournal::new(&volume);
+    let usn_journal = volume.journal();
 
     let journal_data = usn_journal.query(true)?;
 
@@ -25,7 +22,7 @@ fn run() -> Result<(), UsnError> {
         ..Default::default()
     };
 
-    let mut path_resolver = PathResolver::new(&volume);
+    let mut path_resolver = volume.path_resolver();
 
     for result in usn_journal.iter_with_options(enum_options)? {
         match result {

@@ -1,19 +1,9 @@
 use crate::errors::UsnError;
-use chrono::{DateTime, Duration as ChronoDuration, NaiveDate, NaiveDateTime, Utc};
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-// Define the Windows epoch as a const.
-// NaiveDate/Time construction can panic if given invalid values, but 1601-01-01 00:00:00 is valid.
-const WINDOWS_EPOCH_NAIVE: NaiveDateTime = match NaiveDate::from_ymd_opt(1601, 1, 1) {
-    Some(date) => match date.and_hms_opt(0, 0, 0) {
-        Some(datetime) => datetime,
-        // These panics should ideally not be hit for hardcoded valid dates/times.
-        None => panic!("Invalid time component for Windows epoch constant"),
-    },
-    None => panic!("Invalid date component for Windows epoch constant"),
-};
-const WINDOWS_EPOCH_UTC: DateTime<Utc> =
-    DateTime::<Utc>::from_naive_utc_and_offset(WINDOWS_EPOCH_NAIVE, Utc);
+const FILETIME_INTERVALS_PER_SECOND: u64 = 10_000_000;
+const NANOS_PER_FILETIME_INTERVAL: u32 = 100;
+const WINDOWS_TO_UNIX_EPOCH_INTERVALS: u64 = 116_444_736_000_000_000;
 
 /// Converts a Windows FILETIME (100-nanosecond intervals since 1601-01-01 UTC)
 /// to a `std::time::SystemTime`.
@@ -37,26 +27,37 @@ pub(crate) fn filetime_to_systemtime(filetime: i64) -> Result<SystemTime, UsnErr
 
     let filetime_u64 = filetime as u64;
 
-    // Convert 100-nanosecond intervals to seconds and remaining nanoseconds.
-    let secs_since_windows_epoch = filetime_u64 / 10_000_000;
-    let nanos_remainder = (filetime_u64 % 10_000_000) * 100;
+    if filetime_u64 >= WINDOWS_TO_UNIX_EPOCH_INTERVALS {
+        let duration_since_unix =
+            filetime_intervals_to_duration(filetime_u64 - WINDOWS_TO_UNIX_EPOCH_INTERVALS);
+        UNIX_EPOCH.checked_add(duration_since_unix).ok_or_else(|| {
+            UsnError::OtherError(format!(
+                "FILETIME is too large to convert to SystemTime: {filetime}"
+            ))
+        })
+    } else {
+        let duration_before_unix =
+            filetime_intervals_to_duration(WINDOWS_TO_UNIX_EPOCH_INTERVALS - filetime_u64);
+        UNIX_EPOCH.checked_sub(duration_before_unix).ok_or_else(|| {
+            UsnError::OtherError(format!(
+                "FILETIME is too small to convert to SystemTime: {filetime}"
+            ))
+        })
+    }
+}
 
-    // Create a chrono::Duration from these parts.
-    let duration_since_windows_epoch = ChronoDuration::seconds(secs_since_windows_epoch as i64)
-        + ChronoDuration::nanoseconds(nanos_remainder as i64);
-
-    // Add this duration to the Windows epoch.
-    let system_time_utc = WINDOWS_EPOCH_UTC + duration_since_windows_epoch;
-
-    // Convert chrono::DateTime<Utc> to std::time::SystemTime.
-    Ok(system_time_utc.into())
+fn filetime_intervals_to_duration(intervals: u64) -> Duration {
+    let seconds = intervals / FILETIME_INTERVALS_PER_SECOND;
+    let nanos = ((intervals % FILETIME_INTERVALS_PER_SECOND) as u32) * NANOS_PER_FILETIME_INTERVAL;
+    Duration::new(seconds, nanos)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::errors::UsnError;
-    use std::time::{Duration, UNIX_EPOCH};
+    use chrono::{DateTime, NaiveDate, Utc};
+    use std::time::Duration;
     use windows::Win32::{
         Foundation::{FILETIME, SYSTEMTIME as WinSystemTime},
         System::Time::SystemTimeToFileTime,
@@ -241,8 +242,9 @@ mod tests {
                 let system_time = filetime_to_systemtime(filetime).unwrap();
 
                 // Convert back to approximate FILETIME for comparison
+                let windows_epoch = filetime_to_systemtime(0).unwrap();
                 let duration_since_windows_epoch = system_time
-                    .duration_since(WINDOWS_EPOCH_UTC.into())
+                    .duration_since(windows_epoch)
                     .unwrap_or_else(|_| Duration::new(0, 0));
 
                 // Convert to 100-nanosecond intervals (FILETIME units)

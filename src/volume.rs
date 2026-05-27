@@ -1,8 +1,9 @@
 //! Volume handle management for NTFS/ReFS
 
-use crate::{errors::UsnError, privilege};
+use crate::{errors::UsnError, journal::UsnJournal, mft::Mft, path::PathResolver, privilege};
 use log::{debug, warn};
 use std::path::Path;
+use std::rc::Rc;
 use windows::{
     Win32::{
         Foundation::{ERROR_ACCESS_DENIED, HANDLE},
@@ -11,13 +12,15 @@ use windows::{
             FILE_SHARE_WRITE, GetVolumeNameForVolumeMountPointW, OPEN_EXISTING,
         },
     },
-    core::HSTRING,
+    core::{HSTRING, Owned},
 };
 
 #[derive(Debug, Clone)]
 /// Represents an NTFS/ReFS volume handle and its associated drive letter or mount point.
+///
+/// Cloning a `Volume` shares ownership of the same underlying OS handle.
 pub struct Volume {
-    pub(crate) handle: HANDLE,
+    handle: Rc<Owned<HANDLE>>,
     pub drive_letter: Option<char>,
     pub mount_point: Option<String>,
 }
@@ -26,21 +29,57 @@ impl Volume {
     /// Creates a new `Volume` instance with the given drive letter.
     pub fn from_drive_letter(drive_letter: char) -> Result<Self, UsnError> {
         let handle = get_volume_handle_from_drive_letter(drive_letter)?;
-        Ok(Volume {
-            handle,
-            drive_letter: Some(drive_letter),
-            mount_point: None,
-        })
+        Ok(Self::from_handle(handle, Some(drive_letter), None))
     }
 
     /// Creates a new `Volume` instance with the given mount point.
     pub fn from_mount_point(mount_point: &Path) -> Result<Self, UsnError> {
         let handle = get_volume_handle_from_mount_point(mount_point)?;
-        Ok(Volume {
+        Ok(Self::from_handle(
             handle,
-            drive_letter: None,
-            mount_point: Some(mount_point.to_string_lossy().to_string()),
-        })
+            None,
+            Some(mount_point.to_string_lossy().to_string()),
+        ))
+    }
+
+    /// Creates a USN journal view for this volume.
+    pub fn journal(&self) -> UsnJournal<'_> {
+        UsnJournal::new(self)
+    }
+
+    /// Creates an MFT view for this volume.
+    pub fn mft(&self) -> Mft<'_> {
+        Mft::new(self)
+    }
+
+    /// Creates a path resolver for this volume.
+    pub fn path_resolver(&self) -> PathResolver<'_> {
+        PathResolver::new(self)
+    }
+
+    /// Creates a path resolver with directory-path caching for this volume.
+    pub fn path_resolver_with_cache(&self) -> PathResolver<'_> {
+        PathResolver::new_with_cache(self)
+    }
+
+    pub(crate) fn from_handle(
+        handle: HANDLE,
+        drive_letter: Option<char>,
+        mount_point: Option<String>,
+    ) -> Self {
+        Self {
+            handle: share_handle(handle),
+            drive_letter,
+            mount_point,
+        }
+    }
+
+    pub(crate) fn handle(&self) -> HANDLE {
+        **self.handle
+    }
+
+    pub(crate) fn shared_handle(&self) -> Rc<Owned<HANDLE>> {
+        Rc::clone(&self.handle)
     }
 }
 
@@ -121,28 +160,69 @@ fn get_volume_handle_from_mount_point(mount_point: &Path) -> Result<HANDLE, UsnE
     Ok(volume_handle)
 }
 
+fn share_handle(handle: HANDLE) -> Rc<Owned<HANDLE>> {
+    Rc::new(unsafe { Owned::new(handle) })
+}
+
 #[cfg(test)]
 mod tests {
-    use windows::Win32::Foundation::ERROR_FILE_NOT_FOUND;
+    use std::rc::Rc;
+    use windows::Win32::Foundation::{ERROR_FILE_NOT_FOUND, HANDLE};
 
     use crate::{errors::UsnError, volume::Volume};
 
     // Integration tests that require actual filesystem access
     mod integration_tests {
         use super::*;
+        use std::rc::Rc;
 
         #[test]
         fn test_get_volume_handle_from_valid_drive_letter() -> Result<(), UsnError> {
             let drive_letter = 'C';
             match Volume::from_drive_letter(drive_letter) {
                 Ok(volume) => {
-                    assert!(!volume.handle.is_invalid(), "Volume handle should be valid");
+                    assert!(
+                        !volume.handle().is_invalid(),
+                        "Volume handle should be valid"
+                    );
                     assert_eq!(
                         volume.drive_letter,
                         Some(drive_letter),
                         "Drive letter should match"
                     );
                     assert!(volume.mount_point.is_none(), "Mount point should be None");
+                    Ok(())
+                }
+                Err(UsnError::PermissionError) => {
+                    eprintln!("Skipping test - requires admin privileges");
+                    Ok(())
+                }
+                Err(e) => Err(e),
+            }
+        }
+
+        #[test]
+        fn test_clone_shares_valid_handle() -> Result<(), UsnError> {
+            match Volume::from_drive_letter('C') {
+                Ok(volume) => {
+                    let cloned = volume.clone();
+
+                    assert!(
+                        !volume.handle().is_invalid(),
+                        "Original handle should be valid"
+                    );
+                    assert!(
+                        !cloned.handle().is_invalid(),
+                        "Cloned handle should be valid"
+                    );
+                    assert_eq!(
+                        volume.handle(),
+                        cloned.handle(),
+                        "Clone should share the same handle"
+                    );
+                    assert!(Rc::ptr_eq(&volume.handle, &cloned.handle));
+                    assert_eq!(volume.drive_letter, cloned.drive_letter);
+                    assert_eq!(volume.mount_point, cloned.mount_point);
                     Ok(())
                 }
                 Err(UsnError::PermissionError) => {
@@ -191,5 +271,17 @@ mod tests {
                 "Should return an error for invalid mount point"
             );
         }
+    }
+
+    #[test]
+    fn test_clone_preserves_invalid_mock_handle() {
+        let volume = Volume::from_handle(HANDLE(std::ptr::null_mut()), Some('T'), None);
+
+        let cloned = volume.clone();
+
+        assert!(cloned.handle().is_invalid());
+        assert!(Rc::ptr_eq(&volume.handle, &cloned.handle));
+        assert_eq!(cloned.drive_letter, Some('T'));
+        assert_eq!(cloned.mount_point, None);
     }
 }
