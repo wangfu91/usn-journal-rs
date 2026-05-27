@@ -18,4 +18,3 @@ pub fn drive_letter_from_args_or(default: char) -> char {
         .and_then(parse_drive_letter)
         .unwrap_or(default.to_ascii_uppercase())
 }
-
