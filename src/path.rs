@@ -5,10 +5,10 @@
 use crate::{journal::UsnEntry, mft::MftEntry, volume::Volume};
 use lru::LruCache;
 use std::{
-    ffi::{OsString, c_void},
+    ffi::{OsStr, OsString, c_void},
     num::NonZeroUsize,
     os::windows::ffi::OsStringExt,
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 use windows::{
     Win32::{
@@ -118,7 +118,12 @@ fn resolve_path(
     file_name: &OsString,
 ) -> Option<PathBuf> {
     if let Ok(resolved_parent_path) = file_id_to_path(volume, parent_fid) {
-        return Some(resolved_parent_path.join(file_name));
+        return Some(join_resolved_path(
+            &resolved_parent_path,
+            fid,
+            parent_fid,
+            file_name,
+        ));
     } else if let Ok(resolved_path) = file_id_to_path(volume, fid) {
         return Some(resolved_path);
     }
@@ -190,7 +195,7 @@ fn resolve_path_with_cache(
     }
 
     // 3. Construct the current item's path using the parent's path and the current file_name.
-    let current_path = parent_dir_path.join(file_name);
+    let current_path = join_resolved_path(&parent_dir_path, fid, parent_fid, file_name);
 
     // 4. If the current item is a directory, cache its path and current name.
     if is_dir {
@@ -198,6 +203,27 @@ fn resolve_path_with_cache(
     }
 
     Some(current_path)
+}
+
+fn join_resolved_path(
+    parent_dir_path: &Path,
+    fid: u64,
+    parent_fid: u64,
+    file_name: &OsStr,
+) -> PathBuf {
+    // NTFS can surface the volume root as a self-entry in USN/MFT data where
+    // `fid == parent_fid` and `file_name == "."`.
+    //
+    // `fsutil file queryfilenamebyid <drive> 0x...` confirms this FID resolves
+    // to the volume root (for example `\\?\G:\`). If we join that root path
+    // with a literal `.` component, the cache stores `G:\.` and descendants are
+    // later reconstructed as `G:\.\foo`. Treat the self-entry as the already
+    // resolved root path instead.
+    if fid == parent_fid && file_name == OsStr::new(".") {
+        parent_dir_path.to_path_buf()
+    } else {
+        parent_dir_path.join(file_name)
+    }
 }
 
 /// Resolves a file ID to its full path on the specified NTFS/ReFS volume.
@@ -344,6 +370,13 @@ mod tests {
 
     fn create_mock_volume() -> Volume {
         Volume::from_handle(HANDLE(std::ptr::null_mut()), Some('C'), None)
+    }
+
+    #[test]
+    fn test_join_resolved_path_keeps_root_self_entry_at_volume_root() {
+        let path = join_resolved_path(Path::new(r"C:\"), 0x5, 0x5, OsStr::new("."));
+
+        assert_eq!(path, PathBuf::from(r"C:\"));
     }
 
     #[test]
@@ -501,6 +534,36 @@ mod tests {
             assert_eq!(updated_path.to_string_lossy(), "C:\\Documents\\NewName");
             assert_eq!(updated_name, &OsString::from("NewName"));
         }
+    }
+
+    #[test]
+    fn test_resolve_path_with_cache_handles_root_self_entry() {
+        let volume = create_mock_volume();
+        let mut resolver = PathResolver::new_with_cache(&volume);
+
+        if let Some(ref mut cache) = resolver.dir_fid_path_cache {
+            cache.put(0x1, (PathBuf::from(r"C:\"), OsString::new()));
+        }
+
+        let root_marker_entry = MockEntry {
+            fid: 0x2,
+            parent_fid: 0x1,
+            file_name: OsString::from("."),
+            is_dir: true,
+        };
+
+        let root_marker_path = resolver.resolve_path(&root_marker_entry).unwrap();
+        assert_eq!(root_marker_path, PathBuf::from(r"C:\"));
+
+        let child_entry = MockEntry {
+            fid: 0x3,
+            parent_fid: 0x2,
+            file_name: OsString::from("New folder"),
+            is_dir: true,
+        };
+
+        let child_path = resolver.resolve_path(&child_entry).unwrap();
+        assert_eq!(child_path, PathBuf::from(r"C:\New folder"));
     }
 
     #[test]
