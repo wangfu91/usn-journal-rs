@@ -39,8 +39,14 @@ pub(crate) fn parse_usn_record_v2_header(
 ) -> Result<(UsnRecordV2Header, u32), UsnError> {
     let base = offset as usize;
     let read_end = bytes_read as usize;
+    let header_end = base
+        .checked_add(USN_RECORD_V2_HEADER_LEN)
+        .ok_or_else(|| UsnError::OtherError(format!("{context} header length overflow")))?;
+    if header_end > read_end {
+        return Err(UsnError::OtherError(format!("{context} missing fixed header")));
+    }
     let header_bytes = buffer
-        .get(base..base.checked_add(USN_RECORD_V2_HEADER_LEN).unwrap())
+        .get(base..header_end)
         .ok_or_else(|| UsnError::OtherError(format!("{context} missing fixed header")))?;
     let mut header = MaybeUninit::<UsnRecordV2Header>::zeroed();
     unsafe {
@@ -117,4 +123,32 @@ pub(crate) fn parse_usn_record_v2_name(
         .collect::<Vec<_>>();
 
     Ok(OsString::from_wide(&name_units))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_usn_record_v2_header_rejects_truncated_valid_region() {
+        let buffer = vec![0u8; USN_RECORD_V2_HEADER_LEN];
+
+        let result = parse_usn_record_v2_header(
+            &buffer,
+            0,
+            (USN_RECORD_V2_HEADER_LEN - 1) as u32,
+            "USN record",
+        );
+
+        assert!(matches!(result, Err(UsnError::OtherError(message)) if message == "USN record missing fixed header"));
+    }
+
+    #[test]
+    fn parse_usn_record_v2_header_rejects_offset_beyond_valid_bytes() {
+        let buffer = vec![0u8; USN_RECORD_V2_HEADER_LEN * 2];
+
+        let result = parse_usn_record_v2_header(&buffer, USN_RECORD_V2_HEADER_LEN as u32, 0, "USN record");
+
+        assert!(matches!(result, Err(UsnError::OtherError(message)) if message == "USN record missing fixed header"));
+    }
 }
