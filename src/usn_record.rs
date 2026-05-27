@@ -43,7 +43,9 @@ pub(crate) fn parse_usn_record_v2_header(
         .checked_add(USN_RECORD_V2_HEADER_LEN)
         .ok_or_else(|| UsnError::OtherError(format!("{context} header length overflow")))?;
     if header_end > read_end {
-        return Err(UsnError::OtherError(format!("{context} missing fixed header")));
+        return Err(UsnError::OtherError(format!(
+            "{context} missing fixed header"
+        )));
     }
     let header_bytes = buffer
         .get(base..header_end)
@@ -140,15 +142,20 @@ mod tests {
             "USN record",
         );
 
-        assert!(matches!(result, Err(UsnError::OtherError(message)) if message == "USN record missing fixed header"));
+        assert!(
+            matches!(result, Err(UsnError::OtherError(message)) if message == "USN record missing fixed header")
+        );
     }
 
     #[test]
     fn parse_usn_record_v2_header_rejects_offset_beyond_valid_bytes() {
         let buffer = vec![0u8; USN_RECORD_V2_HEADER_LEN * 2];
 
-        let result = parse_usn_record_v2_header(&buffer, USN_RECORD_V2_HEADER_LEN as u32, 0, "USN record");
+        let result =
+            parse_usn_record_v2_header(&buffer, USN_RECORD_V2_HEADER_LEN as u32, 0, "USN record");
 
-        assert!(matches!(result, Err(UsnError::OtherError(message)) if message == "USN record missing fixed header"));
+        assert!(
+            matches!(result, Err(UsnError::OtherError(message)) if message == "USN record missing fixed header")
+        );
     }
 }

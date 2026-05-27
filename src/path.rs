@@ -18,7 +18,9 @@ use windows::{
     core::Owned,
 };
 
-const LRU_CACHE_CAPACITY: usize = 4 * 1024; // 4K
+// SAFETY: 4 * 1024 is non-zero by construction.
+#[allow(clippy::useless_nonzero_new_unchecked)]
+const LRU_CACHE_CAPACITY: NonZeroUsize = unsafe { NonZeroUsize::new_unchecked(4 * 1024) }; // 4K
 
 /// Trait for entries that can be resolved to a file path.
 pub trait PathResolvableEntry {
@@ -82,8 +84,7 @@ impl<'a> PathResolver<'a> {
     /// # Arguments
     /// * `volume` - Reference to the `Volume` struct representing the NTFS/ReFS volume.
     pub fn new_with_cache(volume: &'a Volume) -> Self {
-        let capacity = NonZeroUsize::new(LRU_CACHE_CAPACITY).unwrap();
-        let cache = LruCache::new(capacity);
+        let cache = LruCache::new(LRU_CACHE_CAPACITY);
         PathResolver {
             volume,
             dir_fid_path_cache: Some(cache),
