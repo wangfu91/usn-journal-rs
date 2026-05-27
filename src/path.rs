@@ -8,7 +8,7 @@ use std::{
     ffi::{OsStr, OsString, c_void},
     num::NonZeroUsize,
     os::windows::ffi::OsStringExt,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
 use windows::{
     Win32::{
@@ -226,6 +226,15 @@ fn join_resolved_path(
     }
 }
 
+fn push_volume_relative_path(base_path: &mut PathBuf, volume_relative_path: &Path) {
+    let mut components = volume_relative_path.components();
+    if matches!(components.next(), Some(Component::RootDir)) {
+        base_path.push(components.as_path());
+    } else {
+        base_path.push(volume_relative_path);
+    }
+}
+
 /// Resolves a file ID to its full path on the specified NTFS/ReFS volume.
 fn file_id_to_path(volume: &Volume, file_id: u64) -> windows::core::Result<PathBuf> {
     let file_id_desc = FILE_ID_DESCRIPTOR {
@@ -328,7 +337,7 @@ fn file_id_to_path(volume: &Volume, file_id: u64) -> windows::core::Result<PathB
         full_path.push(mount_point);
     }
 
-    full_path.push(sub_path);
+    push_volume_relative_path(&mut full_path, Path::new(&sub_path));
     Ok(full_path)
 }
 
@@ -377,6 +386,14 @@ mod tests {
         let path = join_resolved_path(Path::new(r"C:\"), 0x5, 0x5, OsStr::new("."));
 
         assert_eq!(path, PathBuf::from(r"C:\"));
+    }
+
+    #[test]
+    fn test_push_volume_relative_path_strips_root_for_mount_points() {
+        let mut path = PathBuf::from(r"C:\Mounts\Data");
+        push_volume_relative_path(&mut path, Path::new(r"\Windows\System32"));
+
+        assert_eq!(path, PathBuf::from(r"C:\Mounts\Data\Windows\System32"));
     }
 
     #[test]
