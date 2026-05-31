@@ -1,4 +1,4 @@
-//! Divan benchmarks for USN journal iteration.
+//! Criterion benchmarks for USN journal iteration.
 //!
 //! Run on an elevated shell with:
 //!
@@ -13,13 +13,8 @@
 
 use std::env;
 
-use divan::Bencher;
+use criterion::{criterion_group, criterion_main, Criterion};
 use usn_journal_rs::{errors::UsnError, journal::UsnJournal, volume::Volume};
-
-/// Run the Divan benchmark harness.
-fn main() {
-    divan::main();
-}
 
 /// Bound iteration so each bench sample finishes in a reasonable time
 /// even on large journals.
@@ -55,50 +50,55 @@ fn open_volume() -> Option<Volume> {
 }
 
 /// Iterate the full USN journal with all reason flags enabled.
-#[divan::bench]
-fn journal_iter_full_mask(bencher: Bencher) {
+fn journal_iter_full_mask(c: &mut Criterion) {
     let Some(volume) = open_volume() else { return };
     let limit = bench_record_limit();
 
-    bencher.bench_local(|| {
-        let journal = UsnJournal::new(&volume);
-        let mut count = 0u64;
-        if let Ok(it) = journal.try_iter() {
-            for r in it.take(limit) {
-                if r.is_ok() {
-                    count += 1;
+    c.bench_function("journal_iter_full_mask", |b| {
+        b.iter(|| {
+            let journal = UsnJournal::new(&volume);
+            let mut count = 0u64;
+            if let Ok(it) = journal.try_iter() {
+                for r in it.take(limit) {
+                    if r.is_ok() {
+                        count += 1;
+                    }
                 }
             }
-        }
-        divan::black_box(count)
+            count
+        })
     });
 }
 
 /// Iterate the USN journal with a restricted reason mask
 /// (FILE_CREATE | FILE_DELETE).
-#[divan::bench]
-fn journal_iter_filtered(bencher: Bencher) {
+fn journal_iter_filtered(c: &mut Criterion) {
     let Some(volume) = open_volume() else { return };
     let limit = bench_record_limit();
 
     use usn_journal_rs::UsnReason;
     use windows::Win32::System::Ioctl::{USN_REASON_FILE_CREATE, USN_REASON_FILE_DELETE};
 
-    bencher.bench_local(|| {
-        let journal = UsnJournal::new(&volume);
-        let opts = usn_journal_rs::journal::JournalIterOptions::builder()
-            .reason_mask(UsnReason::from_bits_retain(
-                USN_REASON_FILE_CREATE | USN_REASON_FILE_DELETE,
-            ))
-            .build();
-        let mut count = 0u64;
-        if let Ok(it) = journal.try_iter_with_options(opts) {
-            for r in it.take(limit) {
-                if r.is_ok() {
-                    count += 1;
+    c.bench_function("journal_iter_filtered", |b| {
+        b.iter(|| {
+            let journal = UsnJournal::new(&volume);
+            let opts = usn_journal_rs::journal::JournalIterOptions::builder()
+                .reason_mask(UsnReason::from_bits_retain(
+                    USN_REASON_FILE_CREATE | USN_REASON_FILE_DELETE,
+                ))
+                .build();
+            let mut count = 0u64;
+            if let Ok(it) = journal.try_iter_with_options(opts) {
+                for r in it.take(limit) {
+                    if r.is_ok() {
+                        count += 1;
+                    }
                 }
             }
-        }
-        divan::black_box(count)
+            count
+        })
     });
 }
+
+criterion_group!(journal_benches, journal_iter_full_mask, journal_iter_filtered);
+criterion_main!(journal_benches);

@@ -1,4 +1,4 @@
-//! Divan benchmarks for PathResolver performance across different strategies.
+//! Criterion benchmarks for PathResolver performance across different strategies.
 //!
 //! This benchmark compares three path resolution approaches:
 //! 1. Pure syscall (no caching)
@@ -17,7 +17,7 @@
 
 use std::env;
 
-use divan::Bencher;
+use criterion::{criterion_group, criterion_main, Criterion};
 use usn_journal_rs::{
     errors::UsnError,
     mft::MftEntry,
@@ -25,11 +25,6 @@ use usn_journal_rs::{
     raw_mft::{RawMft, RawMftEntry},
     volume::Volume,
 };
-
-/// Run the Divan benchmark harness.
-fn main() {
-    divan::main();
-}
 
 /// Number of random entries to collect and resolve.
 const NUM_TEST_ENTRIES: usize = 1000;
@@ -111,8 +106,7 @@ fn collect_raw_test_entries(volume: &Volume) -> Vec<RawMftEntry> {
 }
 
 /// Resolve paths with direct syscalls, no caching.
-#[divan::bench]
-fn resolver_syscall_no_cache(bencher: Bencher) {
+fn resolver_syscall_no_cache(c: &mut Criterion) {
     let Some(volume) = open_volume() else { return };
     let entries = collect_test_entries(&volume);
 
@@ -121,22 +115,23 @@ fn resolver_syscall_no_cache(bencher: Bencher) {
         return;
     }
 
-    bencher.bench_local(|| {
-        let mut resolver = PathResolver::new(&volume).with_directory_cache(0);
-        let mut count = 0u64;
+    c.bench_function("resolver_syscall_no_cache", |b| {
+        b.iter(|| {
+            let mut resolver = PathResolver::new(&volume).with_directory_cache(0);
+            let mut count = 0u64;
 
-        for entry in &entries {
-            let _ = resolver.resolve_path(entry);
-            count += 1;
-        }
+            for entry in &entries {
+                let _ = resolver.resolve_path(entry);
+                count += 1;
+            }
 
-        divan::black_box(count)
+            count
+        })
     });
 }
 
 /// Resolve paths with a directory cache (8192 capacity).
-#[divan::bench]
-fn resolver_syscall_directory_cache(bencher: Bencher) {
+fn resolver_syscall_directory_cache(c: &mut Criterion) {
     let Some(volume) = open_volume() else { return };
     let entries = collect_test_entries(&volume);
 
@@ -145,28 +140,29 @@ fn resolver_syscall_directory_cache(bencher: Bencher) {
         return;
     }
 
-    bencher.bench_local(|| {
-        let mut resolver = PathResolver::new(&volume).with_directory_cache(8192);
+    c.bench_function("resolver_syscall_directory_cache", |b| {
+        b.iter(|| {
+            let mut resolver = PathResolver::new(&volume).with_directory_cache(8192);
 
-        // Warm-up pass to populate cache
-        for entry in &entries {
-            let _ = resolver.resolve_path(entry);
-        }
+            // Warm-up pass to populate cache
+            for entry in &entries {
+                let _ = resolver.resolve_path(entry);
+            }
 
-        // Measured pass with warm cache
-        let mut count = 0u64;
-        for entry in &entries {
-            let _ = resolver.resolve_path(entry);
-            count += 1;
-        }
+            // Measured pass with warm cache
+            let mut count = 0u64;
+            for entry in &entries {
+                let _ = resolver.resolve_path(entry);
+                count += 1;
+            }
 
-        divan::black_box(count)
+            count
+        })
     });
 }
 
 /// Resolve paths using the RawMft-optimized resolver (one-time full $MFT scan).
-#[divan::bench]
-fn resolver_raw_mft_optimized(bencher: Bencher) {
+fn resolver_raw_mft_optimized(c: &mut Criterion) {
     let Some(volume) = open_volume() else { return };
 
     let mft = match RawMft::new(&volume) {
@@ -184,21 +180,31 @@ fn resolver_raw_mft_optimized(bencher: Bencher) {
         return;
     }
 
-    bencher.bench_local(|| {
-        let resolver = match mft.path_resolver() {
-            Ok(r) => r,
-            Err(e) => {
-                eprintln!("skipping: {e}");
-                return divan::black_box(0u64);
+    c.bench_function("resolver_raw_mft_optimized", |b| {
+        b.iter(|| {
+            let resolver = match mft.path_resolver() {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("skipping: {e}");
+                    return 0u64;
+                }
+            };
+
+            let mut count = 0u64;
+            for entry in &entries {
+                let _ = resolver.resolve_path(entry);
+                count += 1;
             }
-        };
 
-        let mut count = 0u64;
-        for entry in &entries {
-            let _ = resolver.resolve_path(entry);
-            count += 1;
-        }
-
-        divan::black_box(count)
+            count
+        })
     });
 }
+
+criterion_group!(
+    path_resolver_benches,
+    resolver_syscall_no_cache,
+    resolver_syscall_directory_cache,
+    resolver_raw_mft_optimized
+);
+criterion_main!(path_resolver_benches);
