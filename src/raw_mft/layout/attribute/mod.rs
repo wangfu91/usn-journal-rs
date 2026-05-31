@@ -16,4 +16,4 @@ pub(crate) use headers::{
     file_attr_flags,
 };
 pub(crate) use iter::{for_each_attr_list_entry, for_each_attribute};
-pub(crate) use view::NtfsAttribute;
+pub(crate) use view::{NtfsAttribute, osstring_from_utf16le};

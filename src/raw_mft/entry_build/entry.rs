@@ -1,7 +1,6 @@
 //! Rich per-record metadata extracted from a single FILE record.
 
 use std::ffi::OsString;
-use std::os::windows::ffi::OsStringExt;
 
 use log::warn;
 
@@ -15,7 +14,7 @@ use crate::{
     Fid, FileAttributes, Filetime,
     file_attributes::FileAttributeView,
     raw_mft::layout::{
-        attribute::{FileNameNamespace, NtfsAttribute, file_attr_flags},
+        attribute::{FileNameNamespace, NtfsAttribute, file_attr_flags, osstring_from_utf16le},
         data_run::{DataRunSummary, summarize_runs},
         record::FileRecord,
     },
@@ -249,10 +248,12 @@ impl RawMftEntryBuilder {
 
     /// Fold a `$FILE_NAME` attribute into the entry when it has the best namespace so far.
     fn apply_file_name(&mut self, attr: &NtfsAttribute<'_>) {
-        if let Some((header, name_units)) = attr.as_file_name() {
+        if let Some((header, name_bytes)) = attr.as_file_name() {
+            let Some(file_name) = osstring_from_utf16le(name_bytes) else {
+                return;
+            };
             let ns = FileNameNamespace::from_u8(header.namespace);
             let parent_reference = Fid::new(header.parent_directory_reference);
-            let file_name = OsString::from_wide(&name_units);
             let should_replace = self.file_names.consider(
                 current_file_name(
                     self.entry.namespace,
@@ -282,7 +283,7 @@ impl RawMftEntryBuilder {
 
     /// Fold a `$DATA` attribute into the unnamed stream or ADS list.
     fn apply_data_attribute(&mut self, attr: &NtfsAttribute<'_>) {
-        let stream_name = attr.name_units();
+        let stream_name = attr.name_bytes();
         if attr.is_non_resident() {
             if let Some(h) = attr.nonresident_header() {
                 self.apply_nonresident_data(stream_name, h.allocated_size, h.data_size, attr);
@@ -297,7 +298,7 @@ impl RawMftEntryBuilder {
     /// Fold a non-resident `$DATA` attribute into the entry.
     fn apply_nonresident_data(
         &mut self,
-        stream_name: Option<Vec<u16>>,
+        stream_name: Option<&[u8]>,
         allocated_size: u64,
         data_size: u64,
         attr: &NtfsAttribute<'_>,
@@ -325,10 +326,12 @@ impl RawMftEntryBuilder {
                     self.entry.data_run_summary = summary;
                 }
             }
-            Some(name_units) => {
-                if self.collect_alternate_data_streams {
+            Some(name_bytes) => {
+                if self.collect_alternate_data_streams
+                    && let Some(name) = osstring_from_utf16le(name_bytes)
+                {
                     self.alternate_data_streams.push(AdsInfo {
-                        name: OsString::from_wide(&name_units),
+                        name,
                         real_size: data_size,
                         allocated_size,
                         is_resident: false,
@@ -348,7 +351,7 @@ impl RawMftEntryBuilder {
     }
 
     /// Fold a resident `$DATA` attribute into the entry.
-    fn apply_resident_data(&mut self, stream_name: Option<Vec<u16>>, value_length: u64) {
+    fn apply_resident_data(&mut self, stream_name: Option<&[u8]>, value_length: u64) {
         match stream_name {
             None => {
                 if !self.have_unnamed_data {
@@ -359,10 +362,12 @@ impl RawMftEntryBuilder {
                     self.entry.is_resident = true;
                 }
             }
-            Some(name_units) => {
-                if self.collect_alternate_data_streams {
+            Some(name_bytes) => {
+                if self.collect_alternate_data_streams
+                    && let Some(name) = osstring_from_utf16le(name_bytes)
+                {
                     self.alternate_data_streams.push(AdsInfo {
-                        name: OsString::from_wide(&name_units),
+                        name,
                         real_size: value_length,
                         allocated_size: value_length,
                         is_resident: true,

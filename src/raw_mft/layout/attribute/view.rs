@@ -5,7 +5,9 @@
 //! payload access plus typed decoding of the attribute payloads the crate
 //! currently cares about.
 
+use std::ffi::OsString;
 use std::mem::size_of;
+use std::os::windows::ffi::OsStringExt;
 
 use zerocopy::FromBytes;
 
@@ -14,21 +16,38 @@ use super::{
     NtfsResidentAttributeHeader, NtfsStandardInformation,
 };
 
-/// Decode UTF-16 units from little-endian on-disk bytes.
+/// Decode a UTF-16LE on-disk name into an [`OsString`].
 ///
-/// NTFS stores names as UTF-16LE. Decode explicitly rather than borrowing
-/// a `&[u16]` so malformed or oddly aligned byte buffers cannot affect
-/// reference validity.
-fn utf16_units_from_le_bytes(bytes: &[u8]) -> Option<Vec<u16>> {
+/// NTFS stores names as UTF-16LE in byte buffers that are not guaranteed to be
+/// `u16`-aligned, so the bytes are decoded explicitly rather than by borrowing
+/// a `&[u16]`. Pure-ASCII names (overwhelmingly the common case on Windows) are
+/// valid UTF-8 byte-for-byte and take a fast path that skips the surrogate-aware
+/// UTF-16 → WTF-8 transcode performed by [`OsString::from_wide`]; all other
+/// names fall back to `from_wide` so lone surrogates are preserved.
+///
+/// Returns `None` only when `bytes` has an odd length and therefore cannot be a
+/// valid UTF-16 sequence.
+pub(crate) fn osstring_from_utf16le(bytes: &[u8]) -> Option<OsString> {
     if !bytes.len().is_multiple_of(2) {
         return None;
     }
-    Some(
-        bytes
-            .chunks_exact(2)
-            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
-            .collect(),
-    )
+
+    if bytes
+        .chunks_exact(2)
+        .all(|chunk| chunk[1] == 0 && chunk[0] < 0x80)
+    {
+        let mut ascii = String::with_capacity(bytes.len() / 2);
+        for chunk in bytes.chunks_exact(2) {
+            ascii.push(chunk[0] as char);
+        }
+        return Some(OsString::from(ascii));
+    }
+
+    let units: Vec<u16> = bytes
+        .chunks_exact(2)
+        .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+        .collect();
+    Some(OsString::from_wide(&units))
 }
 
 /// A view into a single attribute record borrowed from a FILE record's
@@ -105,9 +124,11 @@ impl<'a> NtfsAttribute<'a> {
         self.header.name_length != 0
     }
 
-    /// Decode the UTF-16 attribute name.
+    /// Borrow the raw little-endian UTF-16 attribute-name bytes.
+    ///
     /// Returns `None` if the attribute is unnamed or the name range is invalid.
-    pub fn name_units(&self) -> Option<Vec<u16>> {
+    /// Decode the bytes into an `OsString` with [`osstring_from_utf16le`].
+    pub fn name_bytes(&self) -> Option<&'a [u8]> {
         let n = self.header.name_length as usize;
         if n == 0 {
             return None;
@@ -117,10 +138,7 @@ impl<'a> NtfsAttribute<'a> {
         if end > self.length {
             return None;
         }
-        let bytes = &self.data()[off..end];
-        let units = utf16_units_from_le_bytes(bytes)?;
-        debug_assert_eq!(units.len(), n);
-        Some(units)
+        Some(&self.data()[off..end])
     }
 
     /// Read the resident header when this attribute is resident.
@@ -160,8 +178,11 @@ impl<'a> NtfsAttribute<'a> {
         NtfsStandardInformation::read_from_bytes(bytes).ok()
     }
 
-    /// Returns `(header, name_utf16_units)` for a `$FILE_NAME` attribute.
-    pub fn as_file_name(&self) -> Option<(NtfsFileNameHeader, Vec<u16>)> {
+    /// Returns `(header, raw_le_name_bytes)` for a `$FILE_NAME` attribute.
+    ///
+    /// The returned slice is the raw little-endian UTF-16 leaf name; decode it
+    /// into an `OsString` with [`osstring_from_utf16le`].
+    pub fn as_file_name(&self) -> Option<(NtfsFileNameHeader, &'a [u8])> {
         if self.type_id() != NtfsAttributeType::FileName as u32 {
             return None;
         }
@@ -169,14 +190,14 @@ impl<'a> NtfsAttribute<'a> {
         let header_bytes = v.get(..size_of::<NtfsFileNameHeader>())?;
         let header = NtfsFileNameHeader::read_from_bytes(header_bytes).ok()?;
         let n = header.name_length as usize;
-        let needed = size_of::<NtfsFileNameHeader>().checked_add(n.checked_mul(2)?)?;
-        if needed > v.len() || n > 255 {
+        if n > 255 {
             return None;
         }
-        let bytes = &v[size_of::<NtfsFileNameHeader>()..needed];
-        let units = utf16_units_from_le_bytes(bytes)?;
-        debug_assert_eq!(units.len(), n);
-        Some((header, units))
+        let needed = size_of::<NtfsFileNameHeader>().checked_add(n.checked_mul(2)?)?;
+        if needed > v.len() {
+            return None;
+        }
+        Some((header, &v[size_of::<NtfsFileNameHeader>()..needed]))
     }
 }
 
@@ -258,9 +279,10 @@ mod tests {
         }
         let buf = build_resident_attr(NtfsAttributeType::FileName as u32, &value);
         let attr = NtfsAttribute::new(&buf).expect("attr");
-        let (parsed, units) = attr.as_file_name().expect("file name");
+        let (parsed, name_bytes) = attr.as_file_name().expect("file name");
         assert_eq!(parsed.name_length as usize, name.len());
-        assert_eq!(units, name.as_slice());
+        let decoded = osstring_from_utf16le(name_bytes).expect("decoded name");
+        assert_eq!(decoded, std::ffi::OsString::from("hello.txt"));
     }
 
     #[test]
