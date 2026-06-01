@@ -13,7 +13,7 @@
 
 use std::env;
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use usn_journal_rs::{errors::UsnError, journal::UsnJournal, volume::Volume};
 
 /// Bound iteration so each bench sample finishes in a reasonable time
@@ -100,5 +100,9 @@ fn journal_iter_filtered(c: &mut Criterion) {
     });
 }
 
-criterion_group!(journal_benches, journal_iter_full_mask, journal_iter_filtered);
+criterion_group!(
+    journal_benches,
+    journal_iter_full_mask,
+    journal_iter_filtered
+);
 criterion_main!(journal_benches);

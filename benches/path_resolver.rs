@@ -17,7 +17,7 @@
 
 use std::env;
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use usn_journal_rs::{
     errors::UsnError,
     mft::MftEntry,
