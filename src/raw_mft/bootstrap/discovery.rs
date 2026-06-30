@@ -89,7 +89,7 @@ fn discover_mft_stream_runs(record: &FileRecord<'_>) -> MftStreamRuns {
     let (attrs_off, used) = record.attrs_range();
     for_each_attribute(record.data, attrs_off, used, |attr| {
         let type_id = attr.type_id();
-        let unnamed = attr.name_slice().is_none();
+        let unnamed = !attr.has_name();
 
         if type_id == NtfsAttributeType::Data as u32 && unnamed && attr.is_non_resident() {
             data_runs = decode_nonresident_runs(attr, "$MFT $DATA");
@@ -118,7 +118,7 @@ fn load_mft_bitmap(
     if let Some(bitmap_runs) = bitmap_runs {
         Ok(read_nonresident(reader, &bitmap_runs, cluster_size, bitmap_size)?.into())
     } else {
-        warn!("raw_mft: no $MFT $BITMAP; skip_unused will be ignored");
+        warn!("raw_mft: no $MFT $BITMAP; unused-record filtering will be unavailable");
         Ok(Vec::new().into())
     }
 }

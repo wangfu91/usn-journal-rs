@@ -35,6 +35,10 @@ enum ParallelVolumeSource {
 }
 
 /// Run chunk work in parallel and visit results in original chunk order.
+///
+/// The work closure must be [`Sync`] because one shared closure reference is
+/// called by multiple worker threads. `T` must be [`Send`] because worker
+/// results cross thread boundaries before they are visited in chunk order.
 pub(super) fn run_parallel_chunks_in_order<T, Work, Visit>(
     mft: &RawMft<'_>,
     chunks: Vec<RawMftWorkChunk>,
@@ -115,29 +119,23 @@ where
                     };
 
                 match scheduling {
-                    ChunkScheduling::Dynamic => {
-                        loop {
-                            let index = next_index.fetch_add(1, Ordering::Relaxed);
-                            if index >= chunks.len() {
-                                break;
-                            }
-
-                            let chunk = chunks[index];
-                            let result = work_chunk(
-                                &worker_mft,
-                                chunk,
-                                &options,
-                                &mut reader,
-                                &mut attr_reader,
-                            )
-                            .map(|result| (index, result));
-                            if tx.send(result).is_err() {
-                                break;
-                            }
+                    ChunkScheduling::Dynamic => loop {
+                        let index = next_index.fetch_add(1, Ordering::Relaxed);
+                        if index >= chunks.len() {
+                            break;
                         }
-                    }
+
+                        let chunk = chunks[index];
+                        let result =
+                            work_chunk(&worker_mft, chunk, &options, &mut reader, &mut attr_reader)
+                                .map(|result| (index, result));
+                        if tx.send(result).is_err() {
+                            break;
+                        }
+                    },
                     ChunkScheduling::Contiguous => {
-                        let (start, end) = contiguous_worker_range(chunks.len(), worker_count, worker_index);
+                        let (start, end) =
+                            contiguous_worker_range(chunks.len(), worker_count, worker_index);
                         for index in start..end {
                             let chunk = chunks[index];
                             let result = work_chunk(
@@ -161,8 +159,8 @@ where
         drain_parallel_results_in_order(rx, chunk_count, &mut visit)?;
 
         for handle in handles {
-            if handle.join().is_err() {
-                return Err(worker_panicked());
+            if let Err(payload) = handle.join() {
+                return Err(worker_panicked(payload));
             }
         }
 
@@ -171,7 +169,11 @@ where
 }
 
 /// Return the half-open chunk-index range assigned to one worker under contiguous scheduling.
-fn contiguous_worker_range(chunk_count: usize, worker_count: usize, worker_index: usize) -> (usize, usize) {
+fn contiguous_worker_range(
+    chunk_count: usize,
+    worker_count: usize,
+    worker_index: usize,
+) -> (usize, usize) {
     let base = chunk_count / worker_count;
     let extra = chunk_count % worker_count;
     let start = worker_index * base + worker_index.min(extra);
@@ -253,6 +255,15 @@ fn channel_closed() -> UsnError {
 }
 
 /// Build the panic-propagation error used by the ordered parallel executor.
-fn worker_panicked() -> UsnError {
-    UsnError::Io(io::Error::other("raw_mft parallel worker panicked"))
+fn worker_panicked(payload: Box<dyn std::any::Any + Send + 'static>) -> UsnError {
+    let details = if let Some(message) = payload.downcast_ref::<&str>() {
+        *message
+    } else if let Some(message) = payload.downcast_ref::<String>() {
+        message.as_str()
+    } else {
+        "unknown panic payload"
+    };
+    UsnError::Io(io::Error::other(format!(
+        "raw_mft parallel worker panicked: {details}"
+    )))
 }

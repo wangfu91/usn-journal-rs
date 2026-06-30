@@ -27,6 +27,10 @@ pub(crate) enum VolumeSource {
 /// Represents an NTFS/ReFS volume handle and its associated drive letter or mount point.
 pub struct Volume {
     /// Raw volume handle returned by `CreateFileW`.
+    ///
+    /// This crate owns the handle and closes it exactly once in [`Drop`].
+    /// Internal users may borrow it for Win32 calls but must never close,
+    /// duplicate, or transfer ownership of it.
     pub(crate) handle: HANDLE,
     /// Source path used to open the volume.
     source: VolumeSource,
@@ -34,6 +38,12 @@ pub struct Volume {
 
 impl Volume {
     /// Creates a new `Volume` instance with the given drive letter.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UsnError::NotElevated`] if the process does not have the
+    /// Administrator privileges required to open raw volume handles. Returns
+    /// [`UsnError::WinApi`] if Windows rejects the volume path.
     pub fn from_drive_letter(drive_letter: char) -> Result<Self, UsnError> {
         let handle = get_volume_handle_from_drive_letter(drive_letter)?;
         Ok(Volume {
@@ -43,6 +53,13 @@ impl Volume {
     }
 
     /// Creates a new `Volume` instance with the given mount point.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UsnError::NotElevated`] if the process does not have the
+    /// Administrator privileges required to open raw volume handles. Returns
+    /// [`UsnError::WinApi`] or [`UsnError::InvalidMountPointError`] if the
+    /// mount point cannot be resolved to a volume handle.
     pub fn from_mount_point<P: AsRef<Path>>(mount_point: P) -> Result<Self, UsnError> {
         let path = mount_point.as_ref();
         let handle = get_volume_handle_from_mount_point(path)?;

@@ -69,8 +69,8 @@ and idiomatic Rust refactoring. **Breaking changes throughout** — see the
 - `RawMftIterOptions` renamed to `RawMftScanOptions`, with structured
   `RawMftReadBuffers`, `RawMftRecordRange`, and `RawMftEntryOptions` groups.
 - `RawMftWorkPlanOptions` renamed to `RawMftChunkPlanOptions`.
-- `RawMft::try_iter` / `try_iter_with_options` renamed to
-  `RawMft::iter` / `iter_with_options`.
+- `RawMft` now uses the same fallible iterator naming as the journal and
+  FSCTL-based MFT APIs: `try_iter` / `try_iter_with_options`.
 - `RawMft::get_record` renamed to `RawMft::read_record`.
 - `journal::EnumOptions` renamed to `JournalIterOptions`;
   `mft::EnumOptions` renamed to `MftIterOptions`.

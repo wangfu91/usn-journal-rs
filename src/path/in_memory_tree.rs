@@ -4,14 +4,21 @@
 //! numbers to `(parent, UTF-16 name)` pairs. Once constructed, resolving a
 //! file path to the root is a pure pointer-chase with no syscalls.
 
-use super::util::{NTFS_ROOT_RECORD_NUMBER, mask_fid_to_record_number};
 use crate::{Fid, raw_mft::RawMft};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::{
     ffi::OsString,
     os::windows::ffi::{OsStrExt, OsStringExt},
     path::PathBuf,
 };
+
+/// NTFS root directory MFT record number (`$Root`).
+const NTFS_ROOT_RECORD_NUMBER: u64 = 5;
+
+/// Mask a standard 64-bit NTFS file reference down to its 48-bit record number.
+fn mask_fid_to_record_number(fid: Fid) -> Option<u64> {
+    fid.record_number()
+}
 
 /// Directory entry in the in-memory tree. Stores the parent file
 /// reference number (full 64-bit, not masked) and the leaf name as raw
@@ -30,15 +37,17 @@ struct DirEntry {
 /// a pointer chase up to the root with no syscalls and no `PathBuf`
 /// allocations until the final assembly.
 #[derive(Debug, Default, Clone)]
-pub struct InMemoryDirTree {
+pub(crate) struct InMemoryDirTree {
     /// Map from 48-bit NTFS record number to its parent/name pair.
     entries: FxHashMap<u64, DirEntry>,
 }
 
 impl InMemoryDirTree {
-    /// Build the tree from a raw `$MFT` reader. Iterates every record
-    /// once. Skips entries marked unused in the `$MFT $BITMAP`.
-    pub fn from_raw_mft(raw_mft: &RawMft<'_>) -> crate::UsnResult<Self> {
+    /// Build the internal path index from a raw `$MFT` reader.
+    ///
+    /// This is kept private so callers go through `RawMft::path_resolver`
+    /// instead of depending on the index representation directly.
+    fn build_from_raw_mft(raw_mft: &RawMft<'_>) -> crate::UsnResult<Self> {
         let record_count = raw_mft.record_count() as usize;
         let estimated_used_records = if record_count < 2_048 {
             record_count
@@ -47,7 +56,7 @@ impl InMemoryDirTree {
         };
         let mut entries =
             FxHashMap::with_capacity_and_hasher(estimated_used_records, Default::default());
-        for r in raw_mft.iter()? {
+        for r in raw_mft.try_iter()? {
             let entry = match r {
                 Ok(e) => e,
                 Err(_) => continue,
@@ -76,6 +85,8 @@ impl InMemoryDirTree {
     }
 
     /// Number of entries currently stored.
+    #[cfg(test)]
+    #[allow(dead_code)]
     #[must_use]
     #[inline]
     pub fn len(&self) -> usize {
@@ -83,6 +94,7 @@ impl InMemoryDirTree {
     }
 
     /// Returns `true` if the tree has no entries.
+    #[cfg(test)]
     #[must_use]
     #[inline]
     pub fn is_empty(&self) -> bool {
@@ -107,32 +119,35 @@ impl InMemoryDirTree {
     /// Walks parents up to the root and returns the resolved path
     /// (without drive prefix). Returns `None` if the chain breaks or a
     /// cycle is detected.
+    #[cfg(test)]
     #[must_use]
     pub fn resolve(&self, fid: Fid) -> Option<PathBuf> {
         self.resolve_with_optional_drive(fid, None)
     }
 
     /// Walks parents and prepends `<drive>:\` to the resolved path.
+    #[cfg(test)]
     #[must_use]
     pub fn resolve_with_drive_letter(&self, fid: Fid, drive: char) -> Option<PathBuf> {
         self.resolve_with_optional_drive(fid, Some(drive))
     }
 
     /// Resolve a path and optionally prepend a drive-letter prefix.
-    pub(super) fn resolve_with_optional_drive(
+    pub(crate) fn resolve_with_optional_drive(
         &self,
         fid: Fid,
         drive: Option<char>,
     ) -> Option<PathBuf> {
-        // Maximum walk depth — far above the practical NTFS path-component
-        // limit (~64 segments) and below any realistic cycle length.
+        // Maximum walk depth: comfortably above practical NTFS path depths
+        // while still bounding malformed parent chains.
         const MAX_STEPS: usize = 256;
 
         let mut chain: Vec<&[u16]> = Vec::with_capacity(32);
         let mut current = mask_fid_to_record_number(fid)?;
+        let mut visited = FxHashSet::default();
         let mut steps = 0usize;
         loop {
-            if steps >= MAX_STEPS {
+            if steps >= MAX_STEPS || !visited.insert(current) {
                 return None;
             }
             steps += 1;
@@ -157,5 +172,13 @@ impl InMemoryDirTree {
             path.push(OsString::from_wide(units));
         }
         Some(path)
+    }
+}
+
+impl TryFrom<&RawMft<'_>> for InMemoryDirTree {
+    type Error = crate::UsnError;
+
+    fn try_from(raw_mft: &RawMft<'_>) -> Result<Self, Self::Error> {
+        Self::build_from_raw_mft(raw_mft)
     }
 }

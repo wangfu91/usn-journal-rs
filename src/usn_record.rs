@@ -4,8 +4,8 @@
 //! view over `USN_RECORD_V2` / `USN_RECORD_V3`, and converts the records into
 //! the smaller owned types used by the rest of the crate.
 
-use crate::{Fid, Usn, UsnError, UsnResult, unaligned::read_unaligned_at};
-use std::mem::size_of;
+use crate::{Fid, Usn, UsnError, UsnResult};
+use std::{mem::size_of, ptr};
 use windows::Win32::Storage::FileSystem::FILE_ID_128;
 use windows::Win32::System::Ioctl::{USN_RECORD_COMMON_HEADER, USN_RECORD_V2, USN_RECORD_V3};
 
@@ -127,6 +127,23 @@ impl<'a> UsnRecordView<'a> {
 #[inline]
 pub(crate) const fn file_id_128_to_u128(file_id: FILE_ID_128) -> u128 {
     u128::from_le_bytes(file_id.Identifier)
+}
+
+/// Read a `Copy` value from `buffer[offset..]` without requiring alignment.
+///
+/// The FSCTL output buffers parsed in this module are byte-oriented and may
+/// not be naturally aligned for Rust references, so unaligned loads are the
+/// correct primitive here after the bounds check succeeds.
+#[inline]
+fn read_unaligned_at<T: Copy>(buffer: &[u8], offset: usize) -> Option<T> {
+    let end = offset.checked_add(size_of::<T>())?;
+    if end > buffer.len() {
+        return None;
+    }
+
+    // SAFETY: The checked range above guarantees the full `T` lies within
+    // `buffer`. `read_unaligned` handles any pointer alignment.
+    Some(unsafe { ptr::read_unaligned(buffer.as_ptr().add(offset) as *const T) })
 }
 
 /// Validate `bytes_read` against `buffer` and convert it to `usize`.

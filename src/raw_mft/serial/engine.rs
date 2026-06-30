@@ -20,8 +20,7 @@ pub(in crate::raw_mft) struct SerialParseState {
     end_record: u64,
     offset_cursor: ExtentLookupCursor,
     record_size: usize,
-    skip_unused: bool,
-    skip_extension_records: bool,
+    include_unused_records: bool,
 }
 
 impl SerialParseState {
@@ -46,8 +45,7 @@ impl SerialParseState {
             end_record,
             offset_cursor: ExtentLookupCursor::default(),
             record_size: mft.boot.file_record_size as usize,
-            skip_unused: options.skip_unused,
-            skip_extension_records: options.skip_extension_records,
+            include_unused_records: options.include_unused_records,
         }
     }
 }
@@ -66,7 +64,7 @@ where
         let record_number = state.next_record;
         state.next_record += 1;
 
-        if state.skip_unused && !mft.bitmap_used(record_number) {
+        if !state.include_unused_records && !mft.bitmap_used(record_number) {
             continue;
         }
 
@@ -97,7 +95,7 @@ where
             }
         };
 
-        if state.skip_extension_records && record.base_reference() != 0 {
+        if record.base_reference() != 0 {
             continue;
         }
 
@@ -106,4 +104,3 @@ where
 
     Ok(None)
 }
-

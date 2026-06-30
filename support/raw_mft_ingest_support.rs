@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 //! Shared helpers for the raw-MFT parallel ingest benchmark and profiling example.
 
 use std::{
@@ -9,17 +11,14 @@ use std::{
 };
 
 use rustc_hash::FxHashMap;
-
-use crate::{
+use usn_journal_rs::{
     Fid,
     errors::UsnError,
+    raw_mft::{
+        FileNameNamespace, RawMft, RawMftBatchEntry, RawMftChunkPlanOptions, RawMftEntry,
+        RawMftLink, RawMftParallelScheduling, RawMftScanOptions, RawMftWorkChunk,
+    },
     volume::Volume,
-};
-
-use super::{
-    FileNameNamespace, RawMft, RawMftBatchEntry, RawMftChunkPlanOptions, RawMftEntry,
-    RawMftLink, RawMftScanOptions, RawMftWorkChunk,
-    parallel::ChunkScheduling,
 };
 
 /// Default main read buffer size for the parallel ingest path.
@@ -49,7 +48,7 @@ pub struct BenchConfig {
     /// Optional exclusive end record number.
     pub end_record: Option<u64>,
     /// Worker scheduling mode used by the parallel executor.
-    scheduling: ChunkScheduling,
+    scheduling: RawMftParallelScheduling,
 }
 
 /// Benchmark-visible scheduling mode.
@@ -60,10 +59,10 @@ pub enum BenchScheduling {
 }
 
 impl BenchScheduling {
-    fn as_executor_mode(self) -> ChunkScheduling {
+    fn as_executor_mode(self) -> RawMftParallelScheduling {
         match self {
-            Self::Dynamic => ChunkScheduling::Dynamic,
-            Self::Contiguous => ChunkScheduling::Contiguous,
+            Self::Dynamic => RawMftParallelScheduling::Dynamic,
+            Self::Contiguous => RawMftParallelScheduling::Contiguous,
         }
     }
 }
@@ -109,8 +108,7 @@ impl BenchConfig {
         RawMftScanOptions::builder()
             .buffer_bytes(self.main_buffer_bytes)
             .attr_buffer_bytes(self.attr_buffer_bytes)
-            .skip_unused(true)
-            .skip_extension_records(true)
+            .include_unused_records(false)
             .collect_alternate_data_streams(false)
             .collect_data_run_summary(false)
             .collect_dos_file_name_links(false)
@@ -122,7 +120,7 @@ impl BenchConfig {
     /// Build chunk-planning options for the parallel ingest path.
     fn chunk_plan_options(&self) -> RawMftChunkPlanOptions {
         RawMftChunkPlanOptions::builder()
-            .skip_unused(true)
+            .include_unused_records(false)
             .start_record(self.start_record)
             .end_record(self.end_record)
             .max_records_per_chunk(self.chunk_records)
@@ -151,8 +149,8 @@ impl BenchConfig {
     #[must_use]
     pub fn scheduling_label(&self) -> &'static str {
         match self.scheduling {
-            ChunkScheduling::Dynamic => "dynamic",
-            ChunkScheduling::Contiguous => "contiguous",
+            RawMftParallelScheduling::Dynamic => "dynamic",
+            RawMftParallelScheduling::Contiguous => "contiguous",
         }
     }
 }
@@ -238,7 +236,10 @@ pub fn print_bench_config(config: &BenchConfig) {
             .map(|value| value.to_string())
             .unwrap_or_else(|| "full".to_owned()),
     );
-    eprintln!("raw_mft_ingest bench scheduling: {}", config.scheduling_label());
+    eprintln!(
+        "raw_mft_ingest bench scheduling: {}",
+        config.scheduling_label()
+    );
 }
 
 /// Parse a comma-separated worker sweep list from the environment.
@@ -279,7 +280,9 @@ pub fn summary_run_count() -> NonZeroUsize {
 pub fn workload_shape(mft: &RawMft<'_>, config: &BenchConfig) -> BenchWorkloadShape {
     BenchWorkloadShape {
         record_count: mft.record_count(),
-        planned_chunks: mft.plan_chunks_with_options(config.chunk_plan_options()).len(),
+        planned_chunks: mft
+            .plan_chunks_with_options(config.chunk_plan_options())
+            .len(),
         file_record_size: mft.file_record_size(),
         cluster_size: mft.cluster_size(),
     }
@@ -326,7 +329,7 @@ pub fn run_parallel_ingest(
 
 /// Run the same ingest workload serially for comparison.
 pub fn run_serial_ingest(mft: &RawMft<'_>, config: &BenchConfig) -> Result<BenchSummary, UsnError> {
-    let iter = mft.iter_with_options(config.iter_options())?;
+    let iter = mft.try_iter_with_options(config.iter_options())?;
     let record_table_len = record_count_hint(mft, config);
     let mut records = Vec::with_capacity(record_table_len);
     records.resize_with(record_table_len, || None);
@@ -434,7 +437,11 @@ fn ingest_raw_entry_partial(entry: RawMftBatchEntry, partial: &mut PartialIngest
     }
 
     let metadata = BenchNodeMeta {
-        size: if entry.is_directory { 0 } else { entry.real_size },
+        size: if entry.is_directory {
+            0
+        } else {
+            entry.real_size
+        },
         allocated_size: if entry.is_directory {
             0
         } else {
@@ -470,7 +477,11 @@ fn ingest_iter_entry(entry: RawMftEntry, targets: &mut BenchTargets<'_>) {
     }
 
     let metadata = BenchNodeMeta {
-        size: if entry.is_directory { 0 } else { entry.real_size },
+        size: if entry.is_directory {
+            0
+        } else {
+            entry.real_size
+        },
         allocated_size: if entry.is_directory {
             0
         } else {
@@ -585,7 +596,7 @@ fn default_worker_count() -> NonZeroUsize {
         .map(NonZeroUsize::get)
         .unwrap_or(1);
     // The current Criterion worker sweeps on a large C: volume keep
-    // `skip_unused(true)` in both chunk planning and scanning, but chunk
+    // `include_unused_records(false)` in both chunk planning and scanning, but chunk
     // planning now stays dense and only drops fully unused logical bands.
     // With the current 2,048-record default chunk size that produces about
     // 1,329 planned chunks on the measured live volume and still settles into
@@ -628,7 +639,9 @@ fn parse_nonzero_usize_list(name: &str) -> Vec<NonZeroUsize> {
 }
 
 fn parse_bench_scheduling(value: Option<&str>, default: BenchScheduling) -> BenchScheduling {
-    value.and_then(parse_bench_scheduling_token).unwrap_or(default)
+    value
+        .and_then(parse_bench_scheduling_token)
+        .unwrap_or(default)
 }
 
 fn parse_bench_scheduling_token(value: &str) -> Option<BenchScheduling> {
@@ -667,20 +680,17 @@ mod tests {
                 .expect("chunk size must be non-zero"),
             start_record: FIRST_NORMAL_RECORD,
             end_record: None,
-            scheduling: ChunkScheduling::Dynamic,
+            scheduling: RawMftParallelScheduling::Dynamic,
         }
     }
 
     #[test]
-    fn benchmark_scan_and_chunk_defaults_both_skip_unused() {
+    fn benchmark_scan_and_chunk_defaults_exclude_unused_records() {
         let config = sample_config();
         let iter_options = config.iter_options();
         let chunk_options = config.chunk_plan_options();
 
-        assert!(iter_options.skip_unused());
-        assert!(iter_options.skip_extension_records());
-        assert!(chunk_options.skip_unused());
+        assert!(!iter_options.include_unused_records());
+        assert!(!chunk_options.include_unused_records());
     }
 }
-
-

@@ -135,9 +135,15 @@ impl ExtentMap {
             if vcn >= seg.vcn_start && vcn < end {
                 cursor.segment_index = index;
                 let local_vcn = vcn - seg.vcn_start;
-                return Ok(seg
+                return seg
                     .lcn
-                    .map(|lcn| (lcn + local_vcn) * self.cluster_size + inner));
+                    .map(|lcn| {
+                        lcn.checked_add(local_vcn)
+                            .and_then(|cluster| cluster.checked_mul(self.cluster_size))
+                            .and_then(|offset| offset.checked_add(inner))
+                            .ok_or(UsnError::InvalidDataRun("volume offset overflow"))
+                    })
+                    .transpose();
             }
         }
         Err(UsnError::InvalidMftRecord {
@@ -260,5 +266,19 @@ mod tests {
         }];
         let map = ExtentMap::from_runs(&runs, 4096, 1024);
         assert!(map.record_offset(100).is_err());
+    }
+
+    #[test]
+    fn rejects_volume_offset_overflow() {
+        let runs = vec![DataRun::Data {
+            lcn: u64::MAX,
+            clusters: 1,
+        }];
+        let map = ExtentMap::from_runs(&runs, 4096, 1024);
+
+        assert!(matches!(
+            map.record_offset(0),
+            Err(UsnError::InvalidDataRun("volume offset overflow"))
+        ));
     }
 }

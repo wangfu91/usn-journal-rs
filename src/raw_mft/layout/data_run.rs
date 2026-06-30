@@ -50,6 +50,9 @@ fn read_var_i64_le(bytes: &[u8]) -> i64 {
     buf[..bytes.len()].copy_from_slice(bytes);
     let raw = i64::from_le_bytes(buf);
     let empty_bits = (MAX_FIELD_BYTES - bytes.len()) * 8;
+    // NTFS stores LCN deltas as variable-width signed little-endian values.
+    // Shift left to place the encoded sign bit at i64's sign bit, then use
+    // arithmetic right shift to sign-extend it back to the original width.
     (raw << empty_bits) >> empty_bits
 }
 

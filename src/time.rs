@@ -67,7 +67,8 @@ impl Filetime {
     #[inline]
     pub fn to_unix_seconds(self) -> i64 {
         let intervals = self.0 as i128 - WINDOWS_TO_UNIX_OFFSET_100NS as i128;
-        (intervals / 10_000_000) as i64
+        let seconds = intervals / 10_000_000;
+        seconds.clamp(i64::MIN as i128, i64::MAX as i128) as i64
     }
 
     /// Number of nanoseconds since the Unix epoch (may be negative).

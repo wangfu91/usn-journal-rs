@@ -80,6 +80,12 @@ impl Fid {
     /// Construct a standard 64-bit NTFS file reference number.
     #[inline]
     pub const fn new(v: u64) -> Self {
+        Self::from_u64(v)
+    }
+
+    /// Construct a standard 64-bit NTFS file reference number.
+    #[inline]
+    pub const fn from_u64(v: u64) -> Self {
         Self::Standard(v)
     }
 
@@ -416,6 +422,7 @@ mod tests {
         let u: u64 = v.try_into().expect("standard fid");
         assert_eq!(u, 0xDEAD_BEEF);
         assert_eq!(Fid::from(0x42u64).as_u64(), Some(0x42));
+        assert_eq!(Fid::from_u64(0x42).as_u64(), Some(0x42));
     }
 
     #[test]

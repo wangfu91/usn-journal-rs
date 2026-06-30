@@ -1,11 +1,11 @@
-//! Integration test: all three `PathResolver` configurations agree.
+//! Integration test: live and raw-snapshot path resolvers agree.
 //!
 //! Builds a `RawMft` for C:, collects every 1 000th entry (up to 50),
 //! then resolves each entry with three independent resolvers:
 //!
-//!  1. Syscall-based, no cache (`PathResolver::new(...).without_lru_cache()`).
-//!  2. LRU-cached resolver (warm-cache path on second call).
-//!  3. In-memory directory-tree (`PathResolver::new(...).with_in_memory_tree`).
+//!  1. Syscall-based, no cache (`PathResolver::new(...).with_directory_cache(0)`).
+//!  2. Directory-cached live resolver (warm-cache path on second call).
+//!  3. Raw-MFT snapshot resolver (`raw_mft.path_resolver()`).
 //!
 //! Asserts that ≥ 90 % of entries produce identical paths across all three
 //! strategies (case-insensitive, to accommodate Windows path normalisation).
@@ -13,13 +13,24 @@
 //!
 //! Skips gracefully on non-elevated runs.
 
-use std::num::NonZeroUsize;
 use usn_journal_rs::{
+    FileAttributes, Usn,
     errors::UsnError,
+    mft::MftEntry,
     path::PathResolver,
     raw_mft::{RawMft, RawMftEntry},
     volume::Volume,
 };
+
+fn as_live_entry(entry: &RawMftEntry) -> MftEntry {
+    MftEntry {
+        usn: Usn::new(0),
+        fid: entry.file_reference,
+        parent_fid: entry.parent_reference,
+        file_name: entry.file_name.clone(),
+        file_attributes: FileAttributes::from_bits_retain(entry.flags as u32),
+    }
+}
 
 #[test]
 fn all_three_resolvers_agree() {
@@ -46,8 +57,8 @@ fn all_three_resolvers_agree() {
 
     // Collect every 1 000th used entry with a non-empty name (up to 50).
     let entries: Vec<_> = raw_mft
-        .iter()
-        .expect("RawMft::iter failed")
+        .try_iter()
+        .expect("RawMft::try_iter failed")
         .filter_map(|r: Result<RawMftEntry, UsnError>| r.ok())
         .filter(|e| e.is_used && !e.file_name.is_empty())
         .enumerate()
@@ -62,15 +73,14 @@ fn all_three_resolvers_agree() {
     }
 
     // Build the three resolvers.
-    let mut resolver1 = PathResolver::new(&volume);
+    let mut resolver1 = PathResolver::new(&volume).with_directory_cache(0);
 
-    let mut resolver2 = PathResolver::new(&volume)
-        .with_lru_cache(NonZeroUsize::new(1024).expect("1024 is non-zero"));
+    let mut resolver2 = PathResolver::new(&volume).with_directory_cache(1024);
 
-    let mut resolver3 = match PathResolver::new(&volume).with_in_memory_tree(&raw_mft) {
+    let resolver3 = match raw_mft.path_resolver() {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("path_resolver_consistency: with_in_memory_tree failed: {e}");
+            eprintln!("path_resolver_consistency: raw_mft.path_resolver failed: {e}");
             return;
         }
     };
@@ -79,11 +89,12 @@ fn all_three_resolvers_agree() {
     let mut agreements = 0usize;
 
     for entry in &entries {
-        let p1 = resolver1.resolve_path(entry);
+        let live_entry = as_live_entry(entry);
+        let p1 = resolver1.resolve_path(&live_entry);
 
         // Call resolver2 twice so the second call exercises the warm-cache path.
-        let _ = resolver2.resolve_path(entry);
-        let p2 = resolver2.resolve_path(entry);
+        let _ = resolver2.resolve_path(&live_entry);
+        let p2 = resolver2.resolve_path(&live_entry);
 
         let p3 = resolver3.resolve_path(entry);
 

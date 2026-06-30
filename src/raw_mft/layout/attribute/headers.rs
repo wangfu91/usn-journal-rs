@@ -208,4 +208,3 @@ pub mod file_attr_flags {
     /// Encrypted-file attribute bit.
     pub const ENCRYPTED: u32 = 0x4000;
 }
-

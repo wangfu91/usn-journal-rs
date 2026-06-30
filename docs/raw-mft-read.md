@@ -43,7 +43,7 @@ At a high level the implementation does this:
 
 The same parsing path is reused for:
 
-- serial scans via `RawMft::iter` / `RawMft::iter_with_options`,
+- serial scans via `RawMft::try_iter` / `RawMft::try_iter_with_options`,
 - single-chunk parsing via `RawMft::read_chunk`,
 - parallel batch parsing via `RawMft::parallel().for_each_batch`,
 - parallel folded parsing via `RawMft::parallel().fold_chunks`.
@@ -164,7 +164,7 @@ From those decoded runs the constructor builds:
 - `extent_map: Arc<ExtentMap>` from `$MFT::$DATA`,
 - `bitmap: Arc<[u8]>` by reading `$MFT::$BITMAP` into memory.
 
-The bitmap is fully materialized once so later `skip_unused` checks are just in-memory bit tests.
+The bitmap is fully materialized once so later unused-record filtering checks are just in-memory bit tests.
 
 The final `RawMft` value contains:
 
@@ -177,7 +177,7 @@ That state is cheap to clone into worker-local reader contexts later because the
 
 ## Serial read path
 
-The public serial path is `RawMft::iter_with_options`, which constructs `RawMftIter`.
+The public serial path is `RawMft::try_iter_with_options`, which constructs `RawMftIter`.
 
 ### Reader setup
 
@@ -192,9 +192,9 @@ The second reader is deliberate. Extension reads are random-access and would oth
 
 `RawMftIter::next` walks `next_record..end` and applies the following steps for each record number.
 
-#### 1. Skip unused records if requested
+#### 1. Exclude unused records unless requested
 
-If `options.skip_unused` is enabled, the iterator calls `bitmap_used(record_number)`.
+If `options.include_unused_records` is `false`, the iterator calls `bitmap_used(record_number)` and skips records whose bit is clear.
 
 This is an in-memory bit lookup against the bitmap loaded during `RawMft::new`.
 
@@ -228,13 +228,13 @@ If that succeeds, it calls `FileRecord::parse`, which applies the USA fixup in p
 
 Parse failures are logged and skipped. They do not terminate the whole scan.
 
-#### 5. Reject extension records early (when `skip_extension_records` is true)
+#### 5. Reject extension records early
 
 Before building the high-level entry, the iterator reads `base_reference` from the
 parsed FILE record header.
 
-If `skip_extension_records` is true (the default) and `base_reference != 0`, the
-iterator discards the record immediately.  No attribute walk is performed.
+If `base_reference != 0`, the iterator discards the record immediately. No
+attribute walk is performed.
 
 Extension records are explained in detail in the
 [Record filtering for Explorer-like output](#record-filtering-for-explorer-like-output)
@@ -329,7 +329,7 @@ That distinction matters because:
 
 `RawMftChunkPlanOptions::default()` uses:
 
-- `skip_unused = true`,
+- `include_unused_records = false`,
 - `start_record = FIRST_NORMAL_RECORD` (24),
 - `end_record = None` meaning `record_count()`,
 - `max_records_per_chunk = 16 * 1024`.
@@ -338,20 +338,20 @@ That distinction matters because:
 
 `build_work_chunks` walks the requested record-number range and creates chunks using two rules:
 
-1. If `skip_unused` is true, unused bitmap gaps terminate the current chunk.
+1. If `include_unused_records` is false, chunk bands with no used records at all are omitted.
 2. A chunk never grows beyond `max_records_per_chunk` records.
 
 That means the default planner tends to produce chunks that:
 
-- only cover used runs of records,
+- drop fully unused chunk bands,
 - remain bounded in size,
 - preserve increasing record order.
 
-If `skip_unused` is false, the planner ignores bitmap gaps and simply emits dense fixed-width logical windows.
+If `include_unused_records` is true, the planner emits dense fixed-width logical windows even when a band is fully unused.
 
 ### Why planner behavior can differ from parser behavior
 
-The planner and the parser each have their own `skip_unused` setting.
+The planner and the parser each have their own `include_unused_records` setting.
 
 That allows patterns like the ingest benchmark, which deliberately plans dense record-number windows but still lets each worker skip unused entries during parsing.
 
@@ -474,7 +474,6 @@ The benchmark is not trying to expose every bit of `RawMftEntry`. It is measurin
 
 So it deliberately trims work by using iterator options that disable several expensive or unnecessary pieces of metadata:
 
-- `skip_extension_records(true)`
 - `collect_alternate_data_streams(false)`
 - `collect_data_run_summary(false)`
 - `collect_dos_file_name_links(false)`
@@ -488,14 +487,14 @@ It also tunes the reader buffers:
 
 The benchmark's `RawMftChunkPlanOptions` use:
 
-- `skip_unused: false`,
+- `include_unused_records: true`,
 - `start_record`: configurable, default 24,
 - `end_record`: optional,
 - `max_records_per_chunk`: configurable, default 16384 records.
 
 This is a subtle but important choice.
 
-The benchmark plans dense logical windows but still parses with `RawMftScanOptions::default()` for `skip_unused`, which remains true unless explicitly changed. In other words:
+The benchmark plans dense logical windows but still parses with `RawMftScanOptions::default()` for `include_unused_records`, which remains false unless explicitly changed. In other words:
 
 - chunk planning does not split at unused-record gaps,
 - the parser inside each worker still skips unused records.
@@ -530,14 +529,15 @@ The current reader gets most of its performance from a small number of deliberat
 - Deterministic ordered merge at chunk granularity instead of record granularity.
 - Folded parallel ingestion when the consumer does not need to retain full batch objects.
 
-## Record filtering for Explorer-like output
+## Record filtering and normalization for Explorer-like output
 
-The raw-MFT reader exposes two independent filters that together produce a
-"current live filesystem" view — the same set of entries Windows Explorer shows.
+The raw-MFT reader applies one configurable filter plus one built-in
+normalization step to produce a "current live filesystem" view — the same set
+of entries Windows Explorer shows.
 
-### In-use filtering (`skip_unused`, default `true`)
+### In-use filtering (`include_unused_records`, default `false`)
 
-When `skip_unused` is true, the reader consults the `$MFT` `$BITMAP` loaded during
+When `include_unused_records` is `false`, the reader consults the `$MFT` `$BITMAP` loaded during
 `RawMft::new` before touching a FILE record on disk.
 
 - The `$BITMAP` is loaded once into memory (`Arc<[u8]>`) at construction time.
@@ -545,12 +545,12 @@ When `skip_unused` is true, the reader consults the `$MFT` `$BITMAP` loaded duri
 - Records whose bit is clear are skipped before the extent translation, buffer
   borrow, validation, and parse steps, making the check essentially free.
 
-If `$BITMAP` is unavailable, `bitmap_used` returns `true` for all records and the
-reader falls back to the header `IN_USE` flag as a secondary guard; in that case
-every record is fully parsed and only records with `flags & 0x0001 == 0` are
-discarded.
+If `$BITMAP` is unavailable, `bitmap_used` returns `true` for all records, so
+the reader can no longer reject unused slots early. In that case iteration falls
+back to best-effort parsing of every addressable record and callers must inspect
+`RawMftEntry::is_used` themselves.
 
-### Extension-record filtering (`skip_extension_records`, default `true`)
+### Extension-record filtering (always on)
 
 #### What extension records are
 
@@ -583,9 +583,9 @@ If extension records are not filtered, the iterator yields one entry per FILE
 record, so the same file appears multiple times — once as the base entry and once
 (or more) as partial, attribute-incomplete extension views.
 
-With `skip_extension_records = true` (the default) the reader rejects each
-extension record immediately after the USA fixup and before the expensive attribute
-walk, keeping one output entry per unique file or directory.
+The reader always rejects each extension record immediately after the USA fixup
+and before the expensive attribute walk, keeping one output entry per unique
+file or directory.
 
 #### Interaction with `$ATTRIBUTE_LIST` enrichment
 
@@ -610,10 +610,10 @@ A sequence-number mismatch between a stored reference and the current record hea
 means the record has been reused — the original file was deleted and a new one now
 occupies that slot.
 
-The current `PathResolver::with_in_memory_tree` implementation intentionally
-discards the sequence bits when keying the directory tree by record number.  A
-stale file reference therefore resolves to the *current occupant* of that record
-number rather than returning `None`.  This is a deliberate trade-off: the in-memory
+The current `RawMftPathResolver` implementation intentionally discards the
+sequence bits when keying the directory tree by record number.  A stale file
+reference therefore resolves to the *current occupant* of that record number
+rather than returning `None`.  This is a deliberate trade-off: the in-memory
 tree is built from a single-point-in-time MFT scan so internal references are
 always consistent within that snapshot, and the simpler lookup avoids a separate
 sequence-validation step per path component.
@@ -626,14 +626,14 @@ diff against an older snapshot), call `Fid::sequence()` and compare it against
 
 With factory defaults, each record number passes through these gates in order:
 
-1. **Bitmap check** (`skip_unused = true`): skip if bit clear → most deleted
+1. **Bitmap check** (`include_unused_records = false`): skip if bit clear → most deleted
    records are rejected here, before any disk I/O on the record itself.
 2. **Extent translation**: skip sparse holes.
 3. **Buffer borrow**: bring record bytes into the aligned reader buffer.
 4. **Signature check** (`FileRecord::is_valid`): reject non-FILE records.
 5. **USA fixup** (`FileRecord::parse`): verify and repair sector trailers.
-6. **Extension-record check** (`skip_extension_records = true`): reject records
-   whose `base_reference != 0` before the attribute walk.
+6. **Extension-record check**: reject records whose `base_reference != 0`
+   before the attribute walk.
 7. **Attribute walk + entry build**: produce one `RawMftEntry` per base record.
 8. **`$ATTRIBUTE_LIST` enrichment** (when needed): load overflow attributes from
    extension records and merge them into the base entry.
@@ -648,7 +648,7 @@ that Windows Explorer presents.
 - Sparse regions in the extent map are skipped.
 - Parallel chunk parsing requires the original `Volume` to be reopenable from a drive letter or mount point.
 - Attribute-list enrichment is intentionally one level deep.
-- `skip_extension_records` changes what is yielded, but base records can still be enriched from extension records.
+- Extension records are never yielded as standalone entries, but base records can still be enriched from them.
 
 ## Practical mental model
 

@@ -146,6 +146,34 @@ pub enum UsnError {
 }
 
 impl UsnError {
+    /// Return `true` if this error came from operating-system I/O.
+    #[must_use]
+    pub const fn is_io_error(&self) -> bool {
+        matches!(self, Self::Io(_) | Self::WinApi(_))
+    }
+
+    /// Return `true` if this error indicates malformed on-disk data.
+    #[must_use]
+    pub const fn is_parse_error(&self) -> bool {
+        matches!(
+            self,
+            Self::InvalidRecordData(_)
+                | Self::InvalidBytesRead { .. }
+                | Self::TruncatedRecord { .. }
+                | Self::InvalidRecordLength { .. }
+                | Self::UnsupportedRecordVersion { .. }
+                | Self::MisalignedRecord { .. }
+                | Self::InvalidBootSector(_)
+                | Self::InvalidMftRecord { .. }
+                | Self::InvalidMftRecordAt { .. }
+                | Self::FixupMismatch { .. }
+                | Self::InvalidDataRun(_)
+                | Self::MftAttributeMissing(_)
+                | Self::BufferTooSmall { .. }
+                | Self::InvalidRecord { .. }
+        )
+    }
+
     /// Build the appropriate invalid-record variant based on whether a disk offset is known.
     pub(crate) fn invalid_mft_record(
         number: u64,
@@ -263,6 +291,17 @@ mod tests {
                 error.to_string(),
                 "Invalid MFT record 42 at volume offset 0x1234: bad header"
             );
+        }
+
+        #[test]
+        fn test_error_classification_helpers() {
+            assert!(UsnError::Io(IoError::other("disk")).is_io_error());
+            assert!(UsnError::WinApi(ERROR_ACCESS_DENIED.into()).is_io_error());
+            assert!(!UsnError::NotElevated.is_io_error());
+
+            assert!(UsnError::InvalidDataRun("bad run").is_parse_error());
+            assert!(UsnError::FixupMismatch { number: 7 }.is_parse_error());
+            assert!(!UsnError::InvalidOptions("bad option").is_parse_error());
         }
 
         #[test]

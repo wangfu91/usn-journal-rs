@@ -4,14 +4,13 @@
 //! high-throughput batch consumers can avoid rebuilding fields they do not use.
 
 use std::ffi::OsString;
-use std::os::windows::ffi::OsStringExt;
 
 use crate::{
     Fid, FileAttributes, Filetime,
     raw_mft::{
         RawMftWorkChunk,
         layout::{
-            attribute::{FileNameNamespace, NtfsAttribute, file_attr_flags},
+            attribute::{FileNameNamespace, NtfsAttribute, file_attr_flags, osstring_from_utf16le},
             record::FileRecord,
         },
     },
@@ -167,10 +166,12 @@ impl RawMftBatchEntryBuilder {
     }
 
     fn apply_file_name(&mut self, attr: &NtfsAttribute<'_>) {
-        if let Some((header, name_units)) = attr.as_file_name() {
+        if let Some((header, name_bytes)) = attr.as_file_name() {
+            let Some(file_name) = osstring_from_utf16le(name_bytes) else {
+                return;
+            };
             let namespace = FileNameNamespace::from_u8(header.namespace);
             let parent_reference = Fid::new(header.parent_directory_reference);
-            let file_name = OsString::from_wide(name_units);
             let should_replace = self.file_names.consider(
                 current_file_name(
                     self.scratch.entry.namespace,
@@ -194,9 +195,9 @@ impl RawMftBatchEntryBuilder {
     }
 
     fn apply_data_attribute(&mut self, attr: &NtfsAttribute<'_>) {
-        let stream_name = attr.name_slice();
+        let stream_name = attr.has_name();
         if attr.is_non_resident() {
-            if stream_name.is_none()
+            if !stream_name
                 && let Some(header) = attr.nonresident_header()
                 && !self.scratch.have_unnamed_data
             {
@@ -206,7 +207,7 @@ impl RawMftBatchEntryBuilder {
             }
             return;
         }
-        if stream_name.is_none()
+        if !stream_name
             && let Some(header) = attr.resident_header()
             && !self.scratch.have_unnamed_data
         {

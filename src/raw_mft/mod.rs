@@ -13,7 +13,7 @@
 //!
 //! let volume = Volume::from_drive_letter('C').expect("open volume");
 //! let mft = RawMft::new(&volume).expect("read $MFT");
-//! for entry in mft.iter().expect("iter") {
+//! for entry in mft.try_iter().expect("iter") {
 //!     match entry {
 //!         Ok(e) if e.is_used => {
 //!             println!("{:>8}: {}", e.record_number, e.file_name.to_string_lossy());
@@ -34,13 +34,12 @@ mod attr_list;
 mod bootstrap;
 mod chunk_plan;
 mod entry_build;
-/// Hidden support helpers shared by the raw-MFT ingest benchmark and tooling examples.
-#[doc(hidden)]
-pub mod ingest_support;
+pub mod history;
 mod io;
 mod layout;
 mod options;
 mod parallel;
+mod path_resolver;
 mod reader;
 mod serial;
 #[cfg(test)]
@@ -69,6 +68,8 @@ pub use options::{
     RawMftScanOptionsBuilder,
 };
 pub use parallel::RawMftParallelScan;
+pub use parallel::RawMftParallelScheduling;
+pub use path_resolver::RawMftPathResolver;
 pub use serial::RawMftIter;
 
 /// Default I/O buffer size for raw `$MFT` iteration.
@@ -85,7 +86,7 @@ pub const DEFAULT_BUFFER_BYTES: NonZeroUsize = unsafe {
 #[allow(clippy::useless_nonzero_new_unchecked)]
 pub const DEFAULT_ATTR_BUFFER_BYTES: NonZeroUsize = unsafe {
     // SAFETY: `64 * 1024` is a non-zero constant.
-    NonZeroUsize::new_unchecked(64 * 1024)
+    NonZeroUsize::new_unchecked(16 * 1024)
 };
 
 /// Raw `$MFT` reader bound to an open [`Volume`].
@@ -101,6 +102,11 @@ pub struct RawMft<'a> {
 }
 
 impl<'a> RawMft<'a> {
+    /// Internal access to the bound volume for crate-level helpers.
+    pub(crate) fn volume(&self) -> &'a Volume {
+        self.volume
+    }
+
     /// Total number of FILE records this MFT can address.
     #[must_use]
     #[inline]
@@ -122,9 +128,18 @@ impl<'a> RawMft<'a> {
         self.boot.file_record_size
     }
 
+    /// Create a [`RawMftPathResolver`] for entries produced by this raw `$MFT` reader.
+    ///
+    /// The returned resolver uses a snapshot-local in-memory directory tree by
+    /// default. Call [`RawMftPathResolver::with_live_fallback`] if you explicitly
+    /// want best-effort current-volume fallback for snapshot misses.
+    pub fn path_resolver(&self) -> crate::UsnResult<RawMftPathResolver<'a>> {
+        RawMftPathResolver::new(self)
+    }
+
     /// Read a single record by number. Returns `Ok(None)` when the
-    /// record falls in a sparse hole or is unused (and `skip_unused` is
-    /// implied here).
+    /// record falls in a sparse hole or does not contain a valid FILE record.
+    #[must_use = "the returned record is discarded if not inspected"]
     pub fn read_record(&self, number: u64) -> Result<Option<RawMftEntry>, UsnError> {
         let mut reader = VolumeReader::new(self.volume.handle, self.boot.bytes_per_sector as u64)?;
         read_record_at(
@@ -138,6 +153,7 @@ impl<'a> RawMft<'a> {
 
     /// True if `record_number` is marked as in-use in the `$BITMAP`.
     /// Returns `true` when no bitmap is available.
+    #[must_use]
     pub fn bitmap_used(&self, record_number: u64) -> bool {
         if self.bitmap.is_empty() {
             return true;

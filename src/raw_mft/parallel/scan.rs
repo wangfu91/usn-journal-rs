@@ -5,13 +5,30 @@ use std::{num::NonZeroUsize, thread};
 use crate::{
     errors::UsnError,
     raw_mft::{
-        parallel::ChunkScheduling,
         RawMft, RawMftBatchEntry, RawMftChunkBatch, RawMftChunkPlanOptions, RawMftScanOptions,
-        RawMftWorkChunk,
+        RawMftWorkChunk, parallel::ChunkScheduling,
     },
 };
 
 use super::executor;
+
+/// Worker scheduling policy for parallel raw-`$MFT` chunk scans.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RawMftParallelScheduling {
+    /// Workers fetch the next remaining chunk from a shared atomic cursor.
+    Dynamic,
+    /// Each worker receives one contiguous band of chunk indices.
+    Contiguous,
+}
+
+impl From<RawMftParallelScheduling> for ChunkScheduling {
+    fn from(value: RawMftParallelScheduling) -> Self {
+        match value {
+            RawMftParallelScheduling::Dynamic => ChunkScheduling::Dynamic,
+            RawMftParallelScheduling::Contiguous => ChunkScheduling::Contiguous,
+        }
+    }
+}
 
 /// Configured parallel raw `$MFT` scan.
 #[derive(Clone)]
@@ -22,7 +39,7 @@ pub struct RawMftParallelScan<'m, 'v> {
     chunks: Option<Vec<RawMftWorkChunk>>,
     scan_options: RawMftScanOptions,
     worker_count: Option<NonZeroUsize>,
-    scheduling: ChunkScheduling,
+    scheduling: RawMftParallelScheduling,
 }
 
 impl<'m, 'v> RawMftParallelScan<'m, 'v> {
@@ -33,7 +50,7 @@ impl<'m, 'v> RawMftParallelScan<'m, 'v> {
             chunks: None,
             scan_options: RawMftScanOptions::default(),
             worker_count: None,
-            scheduling: ChunkScheduling::Dynamic,
+            scheduling: RawMftParallelScheduling::Dynamic,
         }
     }
 
@@ -62,8 +79,8 @@ impl<'m, 'v> RawMftParallelScan<'m, 'v> {
         self
     }
 
-    /// Internal benchmark hook for selecting worker scheduling policy.
-    pub(crate) fn scheduling(mut self, scheduling: ChunkScheduling) -> Self {
+    /// Select the worker scheduling policy for this scan.
+    pub fn scheduling(mut self, scheduling: RawMftParallelScheduling) -> Self {
         self.scheduling = scheduling;
         self
     }
@@ -71,8 +88,12 @@ impl<'m, 'v> RawMftParallelScan<'m, 'v> {
     /// Parse chunks in parallel and collect ordered batches.
     pub fn collect_batches(self) -> Result<Vec<RawMftChunkBatch>, UsnError> {
         let worker_count = self.resolved_worker_count()?;
-        self.mft
-            .read_chunks(self.resolved_chunks(), self.scan_options, worker_count, self.scheduling)
+        self.mft.read_chunks(
+            self.resolved_chunks(),
+            self.scan_options,
+            worker_count,
+            self.scheduling.into(),
+        )
     }
 
     /// Parse chunks in parallel and visit ordered batches.
@@ -85,7 +106,7 @@ impl<'m, 'v> RawMftParallelScan<'m, 'v> {
             self.resolved_chunks(),
             self.scan_options,
             worker_count,
-            self.scheduling,
+            self.scheduling.into(),
             visit,
         )
     }
@@ -102,7 +123,7 @@ impl<'m, 'v> RawMftParallelScan<'m, 'v> {
             self.resolved_chunks(),
             self.scan_options,
             worker_count,
-            self.scheduling,
+            self.scheduling.into(),
             map_chunk,
             visit,
         )
@@ -126,7 +147,7 @@ impl<'m, 'v> RawMftParallelScan<'m, 'v> {
             self.resolved_chunks(),
             self.scan_options,
             worker_count,
-            self.scheduling,
+            self.scheduling.into(),
             init,
             fold_entry,
             visit,
@@ -151,6 +172,7 @@ impl<'m, 'v> RawMftParallelScan<'m, 'v> {
 
 impl<'v> RawMft<'v> {
     /// Configure a parallel raw `$MFT` chunk scan.
+    #[must_use = "parallel scan builders do nothing unless executed"]
     pub fn parallel(&self) -> RawMftParallelScan<'_, 'v> {
         RawMftParallelScan::new(self)
     }

@@ -5,8 +5,7 @@ fn options_defaults_are_sensible() {
     let o = RawMftScanOptions::default();
     assert_eq!(o.buffers().main(), DEFAULT_BUFFER_BYTES);
     assert_eq!(o.buffers().attr(), DEFAULT_ATTR_BUFFER_BYTES);
-    assert!(o.skip_unused());
-    assert!(o.skip_extension_records());
+    assert!(!o.include_unused_records());
     assert!(o.entry().collect_alternate_data_streams());
     assert!(o.entry().collect_data_run_summary());
     assert!(o.entry().collect_dos_file_name_links());
@@ -19,7 +18,6 @@ fn options_defaults_are_sensible() {
 
 mod integration_tests {
     use super::super::*;
-    use crate::path::PathResolver;
     use crate::volume::Volume;
     use std::env;
 
@@ -55,12 +53,10 @@ mod integration_tests {
             Err(UsnError::UnsupportedFilesystem(_)) => return,
             Err(e) => panic!("RawMft::new failed: {e}"),
         };
-        let mut resolver = PathResolver::new(&volume).with_lru_cache(
-            std::num::NonZeroUsize::new(4096).expect("cache capacity must be non-zero"),
-        );
+        let resolver = mft.path_resolver().expect("raw mft path resolver");
         let mut resolved_any = false;
         // Cap the search so the test stays bounded on huge volumes.
-        for r in mft.iter().expect("iter").flatten().take(20_000) {
+        for r in mft.try_iter().expect("iter").flatten().take(20_000) {
             if r.is_directory || r.file_name.is_empty() {
                 continue;
             }

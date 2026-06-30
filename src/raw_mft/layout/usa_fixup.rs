@@ -73,7 +73,7 @@ pub(crate) fn apply_usa_fixup(
     // word stores one protected sector's original 2-byte trailer. So the
     // number of protected sectors is `usa_count - 1`.
     let sectors = usa_count - 1;
-    // Each usa entry is 2 bytes, so the USA occupies `2 * usa_count` bytes starting at `usa_offset`. 
+    // Each usa entry is 2 bytes, so the USA occupies `2 * usa_count` bytes starting at `usa_offset`.
     // Verify that the USA fits within the record buffer before we try to read from it.
     let usa_end = usa_offset
         .checked_add(usa_count.checked_mul(2).ok_or(UsnError::InvalidMftRecord {
@@ -117,13 +117,29 @@ pub(crate) fn apply_usa_fixup(
         // USA layout: word 0 is the sentinel, words 1..N are the original
         // trailer bytes for sectors 0..N-1. Each loop iteration restores
         // one sector trailer from the matching USA entry.
-        let entry_off = usa_offset + 2 + i * 2;
+        let entry_off = usa_offset
+            .checked_add(2)
+            .and_then(|offset| offset.checked_add(i.checked_mul(2)?))
+            .ok_or(UsnError::InvalidMftRecord {
+                number: record_number,
+                reason: "USA entry offset overflow",
+            })?;
         let replacement = [data[entry_off], data[entry_off + 1]];
         // Sector trailers sit at the last two bytes of each 512-byte
         // protected sector, so the offset is predictable once we know the
         // sector index.
-        let trailer_off = (i + 1) * USA_SECTOR_SIZE - 2;
-        if trailer_off + 2 > data.len() {
+        let trailer_off = i
+            .checked_add(1)
+            .and_then(|sector| sector.checked_mul(USA_SECTOR_SIZE))
+            .and_then(|offset| offset.checked_sub(2))
+            .ok_or(UsnError::InvalidMftRecord {
+                number: record_number,
+                reason: "sector trailer offset overflow",
+            })?;
+        if trailer_off
+            .checked_add(2)
+            .is_none_or(|end| end > data.len())
+        {
             return Err(UsnError::InvalidMftRecord {
                 number: record_number,
                 reason: "sector trailer past buffer",

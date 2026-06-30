@@ -1,15 +1,16 @@
-//! Path resolution utilities for NTFS/ReFS volumes.
+//! Live path resolution utilities for NTFS/ReFS volumes.
 //!
-//! Provides types and logic to resolve full file paths from file IDs using MFT or USN journal data.
+//! Provides types and logic to resolve current on-disk paths from file IDs
+//! surfaced by the USN journal or `FSCTL_ENUM_USN_DATA`. For raw-`$MFT`
+//! snapshot path reconstruction, use [`crate::raw_mft::RawMftPathResolver`].
 
 mod entry;
-pub mod in_memory_tree;
-mod resolve;
+mod in_memory_tree;
+pub(crate) mod resolve;
 mod resolver;
-mod util;
 
 pub use entry::PathResolvableEntry;
-pub use in_memory_tree::InMemoryDirTree;
+pub(crate) use in_memory_tree::InMemoryDirTree;
 pub use resolver::PathResolver;
 
 #[cfg(test)]

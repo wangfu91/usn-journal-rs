@@ -3,34 +3,44 @@
 use lru::LruCache;
 use std::{cell::RefCell, num::NonZeroUsize, path::PathBuf};
 
-use crate::{raw_mft::RawMft, volume::Volume};
+use crate::volume::Volume;
 
 use super::{
-    InMemoryDirTree, PathResolvableEntry,
+    PathResolvableEntry,
     resolve::{DirLruCache, resolve_path, resolve_path_with_cache},
 };
 
-/// Resolves file paths from file IDs on an NTFS/ReFS volume.
+#[allow(clippy::useless_nonzero_new_unchecked)]
+const DEFAULT_DIRECTORY_CACHE_CAPACITY: NonZeroUsize = unsafe {
+    // SAFETY: `4096` is a non-zero constant.
+    NonZeroUsize::new_unchecked(4096)
+};
+
+/// Resolves current on-disk paths from file IDs on an NTFS/ReFS volume.
 ///
 /// Use [`PathResolver::new`] to configure and construct an instance:
 ///
 /// ```no_run
 /// use usn_journal_rs::{volume::Volume, path::PathResolver};
-/// use std::num::NonZeroUsize;
 ///
 /// let volume = Volume::from_drive_letter('C').unwrap();
 ///
-/// // Default resolver — syscall resolution with an LRU directory cache:
+/// // Default resolver — syscall resolution with a directory cache:
 /// let resolver = PathResolver::new(&volume);
 ///
-/// // Tune the LRU directory cache for repeated lookups in the same directory:
-/// let resolver = PathResolver::new(&volume)
-///     .with_lru_cache(NonZeroUsize::new(8_192).unwrap());
+/// // Tune the directory cache capacity (plain integer, no NonZeroUsize):
+/// let resolver = PathResolver::new(&volume).with_directory_cache(8_192);
+///
+/// // Disable the directory cache entirely (pass 0):
+/// let resolver = PathResolver::new(&volume).with_directory_cache(0);
 /// ```
 ///
-/// `PathResolver` is intentionally `!Sync` — it carries an internal
-/// scratch buffer (and optional in-memory tree) accessed via interior
-/// mutability to keep the public `resolve_path` signature ergonomic.
+/// For raw-`$MFT` snapshot resolution, use
+/// [`crate::raw_mft::RawMft::path_resolver`] instead.
+///
+/// `PathResolver` is intentionally `!Sync` — it carries an internal scratch
+/// buffer accessed via interior mutability to keep the public `resolve_path`
+/// signature ergonomic.
 #[derive(Debug)]
 pub struct PathResolver<'a> {
     /// Volume on which file IDs will be resolved.
@@ -39,51 +49,46 @@ pub struct PathResolver<'a> {
     pub(super) dir_fid_path_cache: Option<DirLruCache>,
     /// Reusable heap buffer for `GetFileInformationByHandleEx` calls.
     buffer: RefCell<Vec<u8>>,
-    /// Optional fully in-memory NTFS directory tree.
-    pub(super) in_memory_tree: Option<InMemoryDirTree>,
 }
 
 impl<'a> PathResolver<'a> {
-    /// Create a resolver with the given `volume` and no caching layers. Paths will be resolved via `OpenFileById` syscalls on demand.
-    /// Use `with_lru_cache` and `with_in_memory_tree` to add caching layers.    
+    /// Create a resolver with the given `volume` and the default directory cache.
+    ///
+    /// Use [`Self::with_directory_cache`] to resize or disable the cache.
+    ///
+    /// This resolver is intended for live/current path resolution against the
+    /// mounted volume. For raw-`$MFT` snapshot scans, prefer
+    /// [`crate::raw_mft::RawMft::path_resolver`].
     #[must_use]
     pub fn new(volume: &'a Volume) -> Self {
         Self {
             volume,
-            dir_fid_path_cache: None,
+            dir_fid_path_cache: Some(LruCache::new(DEFAULT_DIRECTORY_CACHE_CAPACITY)),
             buffer: RefCell::new(Vec::new()),
-            in_memory_tree: None,
         }
     }
 
-    /// Enable or resize the LRU directory path cache.
+    /// Set the directory path cache capacity.
+    ///
+    /// Pass a positive `capacity` to enable (or resize) the cache; pass `0`
+    /// to disable it entirely.  When the cache is disabled, each directory
+    /// lookup falls back to direct `OpenFileById` syscalls.
+    ///
+    /// The default resolver created by [`Self::new`] already has a built-in
+    /// cache capacity.
     #[must_use]
-    pub fn with_lru_cache(mut self, capacity: NonZeroUsize) -> Self {
-        self.dir_fid_path_cache = Some(LruCache::new(capacity));
+    pub fn with_directory_cache(mut self, capacity: usize) -> Self {
+        self.dir_fid_path_cache = NonZeroUsize::new(capacity).map(LruCache::new);
         self
     }
 
-    /// Add an in-memory raw-`$MFT` directory tree for O(1) full-scan path resolution.
-    pub fn with_in_memory_tree(mut self, raw_mft: &RawMft<'_>) -> crate::UsnResult<Self> {
-        self.in_memory_tree = Some(InMemoryDirTree::from_raw_mft(raw_mft)?);
-        Ok(self)
-    }
-
-    /// Resolve `entry` to a full path, using the in-memory tree (if
-    /// configured), then the LRU cache (if configured), falling back to
-    /// `OpenFileById` syscalls.
+    /// Resolve `entry` to its current on-disk path, using the directory cache
+    /// when configured and falling back to `OpenFileById` syscalls.
     ///
-    /// Standard 64-bit NTFS IDs can use all resolver strategies. Extended
-    /// 128-bit IDs (for example ReFS `USN_RECORD_V3` entries) skip the
-    /// in-memory raw-`$MFT` tree and are resolved via `OpenFileById`.
+    /// Standard 64-bit NTFS IDs and extended 128-bit IDs (for example ReFS
+    /// `USN_RECORD_V3` entries) are both resolved via the live volume.
     #[must_use]
-    pub fn resolve_path<E: PathResolvableEntry>(&mut self, entry: &E) -> Option<PathBuf> {
-        if let Some(tree) = &self.in_memory_tree
-            && let Some(p) =
-                tree.resolve_with_optional_drive(entry.fid(), self.volume.drive_letter())
-        {
-            return Some(p);
-        }
+    pub fn resolve_path<E: PathResolvableEntry + ?Sized>(&mut self, entry: &E) -> Option<PathBuf> {
         if let Some(cache) = &mut self.dir_fid_path_cache {
             resolve_path_with_cache(
                 self.volume,

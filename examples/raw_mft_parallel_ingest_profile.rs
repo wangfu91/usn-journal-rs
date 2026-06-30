@@ -1,9 +1,11 @@
 use std::{error::Error, time::Instant};
 
-use usn_journal_rs::raw_mft::{
-    RawMft,
-    ingest_support::{bench_config, open_volume, print_bench_config, run_parallel_ingest},
-};
+use usn_journal_rs::raw_mft::RawMft;
+
+#[path = "../support/raw_mft_ingest_support.rs"]
+mod ingest_support;
+
+use ingest_support::{bench_config, open_volume, print_bench_config, run_parallel_ingest};
 
 fn main() -> Result<(), Box<dyn Error>> {
     let config = bench_config().clone();

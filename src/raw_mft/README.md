@@ -104,8 +104,8 @@ cargo bench --bench raw_mft_ingest -- --sample-size 10 --warm-up-time 3 --measur
 ```
 
 Recent Criterion runs on a large `C:` NTFS volume, using the current ingest
-benchmark shape (~3.06 M addressable records, `skip_unused(true)` in both chunk
-planning and scanning, dense logical chunk bands with only fully unused bands
+benchmark shape (~3.06 M addressable records, unused records excluded in both
+chunk planning and scanning via `include_unused_records(false)`, dense logical chunk bands with only fully unused bands
 omitted, `2048` logical records per chunk, about `1329` planned chunks on the
 measured live volume, and `256 KiB` / `16 KiB` buffers), showed:
 
@@ -117,12 +117,12 @@ measured live volume, and `256 KiB` / `16 KiB` buffers), showed:
 
 Representative medians:
 
-| Config | Median time |
-| ---- | ----------: |
-| Dynamic, 11 workers, 2048 chunks, 256 KiB / 16 KiB buffers | ~2.35 s |
-| Dynamic, 11 workers, 2048 chunks, 512 KiB / 16 KiB buffers | ~2.38 s |
-| Dynamic, 11 workers, 2048 chunks, 256 KiB / 64 KiB buffers | ~2.64 s |
-| Contiguous, 11 workers, 2048 chunks, 512 KiB / 16 KiB buffers | ~3.67 s |
+| Config                                                        | Median time |
+| ------------------------------------------------------------- | ----------: |
+| Dynamic, 11 workers, 2048 chunks, 256 KiB / 16 KiB buffers    |     ~2.35 s |
+| Dynamic, 11 workers, 2048 chunks, 512 KiB / 16 KiB buffers    |     ~2.38 s |
+| Dynamic, 11 workers, 2048 chunks, 256 KiB / 64 KiB buffers    |     ~2.64 s |
+| Contiguous, 11 workers, 2048 chunks, 512 KiB / 16 KiB buffers |     ~3.67 s |
 
 Those measurements only justify the current **benchmark** default. Production
 scan defaults should still be chosen from the calling workload, not copied from

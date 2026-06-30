@@ -129,7 +129,7 @@ impl RawMftEntryOptions {
 /// Options controlling raw `$MFT` scan behavior.
 ///
 /// Use [`RawMftScanOptions::builder`] for the fluent builder API.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct RawMftScanOptions {
     /// Read-buffer sizing.
     pub(crate) buffers: RawMftReadBuffers,
@@ -137,31 +137,8 @@ pub struct RawMftScanOptions {
     pub(crate) range: RawMftRecordRange,
     /// Entry materialization choices.
     pub(crate) entry: RawMftEntryOptions,
-    /// Honor the `$MFT` `$BITMAP` to skip unused records.
-    pub(crate) skip_unused: bool,
-    /// When true, omit extension (non-base) records from the yielded stream.
-    ///
-    /// An extension record is an overflow FILE record whose `base_reference`
-    /// header field points back to the base record.  A base record has
-    /// `base_reference == 0` and represents one unique file or directory.
-    /// Filtering out extension records yields exactly one entry per file or
-    /// directory — the same view Windows Explorer shows.
-    ///
-    /// Defaults to `true`.  Set to `false` only if you explicitly need to
-    /// inspect raw extension record contents.
-    pub(crate) skip_extension_records: bool,
-}
-
-impl Default for RawMftScanOptions {
-    fn default() -> Self {
-        Self {
-            buffers: RawMftReadBuffers::default(),
-            range: RawMftRecordRange::default(),
-            entry: RawMftEntryOptions::default(),
-            skip_unused: true,
-            skip_extension_records: true,
-        }
-    }
+    /// Whether raw `$MFT` scans should include records marked unused in the `$MFT` `$BITMAP`.
+    pub(crate) include_unused_records: bool,
 }
 
 impl RawMftScanOptions {
@@ -188,16 +165,10 @@ impl RawMftScanOptions {
         self.entry
     }
 
-    /// Whether unused records are skipped using the `$MFT` bitmap.
+    /// Whether records marked unused in the `$MFT` bitmap are still returned.
     #[must_use]
-    pub const fn skip_unused(&self) -> bool {
-        self.skip_unused
-    }
-
-    /// Whether extension records are omitted from the yielded stream.
-    #[must_use]
-    pub const fn skip_extension_records(&self) -> bool {
-        self.skip_extension_records
+    pub const fn include_unused_records(&self) -> bool {
+        self.include_unused_records
     }
 }
 
@@ -234,17 +205,9 @@ impl RawMftScanOptionsBuilder {
         self
     }
 
-    /// Whether to honor the `$MFT` `$BITMAP` and skip unused records.
-    pub fn skip_unused(mut self, v: bool) -> Self {
-        self.inner.skip_unused = v;
-        self
-    }
-
-    /// Whether extension (non-base) records should be omitted from the yielded stream.
-    ///
-    /// Defaults to `true`.  See [`RawMftScanOptions::skip_extension_records`] for details.
-    pub fn skip_extension_records(mut self, v: bool) -> Self {
-        self.inner.skip_extension_records = v;
+    /// Whether raw `$MFT` scans should include records marked unused in the `$MFT` bitmap.
+    pub fn include_unused_records(mut self, v: bool) -> Self {
+        self.inner.include_unused_records = v;
         self
     }
 
