@@ -153,6 +153,18 @@ impl<'a> FileRecord<'a> {
         self.header.base_reference
     }
 
+    /// Peek the base-record reference directly from raw (pre-fixup) record bytes
+    /// without applying the USA fixup.
+    ///
+    /// Returns `None` when `data` does not start with a valid FILE record header.
+    /// `base_reference` lives in the fixed header (offset `0x20`), which is never
+    /// a USA-protected sector trailer, so the pre-fixup value is authoritative.
+    /// This lets the streaming/cached scan classify a record as a base or
+    /// extension record before deciding whether to fix it up.
+    pub(in crate::raw_mft) fn peek_base_reference(data: &[u8]) -> Option<u64> {
+        Self::validated_header(data).map(|header| header.base_reference)
+    }
+
     /// Reconstruct the full file reference for this record.
     pub fn file_reference(&self) -> u64 {
         let seq = self.sequence_value() as u64;
@@ -252,5 +264,29 @@ mod tests {
             Err(other) => panic!("expected FixupMismatch, got {other:?}"),
             Ok(_) => panic!("expected FixupMismatch, got Ok"),
         }
+    }
+
+    #[test]
+    fn peek_base_reference_reads_pre_fixup_value() {
+        // Base record: base_reference == 0.
+        let base = build_minimal_record();
+        assert_eq!(FileRecord::peek_base_reference(&base), Some(0));
+
+        // Extension record: base_reference lives at header offset 0x20, which is
+        // never a USA-protected sector trailer, so peeking reads it from the raw
+        // (un-fixed-up) bytes and must not mutate the buffer.
+        let mut ext = build_minimal_record();
+        let base_ref_value: u64 = 0x0002_0000_0000_002A;
+        ext[32..40].copy_from_slice(&base_ref_value.to_le_bytes());
+        assert_eq!(FileRecord::peek_base_reference(&ext), Some(base_ref_value));
+        assert_eq!(ext[510], 0xAB, "peek must not apply the USA fixup");
+        assert_eq!(ext[511], 0xCD);
+        assert_eq!(ext[1022], 0xAB);
+        assert_eq!(ext[1023], 0xCD);
+
+        // An invalid record yields no base reference.
+        let mut bad = build_minimal_record();
+        bad[0] = b'X';
+        assert_eq!(FileRecord::peek_base_reference(&bad), None);
     }
 }

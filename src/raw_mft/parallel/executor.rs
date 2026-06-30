@@ -29,8 +29,10 @@ pub(crate) enum ChunkScheduling {
 
 /// Reopenable source information for worker-local volume handles.
 #[derive(Debug, Clone)]
-enum ParallelVolumeSource {
+pub(in crate::raw_mft) enum ParallelVolumeSource {
+    /// Reopen by drive letter (e.g. `C`).
     DriveLetter(char),
+    /// Reopen by mount-point path.
     MountPoint(PathBuf),
 }
 
@@ -223,7 +225,9 @@ where
 }
 
 /// Resolve the original volume into a reopenable source for worker threads.
-fn reusable_parallel_volume_source(volume: &Volume) -> Result<ParallelVolumeSource, UsnError> {
+pub(in crate::raw_mft) fn reusable_parallel_volume_source(
+    volume: &Volume,
+) -> Result<ParallelVolumeSource, UsnError> {
     volume
         .drive_letter()
         .map(ParallelVolumeSource::DriveLetter)
@@ -240,7 +244,9 @@ fn reusable_parallel_volume_source(volume: &Volume) -> Result<ParallelVolumeSour
 }
 
 /// Reopen the original volume source for one worker thread.
-fn open_parallel_volume(source: &ParallelVolumeSource) -> Result<Volume, UsnError> {
+pub(in crate::raw_mft) fn open_parallel_volume(
+    source: &ParallelVolumeSource,
+) -> Result<Volume, UsnError> {
     match source {
         ParallelVolumeSource::DriveLetter(drive_letter) => Volume::from_drive_letter(*drive_letter),
         ParallelVolumeSource::MountPoint(path) => Volume::from_mount_point(path),

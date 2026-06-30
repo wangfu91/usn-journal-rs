@@ -154,6 +154,37 @@ impl<'m, 'v> RawMftParallelScan<'m, 'v> {
         )
     }
 
+    /// Parse chunks in parallel with deferred, cache-backed `$ATTRIBUTE_LIST`
+    /// enrichment, folding entries into worker-local accumulators.
+    ///
+    /// Extension records are captured during the scan and used to enrich the
+    /// base records that need them in a second phase, avoiding the scattered
+    /// random reads that inline enrichment performs. `init` takes no chunk
+    /// because it also seeds the phase-2 accumulator. Worker scheduling is always
+    /// dynamic for this mode.
+    pub fn fold_records_cached_enrich<Init, Fold, T, V>(
+        self,
+        init: Init,
+        fold_entry: Fold,
+        visit: V,
+    ) -> Result<(), UsnError>
+    where
+        Init: Fn() -> T + Sync,
+        Fold: Fn(&mut T, RawMftBatchEntry) -> Result<(), UsnError> + Sync,
+        T: Send,
+        V: FnMut(T) -> Result<(), UsnError>,
+    {
+        let worker_count = self.resolved_worker_count()?;
+        self.mft.fold_records_cached_enrich(
+            self.resolved_chunks(),
+            self.scan_options,
+            worker_count,
+            init,
+            fold_entry,
+            visit,
+        )
+    }
+
     /// Resolve the work chunks for this scan, either from explicit chunks or by planning them from the chunk plan options.
     fn resolved_chunks(&self) -> Vec<RawMftWorkChunk> {
         self.chunks

@@ -104,3 +104,64 @@ where
 
     Ok(None)
 }
+
+/// Drive the whole record range, classifying each record from its raw header
+/// before the USA fixup runs: base records are fixed up and passed to `on_base`;
+/// extension records (`base_reference != 0`) are passed raw (un-fixed-up) to
+/// `on_ext` so the caller can cache them for deferred `$ATTRIBUTE_LIST`
+/// enrichment without a second disk read.
+pub(in crate::raw_mft) fn for_each_record_capturing<OnBase, OnExt>(
+    mft: &RawMft<'_>,
+    state: &mut SerialParseState,
+    reader: &mut VolumeReader,
+    mut on_base: OnBase,
+    mut on_ext: OnExt,
+) -> Result<(), UsnError>
+where
+    OnBase: FnMut(&FileRecord<'_>) -> Result<(), UsnError>,
+    OnExt: FnMut(u64, &[u8]),
+{
+    while state.next_record < state.end_record {
+        let record_number = state.next_record;
+        state.next_record += 1;
+
+        if !state.include_unused_records && !mft.bitmap_used(record_number) {
+            continue;
+        }
+
+        let offset = match mft
+            .extent_map
+            .record_offset_with_cursor(record_number, &mut state.offset_cursor)
+        {
+            Ok(Some(offset)) => offset,
+            Ok(None) => continue,
+            Err(error) => return Err(error),
+        };
+
+        let buf = reader
+            .borrow_at(offset, state.record_size)
+            .map_err(io_err)?;
+
+        // Classify from the raw header before the USA fixup mutates `buf`.
+        let Some(base_reference) = FileRecord::peek_base_reference(buf) else {
+            continue;
+        };
+        if base_reference != 0 {
+            // Extension record: hand the caller the raw (un-fixed-up) bytes.
+            on_ext(record_number, buf);
+            continue;
+        }
+
+        let record = match FileRecord::parse(record_number, Some(offset), buf) {
+            Ok(record) => record,
+            Err(error) => {
+                warn!("raw_mft: failed to parse record {record_number}: {error}");
+                continue;
+            }
+        };
+
+        on_base(&record)?;
+    }
+
+    Ok(())
+}

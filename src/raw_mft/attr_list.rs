@@ -23,6 +23,7 @@ use crate::{
             attribute::{FileNameNamespace, NtfsAttributeType, for_each_attr_list_entry},
             boot::BootSector,
             extent::ExtentMap,
+            record::FileRecord,
         },
         reader::{read_batch_record_raw, read_nonresident, read_record_raw},
     },
@@ -152,6 +153,67 @@ pub(super) fn enrich_batch_from_attr_list(
     extent_map: &ExtentMap,
     collect_dos_file_name_links: bool,
 ) -> AttrListEnrichStats {
+    enrich_batch_with_loader(
+        entry,
+        attr_list,
+        base_record_number,
+        reader,
+        boot.cluster_size,
+        |reader, ext_num| {
+            read_batch_record_raw(
+                reader,
+                boot,
+                extent_map,
+                ext_num,
+                collect_dos_file_name_links,
+            )
+            .map(|result| result.map(|(entry, _)| entry))
+        },
+    )
+}
+
+/// Enrich a batch scratch entry, loading extension records from a pre-built
+/// cache of raw (un-fixed-up) record bytes instead of the disk.
+///
+/// `reader` is still used for the rare non-resident `$ATTRIBUTE_LIST` payload;
+/// the (common, costly) extension-record reads are served from `ext_cache`,
+/// which the scan populated as it streamed past those records.
+pub(in crate::raw_mft) fn enrich_batch_from_attr_list_cached(
+    entry: &mut RawMftBatchScratch,
+    attr_list: AttributeListInfo,
+    base_record_number: u64,
+    reader: &mut VolumeReader,
+    boot: &BootSector,
+    collect_dos_file_name_links: bool,
+    ext_cache: &std::collections::HashMap<u64, Box<[u8]>>,
+) -> AttrListEnrichStats {
+    enrich_batch_with_loader(
+        entry,
+        attr_list,
+        base_record_number,
+        reader,
+        boot.cluster_size,
+        |_reader, ext_num| {
+            Ok(ext_cache
+                .get(&ext_num)
+                .and_then(|raw| parse_cached_extension(raw, ext_num, collect_dos_file_name_links)))
+        },
+    )
+}
+
+/// Shared core of batch enrichment, parameterized over how extension records are
+/// loaded (from disk or from a cache).
+fn enrich_batch_with_loader<L>(
+    entry: &mut RawMftBatchScratch,
+    attr_list: AttributeListInfo,
+    base_record_number: u64,
+    reader: &mut VolumeReader,
+    cluster_size: u64,
+    load_extension: L,
+) -> AttrListEnrichStats
+where
+    L: FnMut(&mut VolumeReader, u64) -> Result<Option<RawMftBatchScratch>, UsnError>,
+{
     let needs = batch_entry_enrichment_needs(entry);
     if !needs.any() {
         return AttrListEnrichStats::default();
@@ -167,18 +229,9 @@ pub(super) fn enrich_batch_from_attr_list(
         attr_list,
         base_record_number,
         reader,
-        boot.cluster_size,
+        cluster_size,
         |type_id| needs.wants_type(type_id),
-        |reader, ext_num| {
-            read_batch_record_raw(
-                reader,
-                boot,
-                extent_map,
-                ext_num,
-                collect_dos_file_name_links,
-            )
-            .map(|result| result.map(|(entry, _)| entry))
-        },
+        load_extension,
         |ext_entry| {
             if needs.file_name {
                 merge_batch_extension_links(entry, &ext_entry);
@@ -197,6 +250,23 @@ pub(super) fn enrich_batch_from_attr_list(
             }
         },
     )
+}
+
+/// Parse a cached extension record's raw bytes into a lean batch scratch entry,
+/// applying the USA fixup to a private copy.
+fn parse_cached_extension(
+    raw: &[u8],
+    record_number: u64,
+    collect_dos_file_name_links: bool,
+) -> Option<RawMftBatchScratch> {
+    let mut buf = raw.to_vec();
+    if !FileRecord::is_valid(&buf) {
+        return None;
+    }
+    let record = FileRecord::parse(record_number, None, &mut buf).ok()?;
+    let (scratch, _attr_list) =
+        RawMftBatchScratch::from_record_with_attr_list(&record, collect_dos_file_name_links);
+    Some(scratch)
 }
 
 /// Materialize a flat `$ATTRIBUTE_LIST` payload from either its resident or
