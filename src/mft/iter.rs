@@ -50,7 +50,6 @@ impl MftIter {
         high_usn: i64,
         max_usn_record_version: u16,
         buffer: Vec<u8>,
-        next_start_fid: u64,
     ) -> Self {
         Self {
             volume_handle,
@@ -60,7 +59,10 @@ impl MftIter {
             buffer,
             bytes_read: 0,
             offset: 0,
-            next_start_fid,
+            // Enumeration always starts at file reference number 0; the kernel
+            // returns the cursor for the next call as the first 8 bytes of each
+            // output buffer. The USN range is filtered via `low_usn`/`high_usn`.
+            next_start_fid: 0,
         }
     }
 

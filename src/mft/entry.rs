@@ -52,6 +52,55 @@ impl MftEntry {
     pub fn is_hidden(&self) -> bool {
         <Self as FileAttributeView>::has_hidden_attribute(self)
     }
+
+    /// Returns true if this entry is marked read-only.
+    #[must_use]
+    #[inline]
+    pub fn is_read_only(&self) -> bool {
+        self.file_attributes.is_read_only()
+    }
+
+    /// Returns true if this entry has the system attribute set.
+    #[must_use]
+    #[inline]
+    pub fn is_system(&self) -> bool {
+        self.file_attributes.is_system()
+    }
+
+    /// Returns true if this entry has the archive attribute set.
+    #[must_use]
+    #[inline]
+    pub fn is_archive(&self) -> bool {
+        self.file_attributes.is_archive()
+    }
+
+    /// Returns true if this entry is a reparse point (symlink, junction, mount point, ...).
+    #[must_use]
+    #[inline]
+    pub fn is_reparse_point(&self) -> bool {
+        self.file_attributes.is_reparse_point()
+    }
+
+    /// Returns true if this entry is stored compressed on disk.
+    #[must_use]
+    #[inline]
+    pub fn is_compressed(&self) -> bool {
+        self.file_attributes.is_compressed()
+    }
+
+    /// Returns true if this entry is stored encrypted on disk.
+    #[must_use]
+    #[inline]
+    pub fn is_encrypted(&self) -> bool {
+        self.file_attributes.is_encrypted()
+    }
+
+    /// Returns true if this entry contains sparse data.
+    #[must_use]
+    #[inline]
+    pub fn is_sparse(&self) -> bool {
+        self.file_attributes.is_sparse()
+    }
 }
 
 impl FileAttributeView for MftEntry {

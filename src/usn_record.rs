@@ -407,4 +407,218 @@ mod tests {
             }
         ));
     }
+
+    /// Build a `USN_RECORD_V2` buffer with the given fields and file name.
+    fn build_v2_record(
+        usn: i64,
+        fid: u64,
+        parent: u64,
+        reason: u32,
+        attributes: u32,
+        name: &str,
+    ) -> Vec<u8> {
+        let name_u16: Vec<u16> = name.encode_utf16().collect();
+        let name_len = name_u16.len() * size_of::<u16>();
+        let base = size_of::<USN_RECORD_V2>();
+        let total = (base + name_len).next_multiple_of(8);
+        let name_offset = std::mem::offset_of!(USN_RECORD_V2, FileName);
+
+        let record = USN_RECORD_V2 {
+            RecordLength: total as u32,
+            MajorVersion: 2,
+            MinorVersion: 0,
+            FileReferenceNumber: fid,
+            ParentFileReferenceNumber: parent,
+            Usn: usn,
+            TimeStamp: 0,
+            Reason: reason,
+            SourceInfo: 0,
+            SecurityId: 0,
+            FileAttributes: attributes,
+            FileNameLength: name_len as u16,
+            FileNameOffset: name_offset as u16,
+            FileName: [0; 1],
+        };
+
+        let mut buf = vec![0u8; total];
+        // SAFETY: copy the header bytes up to (not including) the FileName
+        // placeholder, then splice the real UTF-16 name in at FileNameOffset.
+        unsafe {
+            ptr::copy_nonoverlapping(
+                &record as *const USN_RECORD_V2 as *const u8,
+                buf.as_mut_ptr(),
+                name_offset,
+            );
+            ptr::copy_nonoverlapping(
+                name_u16.as_ptr() as *const u8,
+                buf.as_mut_ptr().add(name_offset),
+                name_len,
+            );
+        }
+        buf
+    }
+
+    /// Build a `USN_RECORD_V3` buffer carrying 128-bit file IDs.
+    fn build_v3_record(usn: i64, fid: u128, parent: u128, name: &str) -> Vec<u8> {
+        use windows::Win32::Storage::FileSystem::FILE_ID_128;
+
+        let name_u16: Vec<u16> = name.encode_utf16().collect();
+        let name_len = name_u16.len() * size_of::<u16>();
+        let base = size_of::<USN_RECORD_V3>();
+        let total = (base + name_len).next_multiple_of(8);
+        let name_offset = std::mem::offset_of!(USN_RECORD_V3, FileName);
+
+        let record = USN_RECORD_V3 {
+            RecordLength: total as u32,
+            MajorVersion: 3,
+            MinorVersion: 0,
+            FileReferenceNumber: FILE_ID_128 {
+                Identifier: fid.to_le_bytes(),
+            },
+            ParentFileReferenceNumber: FILE_ID_128 {
+                Identifier: parent.to_le_bytes(),
+            },
+            Usn: usn,
+            TimeStamp: 0,
+            Reason: 0,
+            SourceInfo: 0,
+            SecurityId: 0,
+            FileAttributes: 0,
+            FileNameLength: name_len as u16,
+            FileNameOffset: name_offset as u16,
+            FileName: [0; 1],
+        };
+
+        let mut buf = vec![0u8; total];
+        // SAFETY: same header-then-name splice as the V2 builder.
+        unsafe {
+            ptr::copy_nonoverlapping(
+                &record as *const USN_RECORD_V3 as *const u8,
+                buf.as_mut_ptr(),
+                name_offset,
+            );
+            ptr::copy_nonoverlapping(
+                name_u16.as_ptr() as *const u8,
+                buf.as_mut_ptr().add(name_offset),
+                name_len,
+            );
+        }
+        buf
+    }
+
+    #[test]
+    fn find_next_record_parses_v2_and_advances_offset() {
+        let buf = build_v2_record(0x1234, 0x42, 0x7, 0x0000_0100, 0x20, "file.txt");
+        let mut offset = 0u32;
+        let record = find_next_record(&buf, buf.len() as u32, &mut offset)
+            .expect("parse ok")
+            .expect("record present");
+
+        assert_eq!(record.usn(), 0x1234);
+        assert_eq!(record.fid(), Fid::new(0x42));
+        assert_eq!(record.parent_fid(), Fid::new(0x7));
+        assert_eq!(record.reason(), 0x0000_0100);
+        assert_eq!(record.file_attributes(), 0x20);
+        let name: Vec<u16> = "file.txt".encode_utf16().collect();
+        assert_eq!(record.file_name_slice(), name.as_slice());
+        assert_eq!(offset as usize, buf.len());
+    }
+
+    #[test]
+    fn find_next_record_iterates_multiple_v2_records() {
+        let mut buf = build_v2_record(1, 0x10, 0x5, 0, 0, "a.txt");
+        buf.extend(build_v2_record(2, 0x11, 0x5, 0, 0, "bb.txt"));
+        let total = buf.len() as u32;
+
+        let mut offset = 0u32;
+        let first = find_next_record(&buf, total, &mut offset)
+            .unwrap()
+            .expect("first record");
+        assert_eq!(first.usn(), 1);
+        assert_eq!(first.fid(), Fid::new(0x10));
+
+        let second = find_next_record(&buf, total, &mut offset)
+            .unwrap()
+            .expect("second record");
+        assert_eq!(second.usn(), 2);
+        assert_eq!(second.fid(), Fid::new(0x11));
+
+        assert_eq!(offset, total);
+        assert!(find_next_record(&buf, total, &mut offset).unwrap().is_none());
+    }
+
+    #[test]
+    fn find_next_record_parses_v3_extended_ids() {
+        let fid = 0x0011_2233_4455_6677_8899_aabb_ccdd_eeffu128;
+        let parent = 0x1000_0000_0000_0000_0000_0000_0000_0001u128;
+        let buf = build_v3_record(0x99, fid, parent, "refs.dat");
+
+        let mut offset = 0u32;
+        let record = find_next_record(&buf, buf.len() as u32, &mut offset)
+            .unwrap()
+            .expect("record present");
+
+        assert_eq!(record.usn(), 0x99);
+        assert_eq!(record.fid(), Fid::from(fid));
+        assert_eq!(record.parent_fid(), Fid::from(parent));
+        assert!(record.fid().is_extended());
+    }
+
+    #[test]
+    fn find_next_record_rejects_misaligned_file_name_length() {
+        let mut buf = build_v2_record(1, 0x10, 0x5, 0, 0, "abc");
+        // FileNameLength lives right before FileNameOffset in the header.
+        let len_off = std::mem::offset_of!(USN_RECORD_V2, FileNameLength);
+        buf[len_off..len_off + 2].copy_from_slice(&3u16.to_le_bytes());
+
+        let mut offset = 0u32;
+        let err = find_next_record(&buf, buf.len() as u32, &mut offset).unwrap_err();
+        assert!(matches!(err, UsnError::MisalignedRecord { offset: 0, .. }));
+    }
+
+    #[test]
+    fn find_next_record_rejects_file_name_beyond_record() {
+        let mut buf = build_v2_record(1, 0x10, 0x5, 0, 0, "abc");
+        // Declare a file-name length that runs past the record end.
+        let len_off = std::mem::offset_of!(USN_RECORD_V2, FileNameLength);
+        buf[len_off..len_off + 2].copy_from_slice(&1000u16.to_le_bytes());
+
+        let mut offset = 0u32;
+        let err = find_next_record(&buf, buf.len() as u32, &mut offset).unwrap_err();
+        assert!(matches!(
+            err,
+            UsnError::InvalidRecord {
+                offset: 0,
+                reason: "file name range exceeds record length"
+            }
+        ));
+    }
+
+    #[test]
+    fn find_next_record_returns_none_when_offset_at_end() {
+        let buf = build_v2_record(1, 0x10, 0x5, 0, 0, "a.txt");
+        let mut offset = buf.len() as u32;
+        assert!(
+            find_next_record(&buf, buf.len() as u32, &mut offset)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn read_cursor_helpers_read_leading_values() {
+        let mut usn_buf = vec![0u8; 16];
+        usn_buf[..8].copy_from_slice(&0x0123_4567i64.to_le_bytes());
+        assert_eq!(
+            read_next_start_usn(&usn_buf, usn_buf.len() as u32).unwrap(),
+            Usn::new(0x0123_4567)
+        );
+
+        let mut fid_buf = vec![0u8; 16];
+        fid_buf[..8].copy_from_slice(&0xDEAD_BEEFu64.to_le_bytes());
+        assert_eq!(
+            read_next_start_fid(&fid_buf, fid_buf.len() as u32).unwrap(),
+            0xDEAD_BEEF
+        );
+    }
 }

@@ -10,65 +10,50 @@ pub(crate) trait FileAttributeView {
     /// Returns true if the bitmask marks a directory.
     #[inline]
     fn has_directory_attribute(&self) -> bool {
-        self.file_attributes()
-            .contains(crate::FileAttributes::DIRECTORY)
+        self.file_attributes().is_directory()
     }
 
     /// Returns true if the bitmask marks a hidden item.
     #[inline]
     fn has_hidden_attribute(&self) -> bool {
-        self.file_attributes()
-            .contains(crate::FileAttributes::HIDDEN)
+        self.file_attributes().is_hidden()
     }
 }
 
 /// Display names for known `FILE_ATTRIBUTE_*` bits.
-const FILE_ATTRIBUTE_NAMES: &[(crate::FileAttributes, &str)] = &[
-    (crate::FileAttributes::READ_ONLY, "READ_ONLY"),
-    (crate::FileAttributes::HIDDEN, "HIDDEN"),
-    (crate::FileAttributes::SYSTEM, "SYSTEM"),
-    (crate::FileAttributes::DIRECTORY, "DIRECTORY"),
-    (crate::FileAttributes::ARCHIVE, "ARCHIVE"),
-    (crate::FileAttributes::DEVICE, "DEVICE"),
-    (crate::FileAttributes::NORMAL, "NORMAL"),
-    (crate::FileAttributes::TEMPORARY, "TEMPORARY"),
-    (crate::FileAttributes::SPARSE_FILE, "SPARSE_FILE"),
-    (crate::FileAttributes::REPARSE_POINT, "REPARSE_POINT"),
-    (crate::FileAttributes::COMPRESSED, "COMPRESSED"),
-    (crate::FileAttributes::OFFLINE, "OFFLINE"),
+const FILE_ATTRIBUTE_NAMES: &[(u32, &str)] = &[
+    (crate::FileAttributes::READ_ONLY.bits(), "READ_ONLY"),
+    (crate::FileAttributes::HIDDEN.bits(), "HIDDEN"),
+    (crate::FileAttributes::SYSTEM.bits(), "SYSTEM"),
+    (crate::FileAttributes::DIRECTORY.bits(), "DIRECTORY"),
+    (crate::FileAttributes::ARCHIVE.bits(), "ARCHIVE"),
+    (crate::FileAttributes::DEVICE.bits(), "DEVICE"),
+    (crate::FileAttributes::NORMAL.bits(), "NORMAL"),
+    (crate::FileAttributes::TEMPORARY.bits(), "TEMPORARY"),
+    (crate::FileAttributes::SPARSE_FILE.bits(), "SPARSE_FILE"),
+    (crate::FileAttributes::REPARSE_POINT.bits(), "REPARSE_POINT"),
+    (crate::FileAttributes::COMPRESSED.bits(), "COMPRESSED"),
+    (crate::FileAttributes::OFFLINE.bits(), "OFFLINE"),
     (
-        crate::FileAttributes::NOT_CONTENT_INDEXED,
+        crate::FileAttributes::NOT_CONTENT_INDEXED.bits(),
         "NOT_CONTENT_INDEXED",
     ),
-    (crate::FileAttributes::ENCRYPTED, "ENCRYPTED"),
-    (crate::FileAttributes::INTEGRITY_STREAM, "INTEGRITY_STREAM"),
-    (crate::FileAttributes::VIRTUAL, "VIRTUAL"),
-    (crate::FileAttributes::NO_SCRUB_DATA, "NO_SCRUB_DATA"),
-    (crate::FileAttributes::RECALL_ON_OPEN, "RECALL_ON_OPEN"),
+    (crate::FileAttributes::ENCRYPTED.bits(), "ENCRYPTED"),
     (
-        crate::FileAttributes::RECALL_ON_DATA_ACCESS,
+        crate::FileAttributes::INTEGRITY_STREAM.bits(),
+        "INTEGRITY_STREAM",
+    ),
+    (crate::FileAttributes::VIRTUAL.bits(), "VIRTUAL"),
+    (crate::FileAttributes::NO_SCRUB_DATA.bits(), "NO_SCRUB_DATA"),
+    (crate::FileAttributes::RECALL_ON_OPEN.bits(), "RECALL_ON_OPEN"),
+    (
+        crate::FileAttributes::RECALL_ON_DATA_ACCESS.bits(),
         "RECALL_ON_DATA_ACCESS",
     ),
 ];
 
 impl fmt::Display for crate::FileAttributes {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut wrote = false;
-        for (flag, name) in FILE_ATTRIBUTE_NAMES {
-            if self.contains(*flag) {
-                if wrote {
-                    f.write_str(" | ")?;
-                }
-                f.write_str(name)?;
-                wrote = true;
-            }
-        }
-        if wrote {
-            Ok(())
-        } else if self.is_empty() {
-            f.write_str("NONE")
-        } else {
-            write!(f, "0x{:x}", self.bits())
-        }
+        crate::display::write_flag_names(f, self.bits(), FILE_ATTRIBUTE_NAMES, " | ")
     }
 }

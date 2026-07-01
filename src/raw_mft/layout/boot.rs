@@ -258,4 +258,74 @@ mod tests {
             Err(UsnError::InvalidBootSector(_))
         ));
     }
+
+    #[test]
+    fn parses_negative_sectors_per_cluster_encoding() {
+        // sectors_per_cluster = -12 encodes a 2^12 = 4096-byte cluster directly,
+        // which with a 512-byte sector is 8 sectors per cluster.
+        let buf = make_boot_sector(512, -12, 0x10_0000, 0xC_0000, 0x2, -10);
+        let bs = BootSector::parse(&buf).expect("negative spc encoding should parse");
+        assert_eq!(bs.cluster_size, 4096);
+        assert_eq!(bs.file_record_size, 1024);
+        assert_eq!(bs.mft_byte_offset, 0xC_0000 * 4096);
+    }
+
+    #[test]
+    fn rejects_non_power_of_two_bytes_per_sector() {
+        let buf = make_boot_sector(500, 8, 0, 0, 0, -10);
+        assert!(matches!(
+            BootSector::parse(&buf),
+            Err(UsnError::InvalidBootSector(
+                "bytes_per_sector must be a non-zero power of two"
+            ))
+        ));
+    }
+
+    #[test]
+    fn rejects_cluster_size_smaller_than_sector() {
+        // -8 => 2^8 = 256-byte cluster, smaller than the 512-byte sector.
+        let buf = make_boot_sector(512, -8, 0, 0, 0, -10);
+        assert!(matches!(
+            BootSector::parse(&buf),
+            Err(UsnError::InvalidBootSector(
+                "cluster size smaller than sector size"
+            ))
+        ));
+    }
+
+    #[test]
+    fn rejects_sectors_per_cluster_exponent_too_large() {
+        let buf = make_boot_sector(512, -128, 0, 0, 0, -10);
+        assert!(matches!(
+            BootSector::parse(&buf),
+            Err(UsnError::InvalidBootSector(
+                "sectors_per_cluster exponent too large"
+            ))
+        ));
+    }
+
+    #[test]
+    fn rejects_file_record_size_exponent_too_large() {
+        let buf = make_boot_sector(512, 8, 0, 0, 0, -128);
+        assert!(matches!(
+            BootSector::parse(&buf),
+            Err(UsnError::InvalidBootSector(
+                "file_record_size exponent too large"
+            ))
+        ));
+    }
+
+    #[test]
+    fn rejects_file_record_size_not_multiple_of_sector() {
+        // 1024-byte sectors, 1 sector/cluster => 1024-byte cluster.
+        // file_record_size_info = -9 => 2^9 = 512-byte records, which is a
+        // valid size but not a multiple of the 1024-byte sector.
+        let buf = make_boot_sector(1024, 1, 1000, 100, 200, -9);
+        assert!(matches!(
+            BootSector::parse(&buf),
+            Err(UsnError::InvalidBootSector(
+                "file_record_size not a multiple of bytes_per_sector"
+            ))
+        ));
+    }
 }

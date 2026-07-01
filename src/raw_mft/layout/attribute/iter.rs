@@ -161,4 +161,68 @@ mod tests {
             vec![(NtfsAttributeType::FileName as u32, 0x0001_0000_0000_0042)]
         );
     }
+
+    fn attr_list_entry(type_id: u32, file_reference: u64) -> Vec<u8> {
+        let min = size_of::<AttributeListEntryHeader>();
+        let header = AttributeListEntryHeader {
+            type_id,
+            record_length: min as u16,
+            attribute_name_length: 0,
+            attribute_name_offset: 0,
+            lowest_vcn: 0,
+            file_reference,
+            attribute_id: 0,
+        };
+        header.as_bytes().to_vec()
+    }
+
+    #[test]
+    fn iterates_multiple_attribute_list_entries() {
+        let mut bytes = attr_list_entry(NtfsAttributeType::StandardInformation as u32, 0x11);
+        bytes.extend(attr_list_entry(NtfsAttributeType::Data as u32, 0x22));
+
+        let mut seen = Vec::new();
+        for_each_attr_list_entry(&bytes, |type_id, file_reference| {
+            seen.push((type_id, file_reference));
+        });
+
+        assert_eq!(
+            seen,
+            vec![
+                (NtfsAttributeType::StandardInformation as u32, 0x11),
+                (NtfsAttributeType::Data as u32, 0x22),
+            ]
+        );
+    }
+
+    #[test]
+    fn attr_list_stops_at_zero_length_entry() {
+        let mut bytes = attr_list_entry(NtfsAttributeType::FileName as u32, 0x42);
+        // A second entry that declares record_length = 0 must halt iteration.
+        let mut malformed = attr_list_entry(NtfsAttributeType::Data as u32, 0x99);
+        malformed[4..6].copy_from_slice(&0u16.to_le_bytes()); // record_length = 0
+        bytes.extend(malformed);
+
+        let mut seen = Vec::new();
+        for_each_attr_list_entry(&bytes, |type_id, file_reference| {
+            seen.push((type_id, file_reference));
+        });
+
+        assert_eq!(seen, vec![(NtfsAttributeType::FileName as u32, 0x42)]);
+    }
+
+    #[test]
+    fn attribute_iteration_respects_used_size() {
+        let mut buf = vec![0u8; 512];
+        let a1 = build_resident_attr(NtfsAttributeType::StandardInformation as u32, &[0u8; 48]);
+        buf[..a1.len()].copy_from_slice(&a1);
+        let a2 = build_resident_attr(NtfsAttributeType::Data as u32, &[1, 2, 3, 4]);
+        buf[a1.len()..a1.len() + a2.len()].copy_from_slice(&a2);
+
+        // used_size covers only the first attribute, so the second must be
+        // ignored even though it is present in the buffer.
+        let mut seen = Vec::new();
+        for_each_attribute(&buf, 0, a1.len(), |a| seen.push(a.type_id()));
+        assert_eq!(seen, vec![NtfsAttributeType::StandardInformation as u32]);
+    }
 }

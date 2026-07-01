@@ -31,11 +31,7 @@ fn pretty_format<P: AsRef<Path>>(entry: &UsnEntry, full_path_opt: Option<P>) -> 
         None => format!("{:?}", entry.time),
     };
     output.push_str(&format!("{:<20}: {}\n", "Timestamp", timestamp_str));
-    output.push_str(&format!(
-        "{:<20}: {}\n",
-        "Reason",
-        entry.get_reason_string()
-    ));
+    output.push_str(&format!("{:<20}: {}\n", "Reason", entry.reason));
 
     if let Some(full_path) = full_path_opt {
         output.push_str(&format!(
@@ -80,7 +76,7 @@ fn format_local_filetime(filetime: Filetime) -> Option<String> {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let volume = Volume::from_drive_letter('C')?;
     let usn_journal = UsnJournal::new(&volume);
-    let mut path_resolver = PathResolver::new(&volume);
+    let path_resolver = PathResolver::new(&volume);
 
     for result in usn_journal.try_iter()?.take(10) {
         match result {

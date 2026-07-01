@@ -398,4 +398,93 @@ mod tests {
             ))
         );
     }
+
+    #[test]
+    fn len_and_is_empty_track_named_inserts() {
+        let mut index = HistoricalPathIndex::new();
+        assert!(index.is_empty());
+        assert_eq!(index.len(), 0);
+
+        index.insert(&sample_entry(7, 1, NTFS_ROOT_RECORD_NUMBER, 1, "dir"));
+        index.insert(&sample_entry(10, 1, 7, 1, "file.txt"));
+
+        assert!(!index.is_empty());
+        assert_eq!(index.len(), 2);
+    }
+
+    #[test]
+    fn insert_ignores_entries_without_a_name() {
+        let mut index = HistoricalPathIndex::new();
+        index.insert(&sample_entry(10, 1, 7, 1, ""));
+        assert!(index.is_empty());
+    }
+
+    #[test]
+    fn insert_ignores_extended_file_ids() {
+        let mut index = HistoricalPathIndex::new();
+        let mut entry = sample_entry(10, 1, 7, 1, "refs.dat");
+        // A 128-bit ReFS-style id exposes no NTFS record number, so it cannot
+        // participate in record-number reconstruction and must be ignored.
+        entry.file_reference = Fid::from_u128(0x1_0000_0000_0000_0001);
+        index.insert(&entry);
+        assert!(index.is_empty());
+    }
+
+    #[test]
+    fn resolves_deep_multi_level_path() {
+        let mut index = HistoricalPathIndex::new();
+        index.insert(&sample_entry(7, 1, NTFS_ROOT_RECORD_NUMBER, 1, "docs"));
+        index.insert(&sample_entry(10, 1, 7, 1, "alice"));
+        let file = sample_entry(20, 1, 10, 1, "file.txt");
+        index.insert(&file);
+
+        let resolved = index.resolve_entry_best_effort(&mock_volume(), &file);
+        assert_eq!(resolved.quality, HistoricalPathResolutionQuality::Exact);
+        assert_eq!(resolved.path, PathBuf::from(r"C:\docs\alice\file.txt"));
+    }
+
+    #[test]
+    fn self_parenting_record_terminates_as_complete() {
+        // A record whose parent is itself (and not the root) is treated as a
+        // terminal path component rather than looping forever.
+        let mut index = HistoricalPathIndex::new();
+        let entry = sample_entry(7, 2, 7, 2, "selfdir");
+        index.insert(&entry);
+
+        let resolved = index.resolve_entry_best_effort(&mock_volume(), &entry);
+        assert_eq!(resolved.quality, HistoricalPathResolutionQuality::Exact);
+        assert_eq!(resolved.path, PathBuf::from(r"C:\selfdir"));
+    }
+
+    #[test]
+    fn detects_cycle_in_parent_chain() {
+        // 10 -> 11 -> 10 with neither pointing at the root: the walk must break
+        // on the revisit instead of looping, yielding a partial resolution.
+        let mut index = HistoricalPathIndex::new();
+        let a = sample_entry(10, 1, 11, 1, "a");
+        let b = sample_entry(11, 1, 10, 1, "b");
+        index.insert(&a);
+        index.insert(&b);
+
+        let resolved = index.resolve_entry_best_effort(&mock_volume(), &a);
+        assert_eq!(resolved.quality, HistoricalPathResolutionQuality::Partial);
+        assert!(resolved.missing_parent.is_some());
+    }
+
+    #[test]
+    fn resolves_missing_fid_to_fallback_leaf() {
+        // Nothing is indexed, so resolving falls back to the provided leaf name
+        // behind an unresolved-parent marker.
+        let index = HistoricalPathIndex::new();
+        let orphan = standard_fid(42, 1);
+        let resolved =
+            index.resolve_best_effort(&mock_volume(), orphan, OsStr::new("orphan.txt"));
+
+        assert_eq!(resolved.quality, HistoricalPathResolutionQuality::Partial);
+        assert_eq!(resolved.missing_parent, Some(orphan));
+        assert_eq!(
+            resolved.path,
+            PathBuf::from(format!(r"C:\<unresolved-parent:{orphan}>\orphan.txt"))
+        );
+    }
 }

@@ -177,11 +177,11 @@ fn in_memory_tree_fid_with_sequence_bits_is_masked() {
 #[test]
 fn resolve_path_with_cache_hit() {
     let volume = create_mock_volume();
-    let mut resolver = PathResolver::new(&volume).with_directory_cache(4096);
+    let resolver = PathResolver::new(&volume).with_directory_cache(4096);
 
     let cached_path = arc_path("C:\\Documents\\Folder");
     let cached_name = OsString::from("test.txt");
-    if let Some(ref mut cache) = resolver.dir_fid_path_cache {
+    if let Some(cache) = resolver.dir_fid_path_cache.borrow_mut().as_mut() {
         cache.put(
             Fid::new(0x123456),
             (Arc::clone(&cached_path), cached_name.clone()),
@@ -204,11 +204,11 @@ fn resolve_path_with_cache_hit() {
 #[test]
 fn resolve_path_with_cache_miss_parent_hit() {
     let volume = create_mock_volume();
-    let mut resolver = PathResolver::new(&volume).with_directory_cache(4096);
+    let resolver = PathResolver::new(&volume).with_directory_cache(4096);
 
     let cached_parent_path = arc_path("C:\\Documents");
     let cached_parent_name = OsString::from("Documents");
-    if let Some(ref mut cache) = resolver.dir_fid_path_cache {
+    if let Some(cache) = resolver.dir_fid_path_cache.borrow_mut().as_mut() {
         cache.put(Fid::new(0x654321), (cached_parent_path, cached_parent_name));
     }
 
@@ -228,11 +228,11 @@ fn resolve_path_with_cache_miss_parent_hit() {
 #[test]
 fn resolve_path_with_cache_directory_caching() {
     let volume = create_mock_volume();
-    let mut resolver = PathResolver::new(&volume).with_directory_cache(4096);
+    let resolver = PathResolver::new(&volume).with_directory_cache(4096);
 
     let cached_parent_path = arc_path("C:\\Documents");
     let cached_parent_name = OsString::from("Documents");
-    if let Some(ref mut cache) = resolver.dir_fid_path_cache {
+    if let Some(cache) = resolver.dir_fid_path_cache.borrow_mut().as_mut() {
         cache.put(Fid::new(0x654321), (cached_parent_path, cached_parent_name));
     }
 
@@ -248,7 +248,7 @@ fn resolve_path_with_cache_directory_caching() {
     let path = result.expect("directory should resolve");
     assert_eq!(path.to_string_lossy(), "C:\\Documents\\NewFolder");
 
-    if let Some(ref cache) = resolver.dir_fid_path_cache {
+    if let Some(cache) = resolver.dir_fid_path_cache.borrow().as_ref() {
         assert!(cache.peek(&Fid::new(0x123456)).is_some());
         let (cached_path, cached_name) = cache.peek(&Fid::new(0x123456)).unwrap();
         assert_eq!(&**cached_path, path.as_path());
@@ -259,17 +259,17 @@ fn resolve_path_with_cache_directory_caching() {
 #[test]
 fn resolve_path_with_cache_name_mismatch() {
     let volume = create_mock_volume();
-    let mut resolver = PathResolver::new(&volume).with_directory_cache(4096);
+    let resolver = PathResolver::new(&volume).with_directory_cache(4096);
 
     let cached_path = arc_path("C:\\Documents\\OldName");
     let cached_old_name = OsString::from("OldName");
-    if let Some(ref mut cache) = resolver.dir_fid_path_cache {
+    if let Some(cache) = resolver.dir_fid_path_cache.borrow_mut().as_mut() {
         cache.put(Fid::new(0x123456), (cached_path, cached_old_name));
     }
 
     let cached_parent_path = arc_path("C:\\Documents");
     let cached_parent_name = OsString::from("Documents");
-    if let Some(ref mut cache) = resolver.dir_fid_path_cache {
+    if let Some(cache) = resolver.dir_fid_path_cache.borrow_mut().as_mut() {
         cache.put(Fid::new(0x654321), (cached_parent_path, cached_parent_name));
     }
 
@@ -285,7 +285,7 @@ fn resolve_path_with_cache_name_mismatch() {
     let path = result.expect("name mismatch should refresh cache");
     assert_eq!(path.to_string_lossy(), "C:\\Documents\\NewName");
 
-    if let Some(ref cache) = resolver.dir_fid_path_cache {
+    if let Some(cache) = resolver.dir_fid_path_cache.borrow().as_ref() {
         let (updated_path, updated_name) = cache.peek(&Fid::new(0x123456)).unwrap();
         assert_eq!(updated_path.to_string_lossy(), "C:\\Documents\\NewName");
         assert_eq!(updated_name, &OsString::from("NewName"));
@@ -295,7 +295,7 @@ fn resolve_path_with_cache_name_mismatch() {
 #[test]
 fn resolve_path_failure() {
     let volume = create_mock_volume();
-    let mut resolver = PathResolver::new(&volume);
+    let resolver = PathResolver::new(&volume);
 
     let entry = MockEntry {
         fid: Fid::new(0x123456),
@@ -312,28 +312,29 @@ fn resolve_path_failure() {
 fn resolver_default_has_directory_cache_and_no_tree() {
     let volume = create_mock_volume();
     let resolver = PathResolver::new(&volume);
-    assert!(resolver.dir_fid_path_cache.is_some());
+    assert!(resolver.dir_fid_path_cache.borrow().is_some());
 }
 
 #[test]
 fn resolver_without_directory_cache_disables_cache() {
     let volume = create_mock_volume();
     let resolver = PathResolver::new(&volume).with_directory_cache(0);
-    assert!(resolver.dir_fid_path_cache.is_none());
+    assert!(resolver.dir_fid_path_cache.borrow().is_none());
 }
 
 #[test]
 fn builder_with_directory_cache_sets_cache() {
     let volume = create_mock_volume();
     let resolver = PathResolver::new(&volume).with_directory_cache(64);
-    assert!(resolver.dir_fid_path_cache.is_some());
+    assert!(resolver.dir_fid_path_cache.borrow().is_some());
 }
 
 #[test]
 fn builder_directory_cache_respects_capacity() {
     let volume = create_mock_volume();
     let resolver = PathResolver::new(&volume).with_directory_cache(8);
-    let cache = resolver.dir_fid_path_cache.as_ref().unwrap();
+    let cache = resolver.dir_fid_path_cache.borrow();
+    let cache = cache.as_ref().unwrap();
     assert_eq!(cache.cap(), NonZeroUsize::new(8).unwrap());
 }
 
@@ -343,7 +344,8 @@ fn builder_with_directory_cache_twice_keeps_last() {
     let resolver = PathResolver::new(&volume)
         .with_directory_cache(32)
         .with_directory_cache(128);
-    let cache = resolver.dir_fid_path_cache.as_ref().unwrap();
+    let cache = resolver.dir_fid_path_cache.borrow();
+    let cache = cache.as_ref().unwrap();
     assert_eq!(cache.cap(), NonZeroUsize::new(128).unwrap());
 }
 

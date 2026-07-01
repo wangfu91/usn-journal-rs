@@ -1,6 +1,6 @@
 //! Enumerate `FSCTL_ENUM_USN_DATA` records and print each entry with its resolved path.
 
-use usn_journal_rs::{errors::UsnError, mft::Mft, path::PathResolver, volume::Volume};
+use usn_journal_rs::{errors::UsnError, volume::Volume};
 
 /// Run the example and print any top-level error.
 fn main() {
@@ -13,8 +13,8 @@ fn main() {
 fn run() -> Result<(), UsnError> {
     let drive_letter = 'C';
     let volume = Volume::from_drive_letter(drive_letter)?;
-    let mft = Mft::new(&volume);
-    let mut path_resolver = PathResolver::new(&volume);
+    let mft = volume.mft();
+    let path_resolver = volume.path_resolver();
 
     for result in mft.try_iter()? {
         match result {

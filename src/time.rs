@@ -20,6 +20,9 @@ pub(crate) const WINDOWS_TO_UNIX_OFFSET_100NS: u64 = 116_444_736_000_000_000u64;
 pub struct Filetime(u64);
 
 impl Filetime {
+    /// The Unix epoch (1970-01-01 UTC) expressed as a `Filetime`.
+    pub const UNIX_EPOCH: Self = Self(WINDOWS_TO_UNIX_OFFSET_100NS);
+
     /// Construct a `Filetime` from its raw 100-ns interval count.
     #[must_use]
     #[inline]
@@ -32,6 +35,14 @@ impl Filetime {
     #[inline]
     pub const fn raw(self) -> u64 {
         self.0
+    }
+
+    /// Returns `true` if this is the zero `Filetime` (the value NTFS and the USN
+    /// journal use for an unset timestamp).
+    #[must_use]
+    #[inline]
+    pub const fn is_zero(self) -> bool {
+        self.0 == 0
     }
 
     /// Convert to `SystemTime`.
@@ -71,12 +82,49 @@ impl Filetime {
         seconds.clamp(i64::MIN as i128, i64::MAX as i128) as i64
     }
 
+    /// Number of milliseconds since the Unix epoch (may be negative).
+    #[must_use]
+    #[inline]
+    pub fn to_unix_millis(self) -> i64 {
+        let intervals = self.0 as i128 - WINDOWS_TO_UNIX_OFFSET_100NS as i128;
+        let millis = intervals / 10_000;
+        millis.clamp(i64::MIN as i128, i64::MAX as i128) as i64
+    }
+
     /// Number of nanoseconds since the Unix epoch (may be negative).
     #[must_use]
     #[inline]
     pub fn to_unix_nanos(self) -> i128 {
         let intervals = self.0 as i128 - WINDOWS_TO_UNIX_OFFSET_100NS as i128;
         intervals * 100
+    }
+
+    /// Construct a `Filetime` from a whole number of seconds since the Unix epoch.
+    ///
+    /// Returns `None` when the result would fall before the Windows FILETIME
+    /// epoch (1601-01-01) or overflow the underlying `u64`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use usn_journal_rs::Filetime;
+    ///
+    /// let epoch = Filetime::from_unix_seconds(0).unwrap();
+    /// assert_eq!(epoch, Filetime::UNIX_EPOCH);
+    /// assert_eq!(epoch.to_unix_seconds(), 0);
+    ///
+    /// // Dates before 1601 are unrepresentable.
+    /// assert!(Filetime::from_unix_seconds(-20_000_000_000).is_none());
+    /// ```
+    #[must_use]
+    pub fn from_unix_seconds(seconds: i64) -> Option<Self> {
+        let intervals = (seconds as i128).checked_mul(10_000_000)?;
+        let raw = intervals.checked_add(WINDOWS_TO_UNIX_OFFSET_100NS as i128)?;
+        if (0..=u64::MAX as i128).contains(&raw) {
+            Some(Self(raw as u64))
+        } else {
+            None
+        }
     }
 }
 
@@ -286,6 +334,13 @@ mod tests {
         }
 
         #[test]
+        fn unix_nanos_is_negative_before_unix_epoch() {
+            // 1 second before the Unix epoch should be -1_000_000_000 ns.
+            let f = Filetime::new(WINDOWS_TO_UNIX_OFFSET_100NS - 10_000_000);
+            assert_eq!(f.to_unix_nanos(), -1_000_000_000);
+        }
+
+        #[test]
         fn zero_is_windows_epoch() {
             let f = Filetime::new(0);
             // Windows epoch: 1601-01-01. Should be representable as
@@ -329,6 +384,83 @@ mod tests {
                 filetime.raw(),
                 WINDOWS_TO_UNIX_OFFSET_100NS + 10_000_000 + 1_234_567
             );
+        }
+
+        #[test]
+        fn from_system_time_truncates_below_100ns_resolution() {
+            // FILETIME has 100 ns resolution; sub-tick nanoseconds are dropped.
+            let st = UNIX_EPOCH + Duration::new(0, 150);
+            let filetime = Filetime::from_system_time(st).expect("system time");
+            assert_eq!(filetime.raw(), WINDOWS_TO_UNIX_OFFSET_100NS + 1);
+        }
+
+        #[test]
+        fn unix_seconds_and_nanos_for_known_post_epoch_value() {
+            // 2020-01-01T00:00:00Z in FILETIME 100 ns ticks.
+            let filetime = Filetime::new(132_223_104_000_000_000);
+            assert_eq!(filetime.to_unix_seconds(), 1_577_836_800);
+            assert_eq!(
+                filetime.to_unix_nanos(),
+                1_577_836_800 * 1_000_000_000
+            );
+        }
+
+        #[test]
+        fn max_raw_round_trips_through_win32_filetime() {
+            let filetime = Filetime::new(u64::MAX);
+            let win32: FILETIME = filetime.into();
+            assert_eq!(Filetime::from(win32), filetime);
+            assert_eq!(win32.dwLowDateTime, u32::MAX);
+            assert_eq!(win32.dwHighDateTime, u32::MAX);
+        }
+
+        #[test]
+        fn system_time_round_trips_for_far_future_date() {
+            // ~ year 2200, comfortably inside both representations.
+            let raw = 189_000_000_000_000_000u64;
+            let filetime = Filetime::new(raw);
+            let system_time = filetime.to_system_time().expect("representable");
+            let back = Filetime::from_system_time(system_time).expect("round trip");
+            assert_eq!(back, filetime);
+        }
+
+        #[test]
+        fn unix_epoch_const_matches_offset() {
+            assert_eq!(Filetime::UNIX_EPOCH.raw(), WINDOWS_TO_UNIX_OFFSET_100NS);
+            assert_eq!(Filetime::UNIX_EPOCH.to_unix_seconds(), 0);
+            assert_eq!(Filetime::UNIX_EPOCH.to_system_time(), Some(UNIX_EPOCH));
+        }
+
+        #[test]
+        fn is_zero_detects_unset_timestamp() {
+            assert!(Filetime::new(0).is_zero());
+            assert!(!Filetime::UNIX_EPOCH.is_zero());
+        }
+
+        #[test]
+        fn to_unix_millis_for_known_value() {
+            // Unix epoch + 1.5 seconds = 1500 ms.
+            let filetime = Filetime::new(WINDOWS_TO_UNIX_OFFSET_100NS + 15_000_000);
+            assert_eq!(filetime.to_unix_millis(), 1500);
+            // One millisecond before the epoch.
+            let before = Filetime::new(WINDOWS_TO_UNIX_OFFSET_100NS - 10_000);
+            assert_eq!(before.to_unix_millis(), -1);
+        }
+
+        #[test]
+        fn from_unix_seconds_round_trips_and_bounds() {
+            let filetime = Filetime::from_unix_seconds(0).expect("epoch");
+            assert_eq!(filetime, Filetime::UNIX_EPOCH);
+
+            let y2020 = Filetime::from_unix_seconds(1_577_836_800).expect("2020");
+            assert_eq!(y2020.to_unix_seconds(), 1_577_836_800);
+
+            // A second before the Unix epoch is still valid (post-1601).
+            let pre_epoch = Filetime::from_unix_seconds(-1).expect("pre-epoch");
+            assert_eq!(pre_epoch.to_unix_seconds(), -1);
+
+            // Far in the past (pre-1601) is unrepresentable.
+            assert!(Filetime::from_unix_seconds(-20_000_000_000).is_none());
         }
     }
 

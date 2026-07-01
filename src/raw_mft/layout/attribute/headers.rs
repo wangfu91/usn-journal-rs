@@ -208,3 +208,16 @@ pub mod file_attr_flags {
     /// Encrypted-file attribute bit.
     pub const ENCRYPTED: u32 = 0x4000;
 }
+
+/// Attribute-record header flag bits (`NtfsAttributeHeader::flags`).
+///
+/// These describe the on-disk stream encoding of a single attribute and are
+/// distinct from the file-level [`file_attr_flags`].
+pub mod attr_header_flags {
+    /// Stream data is compressed.
+    pub const COMPRESSED: u16 = 0x0001;
+    /// Stream data is encrypted.
+    pub const ENCRYPTED: u16 = 0x4000;
+    /// Stream data is sparse.
+    pub const SPARSE: u16 = 0x8000;
+}

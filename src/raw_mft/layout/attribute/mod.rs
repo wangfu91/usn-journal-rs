@@ -13,7 +13,7 @@ pub use headers::FileNameNamespace;
 pub(crate) use headers::{
     AttributeListEntryHeader, NtfsAttributeHeader, NtfsAttributeType, NtfsFileNameHeader,
     NtfsNonResidentAttributeHeader, NtfsResidentAttributeHeader, NtfsStandardInformation,
-    file_attr_flags,
+    attr_header_flags, file_attr_flags,
 };
 pub(crate) use iter::{for_each_attr_list_entry, for_each_attribute};
 pub(crate) use view::{NtfsAttribute, osstring_from_utf16le};

@@ -15,11 +15,6 @@ use std::{
 /// NTFS root directory MFT record number (`$Root`).
 const NTFS_ROOT_RECORD_NUMBER: u64 = 5;
 
-/// Mask a standard 64-bit NTFS file reference down to its 48-bit record number.
-fn mask_fid_to_record_number(fid: Fid) -> Option<u64> {
-    fid.record_number()
-}
-
 /// Directory entry in the in-memory tree. Stores the parent file
 /// reference number (full 64-bit, not masked) and the leaf name as raw
 /// UTF-16 units so we don't pay an `OsString` allocation per entry.
@@ -67,7 +62,7 @@ impl InMemoryDirTree {
             if entry.file_name.is_empty() {
                 continue;
             }
-            let Some(key) = mask_fid_to_record_number(entry.file_reference) else {
+            let Some(key) = entry.file_reference.record_number() else {
                 continue;
             };
             // Encode the file name as raw UTF-16 once and store it.
@@ -143,7 +138,7 @@ impl InMemoryDirTree {
         const MAX_STEPS: usize = 256;
 
         let mut chain: Vec<&[u16]> = Vec::with_capacity(32);
-        let mut current = mask_fid_to_record_number(fid)?;
+        let mut current = fid.record_number()?;
         let mut visited = FxHashSet::default();
         let mut steps = 0usize;
         loop {
@@ -155,7 +150,7 @@ impl InMemoryDirTree {
             let entry = self.entries.get(&current)?;
             chain.push(&entry.name);
 
-            let parent = mask_fid_to_record_number(entry.parent)?;
+            let parent = entry.parent.record_number()?;
             // Stop at the NTFS root (`$Root`) or on a self-parenting record.
             if parent == current || parent == NTFS_ROOT_RECORD_NUMBER {
                 break;

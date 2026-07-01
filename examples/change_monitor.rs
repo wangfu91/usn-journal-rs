@@ -1,11 +1,6 @@
 //! Follow the live USN journal from its current tail and print new records as they arrive.
 
-use usn_journal_rs::{
-    errors::UsnError,
-    journal::{JournalIterOptions, UsnJournal},
-    path::PathResolver,
-    volume::Volume,
-};
+use usn_journal_rs::{errors::UsnError, journal::JournalIterOptions, volume::Volume};
 
 /// Run the example and print any top-level error.
 fn main() {
@@ -18,9 +13,9 @@ fn main() {
 fn run() -> Result<(), UsnError> {
     let drive_letter = 'D';
     let volume = Volume::from_drive_letter(drive_letter)?;
-    let usn_journal = UsnJournal::new(&volume);
+    let journal = volume.journal();
 
-    let journal_data = usn_journal.query(true)?;
+    let journal_data = journal.query_or_create()?;
 
     let enum_options = JournalIterOptions::builder()
         .start_usn(journal_data.next_usn)
@@ -28,9 +23,9 @@ fn run() -> Result<(), UsnError> {
         .wait_for_more(true)
         .build();
 
-    let mut path_resolver = PathResolver::new(&volume);
+    let path_resolver = volume.path_resolver();
 
-    for result in usn_journal.try_iter_with_options(enum_options)? {
+    for result in journal.try_iter_with_options(enum_options)? {
         match result {
             Ok(entry) => {
                 let full_path = path_resolver.resolve_path(&entry);

@@ -73,9 +73,9 @@ fn all_three_resolvers_agree() {
     }
 
     // Build the three resolvers.
-    let mut resolver1 = PathResolver::new(&volume).with_directory_cache(0);
+    let resolver1 = PathResolver::new(&volume).with_directory_cache(0);
 
-    let mut resolver2 = PathResolver::new(&volume).with_directory_cache(1024);
+    let resolver2 = PathResolver::new(&volume).with_directory_cache(1024);
 
     let resolver3 = match raw_mft.path_resolver() {
         Ok(r) => r,

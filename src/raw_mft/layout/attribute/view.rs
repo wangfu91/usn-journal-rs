@@ -292,4 +292,80 @@ mod tests {
         buf[4..8].copy_from_slice(&0u32.to_le_bytes());
         assert!(NtfsAttribute::new(&buf).is_none());
     }
+
+    #[test]
+    fn parses_non_resident_header() {
+        let header_size = size_of::<NtfsNonResidentAttributeHeader>();
+        let total = header_size + 4; // room for a tiny run list
+        let header = NtfsNonResidentAttributeHeader {
+            attribute_header: NtfsAttributeHeader {
+                type_id: NtfsAttributeType::Data as u32,
+                length: total as u32,
+                is_non_resident: 1,
+                name_length: 0,
+                name_offset: 0,
+                flags: 0,
+                id: 0,
+            },
+            lowest_vcn: 0,
+            highest_vcn: 1,
+            data_runs_offset: header_size as u16,
+            compression_unit_exponent: 0,
+            _reserved: [0; 5],
+            allocated_size: 8192,
+            data_size: 12345,
+            initialized_size: 12345,
+        };
+        let mut buf = vec![0u8; total];
+        buf[..header_size].copy_from_slice(header.as_bytes());
+
+        let attr = NtfsAttribute::new(&buf).expect("attr");
+        assert!(attr.is_non_resident());
+        assert!(attr.resident_header().is_none());
+        let nr = attr.nonresident_header().expect("non-resident header");
+        let data_size = nr.data_size;
+        let allocated_size = nr.allocated_size;
+        let runs_offset = nr.data_runs_offset;
+        assert_eq!(data_size, 12345);
+        assert_eq!(allocated_size, 8192);
+        assert_eq!(runs_offset as usize, header_size);
+    }
+
+    #[test]
+    fn reads_named_attribute_name_bytes() {
+        let header_size = size_of::<NtfsResidentAttributeHeader>();
+        let name: Vec<u16> = "ads".encode_utf16().collect();
+        let name_bytes_len = name.len() * 2;
+        let total = header_size + name_bytes_len;
+
+        let header = NtfsResidentAttributeHeader {
+            attribute_header: NtfsAttributeHeader {
+                type_id: NtfsAttributeType::Data as u32,
+                length: total as u32,
+                is_non_resident: 0,
+                name_length: name.len() as u8,
+                name_offset: header_size as u16,
+                flags: 0,
+                id: 0,
+            },
+            value_length: 0,
+            value_offset: total as u16,
+            indexed_flag: 0,
+            _pad: 0,
+        };
+        let mut buf = vec![0u8; total];
+        buf[..header_size].copy_from_slice(header.as_bytes());
+        for (i, unit) in name.iter().enumerate() {
+            let off = header_size + i * 2;
+            buf[off..off + 2].copy_from_slice(&unit.to_le_bytes());
+        }
+
+        let attr = NtfsAttribute::new(&buf).expect("attr");
+        assert!(attr.has_name());
+        let raw_name = attr.name_bytes().expect("name bytes");
+        assert_eq!(
+            osstring_from_utf16le(raw_name).expect("decode"),
+            std::ffi::OsString::from("ads")
+        );
+    }
 }

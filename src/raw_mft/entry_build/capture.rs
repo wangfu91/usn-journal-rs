@@ -28,11 +28,6 @@ pub(super) fn capture_attribute_list(attr: &NtfsAttribute<'_>) -> Option<Attribu
 /// Decode the reparse tag stored in a resident `$REPARSE_POINT` value.
 pub(super) fn resident_reparse_tag(attr: &NtfsAttribute<'_>) -> Option<u32> {
     let value = attr.resident_value()?;
-    let tag_bytes = value.get(..4)?;
-    Some(u32::from_le_bytes([
-        tag_bytes[0],
-        tag_bytes[1],
-        tag_bytes[2],
-        tag_bytes[3],
-    ]))
+    let tag_bytes: [u8; 4] = value.get(..4)?.try_into().ok()?;
+    Some(u32::from_le_bytes(tag_bytes))
 }

@@ -234,6 +234,28 @@ mod entry {
     }
 }
 
+#[test]
+fn mft_entry_attribute_predicates_delegate_to_file_attributes() {
+    use crate::FileAttributes;
+
+    let entry = MftEntry {
+        usn: Usn::new(1),
+        fid: crate::Fid::new(0x10),
+        parent_fid: crate::Fid::new(0x5),
+        file_name: std::ffi::OsString::from("link"),
+        file_attributes: FileAttributes::REPARSE_POINT
+            | FileAttributes::COMPRESSED
+            | FileAttributes::READ_ONLY,
+    };
+
+    assert!(entry.is_reparse_point());
+    assert!(entry.is_compressed());
+    assert!(entry.is_read_only());
+    assert!(!entry.is_encrypted());
+    assert!(!entry.is_dir());
+    assert!(!entry.is_sparse());
+}
+
 // Simplified mocked test using Injectorpp
 mod mocked {
     use super::*;

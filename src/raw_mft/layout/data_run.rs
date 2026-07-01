@@ -244,4 +244,99 @@ mod tests {
             assert_eq!(summary_error, decode_error);
         }
     }
+
+    #[test]
+    fn lone_terminator_decodes_to_no_runs() {
+        let (runs, summary) = decode_runs(&[0x00]).expect("terminator only is valid");
+        assert!(runs.is_empty());
+        assert_eq!(summary, DataRunSummary::default());
+        assert_eq!(summarize_runs(&[0x00]).unwrap(), summary);
+    }
+
+    #[test]
+    fn empty_input_is_unterminated() {
+        let error = decode_runs(&[]).unwrap_err();
+        assert!(matches!(
+            error,
+            UsnError::InvalidDataRun("unterminated data run sequence")
+        ));
+    }
+
+    #[test]
+    fn decodes_multi_byte_length_field() {
+        // header 0x12: 2-byte length, 1-byte offset.
+        // length = 0x0100 (256 clusters), offset = 0x05 -> LCN 5.
+        let runs = [0x12u8, 0x00, 0x01, 0x05, 0x00];
+        let (decoded, summary) = decode_runs(&runs).expect("valid multi-byte length run");
+        assert_eq!(
+            decoded,
+            vec![DataRun::Data {
+                lcn: 5,
+                clusters: 256
+            }]
+        );
+        assert_eq!(summary.total_clusters, 256);
+    }
+
+    #[test]
+    fn decodes_eight_byte_offset_field() {
+        // header 0x81: 1-byte length, 8-byte offset.
+        // clusters = 2, LCN = 0x1234_5678.
+        let runs = [
+            0x81u8, 0x02, 0x78, 0x56, 0x34, 0x12, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ];
+        let (decoded, _) = decode_runs(&runs).expect("valid 8-byte offset run");
+        assert_eq!(
+            decoded,
+            vec![DataRun::Data {
+                lcn: 0x1234_5678,
+                clusters: 2
+            }]
+        );
+    }
+
+    #[test]
+    fn three_byte_negative_offset_sign_extends() {
+        // First run: 0x31 len=2, offset=+0x100000 (3 bytes) -> LCN 1_048_576.
+        // Second run: 0x31 len=1, offset=-1 (0xFFFFFF, 3 bytes) -> LCN 1_048_575.
+        let runs = [
+            0x31u8, 0x02, 0x00, 0x00, 0x10, 0x31, 0x01, 0xFF, 0xFF, 0xFF, 0x00,
+        ];
+        let (decoded, summary) = decode_runs(&runs).expect("valid signed offset chain");
+        assert_eq!(
+            decoded,
+            vec![
+                DataRun::Data {
+                    lcn: 1_048_576,
+                    clusters: 2
+                },
+                DataRun::Data {
+                    lcn: 1_048_575,
+                    clusters: 1
+                },
+            ]
+        );
+        assert_eq!(summary.run_count, 2);
+        assert_eq!(summary.total_clusters, 3);
+    }
+
+    #[test]
+    fn sparse_run_does_not_shift_following_data_lcn() {
+        // Sparse hole (offset nibble 0) must not move the LCN baseline, so the
+        // following data run's delta is relative to LCN 0.
+        // 0x01 len=4 -> sparse(4); 0x21 len=2 off=0x000A -> Data{lcn:10}.
+        let runs = [0x01u8, 0x04, 0x21, 0x02, 0x0A, 0x00, 0x00];
+        let (decoded, summary) = decode_runs(&runs).expect("valid sparse-then-data chain");
+        assert_eq!(
+            decoded,
+            vec![
+                DataRun::Sparse { clusters: 4 },
+                DataRun::Data {
+                    lcn: 10,
+                    clusters: 2
+                },
+            ]
+        );
+        assert_eq!(summary.total_clusters, 6);
+    }
 }

@@ -100,3 +100,37 @@ impl MftIterOptionsBuilder {
         self.inner
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_spans_full_usn_range_and_allows_v3() {
+        let opts = MftIterOptions::default();
+        assert_eq!(opts.low_usn, Usn::new(0));
+        assert_eq!(opts.high_usn, Usn::new(i64::MAX));
+        assert_eq!(opts.max_usn_record_version, UsnRecordVersion::V3);
+    }
+
+    #[test]
+    fn usn_record_version_maps_to_major_version() {
+        assert_eq!(UsnRecordVersion::V2.as_u16(), 2);
+        assert_eq!(UsnRecordVersion::V3.as_u16(), 3);
+    }
+
+    #[test]
+    fn builder_round_trips_values() {
+        let opts = MftIterOptions::builder()
+            .low_usn(Usn::new(10))
+            .high_usn(Usn::new(20))
+            .max_usn_record_version(UsnRecordVersion::V2)
+            .buffer_bytes(NonZeroUsize::new(4 * 1024).unwrap())
+            .build();
+
+        assert_eq!(opts.low_usn, Usn::new(10));
+        assert_eq!(opts.high_usn, Usn::new(20));
+        assert_eq!(opts.max_usn_record_version, UsnRecordVersion::V2);
+        assert_eq!(opts.buffer_bytes.get(), 4 * 1024);
+    }
+}

@@ -222,4 +222,37 @@ mod tests {
             Err(UsnError::InvalidMftRecord { .. })
         ));
     }
+
+    #[test]
+    fn applies_fixup_for_single_sector() {
+        let replacements = [[0xAA, 0xBB]];
+        let mut buf = build_record(512, 42, [0x01, 0x00], &replacements);
+        apply_usa_fixup(3, &mut buf, 42, 2).expect("single-sector fixup ok");
+        assert_eq!(&buf[510..512], &replacements[0]);
+    }
+
+    #[test]
+    fn rejects_record_smaller_than_declared_sectors() {
+        // usa_count = 3 => 2 protected sectors => needs 1024 bytes, but the
+        // buffer is only 700, so the header is inconsistent with the record.
+        let mut buf = vec![0u8; 700];
+        match apply_usa_fixup(1, &mut buf, 42, 3) {
+            Err(UsnError::InvalidMftRecord { number: 1, reason }) => {
+                assert_eq!(reason, "record smaller than declared sector count");
+            }
+            other => panic!("expected InvalidMftRecord, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn fixup_only_touches_sector_trailers() {
+        let replacements = [[0xAA, 0xBB], [0xCC, 0xDD]];
+        let mut buf = build_record(1024, 42, [0x01, 0x00], &replacements);
+        // A marker byte in the record body (not a trailer) must survive fixup.
+        buf[300] = 0x77;
+        apply_usa_fixup(7, &mut buf, 42, 3).expect("fixup ok");
+        assert_eq!(buf[300], 0x77, "non-trailer bytes must not be modified");
+        assert_eq!(&buf[510..512], &replacements[0]);
+        assert_eq!(&buf[1022..1024], &replacements[1]);
+    }
 }
