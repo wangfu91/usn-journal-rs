@@ -12,6 +12,7 @@ use windows::Win32::System::Ioctl::{
 };
 
 use crate::UsnResult;
+use crate::errors::UsnError;
 use crate::volume::Volume;
 
 use super::data::UsnJournalData;
@@ -48,7 +49,7 @@ impl<'a> UsnJournal<'a> {
     /// front; subsequent per-record errors are surfaced as iterator items.
     #[must_use = "iterators are lazy and do nothing unless consumed"]
     pub fn try_iter(&self) -> UsnResult<UsnJournalIter> {
-        let journal_data = self.query(true)?;
+        let journal_data = self.query_or_create()?;
         Ok(UsnJournalIter::new(
             self.volume.handle,
             journal_data.journal_id,
@@ -69,7 +70,7 @@ impl<'a> UsnJournal<'a> {
     /// to handle individual entry errors gracefully without stopping iteration.
     #[must_use = "iterators are lazy and do nothing unless consumed"]
     pub fn try_iter_with_options(&self, options: JournalIterOptions) -> UsnResult<UsnJournalIter> {
-        let journal_data = self.query(true)?;
+        let journal_data = self.query_or_create()?;
         Ok(UsnJournalIter::new(
             self.volume.handle,
             journal_data.journal_id,
@@ -78,40 +79,49 @@ impl<'a> UsnJournal<'a> {
                 next_start_usn: options.start_usn.get(),
                 reason_mask: options.reason_mask.bits(),
                 return_only_on_close: options.only_on_close as u32,
-                timeout: options.timeout,
+                timeout: options.timeout_secs,
                 bytes_to_wait_for: options.wait_for_more as u64,
             },
         ))
     }
 
-    /// Query the USN journal state for a volume, optionally creating it if not active.
+    /// Query the current USN journal state for the volume.
     ///
-    /// # Arguments
-    /// * `create_if_not_active` - If true, create the journal if it does not exist.
+    /// # Errors
     ///
-    /// # Returns
-    /// * `Ok(UsnJournalData)` - The current journal state.
-    /// * `Err(UsnError)` - If the query or creation fails.
-    pub fn query(&self, create_if_not_active: bool) -> UsnResult<UsnJournalData> {
+    /// Returns [`UsnError::JournalNotActive`] if the volume has no active change
+    /// journal. Use [`Self::query_or_create`] to create one on demand instead.
+    pub fn query(&self) -> UsnResult<UsnJournalData> {
         match self.query_core() {
-            Err(err) => {
-                if err.code() == ERROR_JOURNAL_NOT_ACTIVE.into() && create_if_not_active {
-                    self.create_or_update(
-                        DEFAULT_JOURNAL_MAX_SIZE,
-                        DEFAULT_JOURNAL_ALLOCATION_DELTA,
-                    )?;
-
-                    let journal_data = self.query_core()?;
-                    Ok(journal_data.into())
-                } else {
-                    warn!("Error querying USN journal: {err}");
-                    Err(err.into())
-                }
-            }
             Ok(journal_data) => {
                 debug!("USN journal data: {journal_data:#?}");
                 Ok(journal_data.into())
             }
+            Err(err) if err.code() == ERROR_JOURNAL_NOT_ACTIVE.into() => {
+                Err(UsnError::JournalNotActive)
+            }
+            Err(err) => {
+                warn!("Error querying USN journal: {err}");
+                Err(err.into())
+            }
+        }
+    }
+
+    /// Query the USN journal state, creating the journal first if it is not active.
+    ///
+    /// Equivalent to [`Self::query`] but transparently creates a default journal
+    /// (see [`Self::create_or_update`]) when the volume has none, then re-queries.
+    pub fn query_or_create(&self) -> UsnResult<UsnJournalData> {
+        match self.query() {
+            Err(UsnError::JournalNotActive) => {
+                self.create_or_update(
+                    DEFAULT_JOURNAL_MAX_SIZE,
+                    DEFAULT_JOURNAL_ALLOCATION_DELTA,
+                )?;
+                let journal_data = self.query_core()?;
+                Ok(journal_data.into())
+            }
+            other => other,
         }
     }
 
@@ -190,7 +200,7 @@ impl<'a> UsnJournal<'a> {
     /// # Returns
     /// * `Ok(())` on success, or `Err(UsnError)` on failure.
     pub fn delete(&self) -> UsnResult<()> {
-        let journal_data = self.query(false)?;
+        let journal_data = self.query()?;
         let delete_flags: USN_DELETE_FLAGS = USN_DELETE_FLAG_DELETE | USN_DELETE_FLAG_NOTIFY;
         let delete_data = DELETE_USN_JOURNAL_DATA {
             UsnJournalID: journal_data.journal_id,
@@ -216,5 +226,16 @@ impl<'a> UsnJournal<'a> {
         debug!("Deleted USN journal successfully.");
 
         Ok(())
+    }
+}
+
+impl Volume {
+    /// Create a [`UsnJournal`] reader for this volume.
+    ///
+    /// Convenience for [`UsnJournal::new`], so you can write
+    /// `volume.journal().try_iter()?` without importing [`UsnJournal`].
+    #[must_use]
+    pub fn journal(&self) -> UsnJournal<'_> {
+        UsnJournal::new(self)
     }
 }

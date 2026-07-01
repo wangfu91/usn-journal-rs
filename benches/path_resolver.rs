@@ -117,7 +117,7 @@ fn resolver_syscall_no_cache(c: &mut Criterion) {
 
     c.bench_function("resolver_syscall_no_cache", |b| {
         b.iter(|| {
-            let mut resolver = PathResolver::new(&volume).with_directory_cache(0);
+            let resolver = PathResolver::new(&volume).with_directory_cache(0);
             let mut count = 0u64;
 
             for entry in &entries {
@@ -142,7 +142,7 @@ fn resolver_syscall_directory_cache(c: &mut Criterion) {
 
     c.bench_function("resolver_syscall_directory_cache", |b| {
         b.iter(|| {
-            let mut resolver = PathResolver::new(&volume).with_directory_cache(8192);
+            let resolver = PathResolver::new(&volume).with_directory_cache(8192);
 
             // Warm-up pass to populate cache
             for entry in &entries {

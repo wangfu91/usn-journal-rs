@@ -166,3 +166,13 @@ impl<'a> RawMft<'a> {
         }
     }
 }
+
+impl Volume {
+    /// Open the raw `$MFT` reader for this volume.
+    ///
+    /// Convenience for [`RawMft::new`]. NTFS only — ReFS volumes return
+    /// [`UsnError::UnsupportedFilesystem`].
+    pub fn raw_mft(&self) -> Result<RawMft<'_>, UsnError> {
+        RawMft::new(self)
+    }
+}

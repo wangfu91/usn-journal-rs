@@ -256,4 +256,99 @@ mod tests {
         );
         Ok(())
     }
+
+    #[test]
+    fn empty_range_produces_no_chunks() {
+        let chunk_size = NonZeroU64::new(8).expect("non-zero");
+        assert!(build_work_chunks(5, 5, chunk_size, true, |_| true).is_empty());
+        // A start beyond the end must also produce nothing (no underflow).
+        assert!(build_work_chunks(10, 5, chunk_size, true, |_| true).is_empty());
+    }
+
+    #[test]
+    fn include_unused_keeps_fully_unused_bands() {
+        let chunk_size = NonZeroU64::new(4).expect("non-zero");
+        // Every record unused, but include_unused_records = true keeps all bands.
+        let chunks = build_work_chunks(0, 12, chunk_size, true, |_| false);
+        assert_eq!(
+            chunks,
+            vec![
+                RawMftWorkChunk {
+                    start_record: 0,
+                    end_record: 4,
+                },
+                RawMftWorkChunk {
+                    start_record: 4,
+                    end_record: 8,
+                },
+                RawMftWorkChunk {
+                    start_record: 8,
+                    end_record: 12,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn range_smaller_than_chunk_yields_single_chunk() {
+        let chunk_size = NonZeroU64::new(64).expect("non-zero");
+        let chunks = build_work_chunks(3, 9, chunk_size, true, |_| true);
+        assert_eq!(
+            chunks,
+            vec![RawMftWorkChunk {
+                start_record: 3,
+                end_record: 9,
+            }]
+        );
+    }
+
+    #[test]
+    fn work_chunk_record_len_is_saturating() {
+        assert_eq!(
+            RawMftWorkChunk {
+                start_record: 10,
+                end_record: 18,
+            }
+            .record_len(),
+            8
+        );
+        // An inverted chunk must saturate to zero rather than underflow.
+        assert_eq!(
+            RawMftWorkChunk {
+                start_record: 18,
+                end_record: 10,
+            }
+            .record_len(),
+            0
+        );
+    }
+
+    #[test]
+    fn chunk_plan_builder_round_trips_values() {
+        use crate::raw_mft::{RawMftChunkPlanOptions, RawMftRecordRange};
+
+        let options = RawMftChunkPlanOptions::builder()
+            .include_unused_records(true)
+            .range(RawMftRecordRange::new(24, Some(1024)))
+            .max_records_per_chunk(NonZeroU64::new(2048).expect("non-zero"))
+            .build();
+
+        assert!(options.include_unused_records());
+        assert_eq!(options.range().start_record(), 24);
+        assert_eq!(options.range().end_record(), Some(1024));
+        assert_eq!(
+            options.max_records_per_chunk(),
+            NonZeroU64::new(2048).expect("non-zero")
+        );
+    }
+
+    #[test]
+    fn chunk_plan_default_excludes_unused_from_first_normal_record() {
+        use crate::raw_mft::RawMftChunkPlanOptions;
+
+        let options = RawMftChunkPlanOptions::default();
+        assert!(!options.include_unused_records());
+        assert_eq!(options.range().start_record(), 24);
+        assert_eq!(options.range().end_record(), None);
+    }
 }

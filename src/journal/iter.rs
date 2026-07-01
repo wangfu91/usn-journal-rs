@@ -21,7 +21,7 @@ pub(super) struct UsnJournalIterConfig {
     pub(super) reason_mask: u32,
     /// Whether records should only be returned once the handle closes.
     pub(super) return_only_on_close: u32,
-    /// Kernel wait timeout in 100-nanosecond units.
+    /// Kernel wait timeout in whole seconds (`0` blocks indefinitely).
     pub(super) timeout: u64,
     /// Number of bytes the kernel should wait for before returning.
     pub(super) bytes_to_wait_for: u64,
@@ -47,7 +47,7 @@ pub struct UsnJournalIter {
     reason_mask: u32,
     /// Whether only close events should be returned.
     return_only_on_close: u32,
-    /// Kernel wait timeout in 100-nanosecond units.
+    /// Kernel wait timeout in whole seconds (`0` blocks indefinitely).
     timeout: u64,
     /// Number of bytes to wait for before the kernel returns.
     bytes_to_wait_for: u64,

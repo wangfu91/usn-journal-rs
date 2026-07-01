@@ -64,7 +64,7 @@ fn raw_mft_and_mft_api_agree_on_sampled_entries() {
     const MIN_COMPARED: usize = 200;
     const PATH_TARGET: usize = 2_000;
 
-    let mut mft_path_resolver = PathResolver::new(&volume);
+    let mft_path_resolver = PathResolver::new(&volume);
     let mut mft_paths = HashSet::with_capacity(PATH_TARGET);
 
     let mut samples = Vec::with_capacity(SAMPLE_LIMIT);

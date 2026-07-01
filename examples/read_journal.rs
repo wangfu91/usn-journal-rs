@@ -1,6 +1,6 @@
 //! Iterate the USN journal and print each entry with its resolved path when available.
 
-use usn_journal_rs::{errors::UsnError, journal::UsnJournal, path::PathResolver, volume::Volume};
+use usn_journal_rs::{errors::UsnError, volume::Volume};
 
 /// Run the example and print any top-level error.
 fn main() {
@@ -13,11 +13,11 @@ fn main() {
 fn run() -> Result<(), UsnError> {
     let drive_letter = 'D';
     let volume = Volume::from_drive_letter(drive_letter)?;
-    let usn_journal = UsnJournal::new(&volume);
+    let journal = volume.journal();
 
-    let mut path_resolver = PathResolver::new(&volume);
+    let path_resolver = volume.path_resolver();
 
-    for result in usn_journal.try_iter()? {
+    for result in journal.try_iter()? {
         match result {
             Ok(entry) => {
                 let full_path = path_resolver.resolve_path(&entry);

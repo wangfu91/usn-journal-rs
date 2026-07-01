@@ -289,4 +289,49 @@ mod tests {
         bad[0] = b'X';
         assert_eq!(FileRecord::peek_base_reference(&bad), None);
     }
+
+    #[test]
+    fn is_directory_reflects_header_flag() {
+        let mut buf = build_minimal_record();
+        // flags field is a u16 at header offset 22.
+        let flags = flags::IN_USE | flags::IS_DIRECTORY;
+        buf[22..24].copy_from_slice(&flags.to_le_bytes());
+        let rec = FileRecord::parse(1, None, &mut buf).expect("parse ok");
+        assert!(rec.is_used());
+        assert!(rec.is_directory());
+    }
+
+    #[test]
+    fn attrs_range_reports_offset_and_used_size() {
+        let mut buf = build_minimal_record();
+        let rec = FileRecord::parse(1, None, &mut buf).expect("parse ok");
+        // build_minimal_record uses attributes_offset = 56, used_size = 200.
+        assert_eq!(rec.attrs_range(), (56, 200));
+    }
+
+    #[test]
+    fn file_reference_masks_record_number_and_applies_sequence() {
+        let mut buf = build_minimal_record();
+        // sequence_value is a u16 at header offset 16.
+        buf[16..18].copy_from_slice(&0xABCDu16.to_le_bytes());
+        let rec = FileRecord::parse(0x1234, None, &mut buf).expect("parse ok");
+        assert_eq!(rec.sequence_value(), 0xABCD);
+        assert_eq!(rec.file_reference(), (0xABCDu64 << 48) | 0x1234);
+    }
+
+    #[test]
+    fn rejects_zero_update_sequence_length() {
+        let mut buf = build_minimal_record();
+        // update_sequence_length is a u16 at header offset 6.
+        buf[6..8].copy_from_slice(&0u16.to_le_bytes());
+        assert!(!FileRecord::is_valid(&buf));
+    }
+
+    #[test]
+    fn rejects_attributes_offset_beyond_used_size() {
+        let mut buf = build_minimal_record();
+        // attributes_offset (offset 20) == used_size (200) is out of bounds.
+        buf[20..22].copy_from_slice(&200u16.to_le_bytes());
+        assert!(!FileRecord::is_valid(&buf));
+    }
 }

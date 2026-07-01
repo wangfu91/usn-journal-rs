@@ -587,4 +587,132 @@ mod tests {
         assert_eq!(links[0].parent_reference, Fid::new(5));
         assert_eq!(links[1].parent_reference, Fid::new(9));
     }
+
+    #[test]
+    fn merged_links_returns_none_without_extension_contribution() {
+        let base_name = OsString::from("base.txt");
+        // The extension record carries neither boxed links nor an inline name,
+        // so there is nothing to merge.
+        let result = merged_links(
+            LinkView {
+                links: &[],
+                parent_reference: Fid::new(5),
+                namespace: FileNameNamespace::Win32,
+                file_name: base_name.as_os_str(),
+            },
+            LinkView {
+                links: &[],
+                parent_reference: Fid::new(9),
+                namespace: FileNameNamespace::Win32,
+                file_name: std::ffi::OsStr::new(""),
+            },
+        );
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn collect_extension_records_selects_by_wanted_type() {
+        let base_record = 42;
+        let mut data = Vec::new();
+        data.extend_from_slice(&attr_list_entry(NtfsAttributeType::FileName as u32, 100));
+        data.extend_from_slice(&attr_list_entry(NtfsAttributeType::Data as u32, 100));
+        data.extend_from_slice(&attr_list_entry(NtfsAttributeType::Data as u32, 101));
+
+        // Wanting Data pulls in both data-bearing records, deduplicating 100.
+        let records = collect_extension_records(&data, base_record, |type_id| {
+            type_id == NtfsAttributeType::Data as u32
+        });
+        assert_eq!(records, vec![100, 101]);
+    }
+
+    fn complete_entry() -> RawMftEntry {
+        RawMftEntry {
+            record_number: 10,
+            sequence_number: 1,
+            file_reference: Fid::new(10),
+            parent_reference: Fid::new(5),
+            base_record_reference: 0,
+            hard_link_count: 1,
+            flags: 0,
+            is_used: true,
+            is_directory: false,
+            is_reparse_point: false,
+            reparse_tag: None,
+            namespace: FileNameNamespace::Win32,
+            file_name: OsString::from("file.txt"),
+            si_created: crate::Filetime::new(0),
+            si_modified: crate::Filetime::new(0),
+            si_mft_modified: crate::Filetime::new(0),
+            si_accessed: crate::Filetime::new(0),
+            si_file_attributes: crate::FileAttributes::empty(),
+            fn_created: crate::Filetime::new(0),
+            fn_modified: crate::Filetime::new(0),
+            fn_mft_modified: crate::Filetime::new(0),
+            fn_accessed: crate::Filetime::new(0),
+            real_size: 0,
+            allocated_size: 0,
+            has_unnamed_data: true,
+            is_resident: true,
+            is_sparse: false,
+            is_compressed: false,
+            is_encrypted: false,
+            data_run_summary: None,
+            alternate_data_streams: Box::default(),
+            links: Box::default(),
+        }
+    }
+
+    #[test]
+    fn complete_entry_needs_no_enrichment() {
+        assert!(!should_enrich_from_attr_list(&complete_entry()));
+    }
+
+    #[test]
+    fn multiple_hard_links_need_file_name_enrichment() {
+        let mut entry = complete_entry();
+        entry.hard_link_count = 2;
+        assert!(raw_entry_enrichment_needs(&entry).file_name);
+        assert!(should_enrich_from_attr_list(&entry));
+    }
+
+    #[test]
+    fn non_win32_namespace_needs_file_name_enrichment() {
+        let mut entry = complete_entry();
+        entry.namespace = FileNameNamespace::Posix;
+        assert!(raw_entry_enrichment_needs(&entry).file_name);
+    }
+
+    #[test]
+    fn empty_name_needs_file_name_enrichment() {
+        let mut entry = complete_entry();
+        entry.file_name = OsString::new();
+        assert!(raw_entry_enrichment_needs(&entry).file_name);
+    }
+
+    #[test]
+    fn file_without_unnamed_data_needs_data_enrichment() {
+        let mut entry = complete_entry();
+        entry.has_unnamed_data = false;
+        assert!(raw_entry_enrichment_needs(&entry).data);
+    }
+
+    #[test]
+    fn directory_without_data_needs_no_data_enrichment() {
+        let mut entry = complete_entry();
+        entry.is_directory = true;
+        entry.has_unnamed_data = false;
+        let needs = raw_entry_enrichment_needs(&entry);
+        assert!(!needs.data, "directories never need $DATA enrichment");
+    }
+
+    #[test]
+    fn reparse_without_tag_needs_reparse_enrichment() {
+        let mut entry = complete_entry();
+        entry.is_reparse_point = true;
+        entry.reparse_tag = None;
+        let needs = raw_entry_enrichment_needs(&entry);
+        assert!(needs.reparse);
+        assert!(!needs.file_name);
+        assert!(!needs.data);
+    }
 }

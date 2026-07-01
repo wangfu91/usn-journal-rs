@@ -38,15 +38,16 @@ const DEFAULT_DIRECTORY_CACHE_CAPACITY: NonZeroUsize = unsafe {
 /// For raw-`$MFT` snapshot resolution, use
 /// [`crate::raw_mft::RawMft::path_resolver`] instead.
 ///
-/// `PathResolver` is intentionally `!Sync` — it carries an internal scratch
-/// buffer accessed via interior mutability to keep the public `resolve_path`
-/// signature ergonomic.
+/// [`resolve_path`](Self::resolve_path) takes `&self`: the directory cache and
+/// scratch buffer are held behind interior mutability, so a single resolver can
+/// be shared across an iteration loop without a `mut` binding. `PathResolver` is
+/// intentionally `!Sync` because that interior state is not synchronized.
 #[derive(Debug)]
 pub struct PathResolver<'a> {
     /// Volume on which file IDs will be resolved.
     volume: &'a Volume,
     /// Optional cache of previously resolved directory paths.
-    pub(super) dir_fid_path_cache: Option<DirLruCache>,
+    pub(super) dir_fid_path_cache: RefCell<Option<DirLruCache>>,
     /// Reusable heap buffer for `GetFileInformationByHandleEx` calls.
     buffer: RefCell<Vec<u8>>,
 }
@@ -63,7 +64,7 @@ impl<'a> PathResolver<'a> {
     pub fn new(volume: &'a Volume) -> Self {
         Self {
             volume,
-            dir_fid_path_cache: Some(LruCache::new(DEFAULT_DIRECTORY_CACHE_CAPACITY)),
+            dir_fid_path_cache: RefCell::new(Some(LruCache::new(DEFAULT_DIRECTORY_CACHE_CAPACITY))),
             buffer: RefCell::new(Vec::new()),
         }
     }
@@ -78,18 +79,23 @@ impl<'a> PathResolver<'a> {
     /// cache capacity.
     #[must_use]
     pub fn with_directory_cache(mut self, capacity: usize) -> Self {
-        self.dir_fid_path_cache = NonZeroUsize::new(capacity).map(LruCache::new);
+        self.dir_fid_path_cache = RefCell::new(NonZeroUsize::new(capacity).map(LruCache::new));
         self
     }
 
     /// Resolve `entry` to its current on-disk path, using the directory cache
     /// when configured and falling back to `OpenFileById` syscalls.
     ///
+    /// Takes `&self`: the cache and scratch buffer are updated through interior
+    /// mutability, so the same resolver can be reused across an iterator without
+    /// a `mut` binding.
+    ///
     /// Standard 64-bit NTFS IDs and extended 128-bit IDs (for example ReFS
     /// `USN_RECORD_V3` entries) are both resolved via the live volume.
     #[must_use]
-    pub fn resolve_path<E: PathResolvableEntry + ?Sized>(&mut self, entry: &E) -> Option<PathBuf> {
-        if let Some(cache) = &mut self.dir_fid_path_cache {
+    pub fn resolve_path<E: PathResolvableEntry + ?Sized>(&self, entry: &E) -> Option<PathBuf> {
+        let mut cache_guard = self.dir_fid_path_cache.borrow_mut();
+        if let Some(cache) = cache_guard.as_mut() {
             resolve_path_with_cache(
                 self.volume,
                 entry.fid(),
@@ -100,6 +106,7 @@ impl<'a> PathResolver<'a> {
                 &self.buffer,
             )
         } else {
+            drop(cache_guard);
             resolve_path(
                 self.volume,
                 entry.fid(),
@@ -108,5 +115,17 @@ impl<'a> PathResolver<'a> {
                 &self.buffer,
             )
         }
+    }
+}
+
+impl Volume {
+    /// Create a live [`PathResolver`] for this volume.
+    ///
+    /// Convenience for [`PathResolver::new`] (includes the default directory
+    /// cache). For raw-`$MFT` snapshot resolution, use
+    /// [`RawMft::path_resolver`](crate::raw_mft::RawMft::path_resolver) instead.
+    #[must_use]
+    pub fn path_resolver(&self) -> PathResolver<'_> {
+        PathResolver::new(self)
     }
 }

@@ -140,3 +140,79 @@ fn decode_nonresident_runs(attr: &NtfsAttribute<'_>, label: &'static str) -> Opt
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::raw_mft::layout::attribute::{
+        NtfsAttributeHeader, NtfsAttributeType, NtfsNonResidentAttributeHeader,
+    };
+    use std::mem::size_of;
+    use zerocopy::IntoBytes;
+
+    /// Build a non-resident `$DATA` attribute whose runlist starts at
+    /// `data_runs_offset` and is followed by `runlist` bytes.
+    fn build_nonresident_attr(data_runs_offset: u16, runlist: &[u8]) -> Vec<u8> {
+        let header_size = size_of::<NtfsNonResidentAttributeHeader>();
+        let total = header_size + runlist.len();
+        let header = NtfsNonResidentAttributeHeader {
+            attribute_header: NtfsAttributeHeader {
+                type_id: NtfsAttributeType::Data as u32,
+                length: total as u32,
+                is_non_resident: 1,
+                name_length: 0,
+                name_offset: 0,
+                flags: 0,
+                id: 0,
+            },
+            lowest_vcn: 0,
+            highest_vcn: 0,
+            data_runs_offset,
+            compression_unit_exponent: 0,
+            _reserved: [0; 5],
+            allocated_size: 0,
+            data_size: 0,
+            initialized_size: 0,
+        };
+        let mut buf = vec![0u8; total];
+        buf[..header_size].copy_from_slice(header.as_bytes());
+        buf[header_size..].copy_from_slice(runlist);
+        buf
+    }
+
+    #[test]
+    fn decodes_valid_nonresident_runlist() {
+        let header_size = size_of::<NtfsNonResidentAttributeHeader>();
+        // Single run: 0x21 length=5, offset=0x0234 -> LCN 564.
+        let buf = build_nonresident_attr(header_size as u16, &[0x21, 0x05, 0x34, 0x02, 0x00]);
+        let attr = NtfsAttribute::new(&buf).expect("attr");
+        let runs = decode_nonresident_runs(&attr, "$TEST").expect("runs");
+        assert_eq!(
+            runs,
+            vec![DataRun::Data {
+                lcn: 564,
+                clusters: 5
+            }]
+        );
+    }
+
+    #[test]
+    fn returns_none_when_runs_offset_past_attribute() {
+        let header_size = size_of::<NtfsNonResidentAttributeHeader>();
+        let runlist = [0x21u8, 0x05, 0x34, 0x02, 0x00];
+        let total = header_size + runlist.len();
+        // data_runs_offset points beyond the attribute's own bytes.
+        let buf = build_nonresident_attr((total + 10) as u16, &runlist);
+        let attr = NtfsAttribute::new(&buf).expect("attr");
+        assert!(decode_nonresident_runs(&attr, "$TEST").is_none());
+    }
+
+    #[test]
+    fn returns_none_for_undecodable_runlist() {
+        let header_size = size_of::<NtfsNonResidentAttributeHeader>();
+        // Truncated run: header byte promises offset bytes that are absent.
+        let buf = build_nonresident_attr(header_size as u16, &[0x21, 0x05]);
+        let attr = NtfsAttribute::new(&buf).expect("attr");
+        assert!(decode_nonresident_runs(&attr, "$TEST").is_none());
+    }
+}

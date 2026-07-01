@@ -7,7 +7,7 @@ use crate::file_attributes::FileAttributeView;
 use crate::usn_record::UsnRecordView;
 use crate::{Fid, FileAttributes, Filetime, Usn, UsnReason, UsnSourceInfo};
 
-use super::reason::{CompactReason, format_reason};
+use super::reason::CompactReason;
 
 /// Owned representation of a USN journal entry.
 ///
@@ -74,10 +74,53 @@ impl UsnEntry {
         <Self as FileAttributeView>::has_hidden_attribute(self)
     }
 
-    /// Converts a USN reason bitfield to a human-readable string using Windows constants.
+    /// Returns true if this entry is marked read-only.
     #[must_use]
-    pub fn get_reason_string(&self) -> String {
-        format_reason(self.reason)
+    #[inline]
+    pub fn is_read_only(&self) -> bool {
+        self.file_attributes.is_read_only()
+    }
+
+    /// Returns true if this entry has the system attribute set.
+    #[must_use]
+    #[inline]
+    pub fn is_system(&self) -> bool {
+        self.file_attributes.is_system()
+    }
+
+    /// Returns true if this entry has the archive attribute set.
+    #[must_use]
+    #[inline]
+    pub fn is_archive(&self) -> bool {
+        self.file_attributes.is_archive()
+    }
+
+    /// Returns true if this entry is a reparse point (symlink, junction, mount point, ...).
+    #[must_use]
+    #[inline]
+    pub fn is_reparse_point(&self) -> bool {
+        self.file_attributes.is_reparse_point()
+    }
+
+    /// Returns true if this entry is stored compressed on disk.
+    #[must_use]
+    #[inline]
+    pub fn is_compressed(&self) -> bool {
+        self.file_attributes.is_compressed()
+    }
+
+    /// Returns true if this entry is stored encrypted on disk.
+    #[must_use]
+    #[inline]
+    pub fn is_encrypted(&self) -> bool {
+        self.file_attributes.is_encrypted()
+    }
+
+    /// Returns true if this entry contains sparse data.
+    #[must_use]
+    #[inline]
+    pub fn is_sparse(&self) -> bool {
+        self.file_attributes.is_sparse()
     }
 }
 

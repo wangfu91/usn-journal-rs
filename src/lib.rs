@@ -16,14 +16,12 @@
 //!
 //! ## Example: Enumerate USN Journal
 //! ```no_run
-//! use usn_journal_rs::{volume::Volume, journal::UsnJournal};
+//! use usn_journal_rs::volume::Volume;
 //!
-//! let drive_letter = 'C';
-//! let volume = Volume::from_drive_letter(drive_letter).unwrap();
-//! let journal = UsnJournal::new(&volume);
-//! for result in journal.try_iter().unwrap().take(10) {
+//! let volume = Volume::from_drive_letter('C').unwrap();
+//! for result in volume.journal().try_iter().unwrap().take(10) {
 //!     match result {
-//!         Ok(entry) => println!("USN entry: {entry:?}"),
+//!         Ok(entry) => println!("USN entry: {entry}"),
 //!         Err(e) => eprintln!("Error reading entry: {e}"),
 //!     }
 //! }
@@ -31,14 +29,12 @@
 //!
 //! # Example: Enumerating MFT Entries
 //! ```no_run
-//! use usn_journal_rs::{volume::Volume, mft::Mft};
+//! use usn_journal_rs::volume::Volume;
 //!
-//! let drive_letter = 'C';
-//! let volume = Volume::from_drive_letter(drive_letter).unwrap();
-//! let mft = Mft::new(&volume);
-//! for result in mft.try_iter().unwrap().take(10) {
+//! let volume = Volume::from_drive_letter('C').unwrap();
+//! for result in volume.mft().try_iter().unwrap().take(10) {
 //!     match result {
-//!         Ok(entry) => println!("MFT entry: {entry:?}"),
+//!         Ok(entry) => println!("MFT entry: {entry}"),
 //!         Err(e) => eprintln!("Error reading MFT entry: {e}"),
 //!     }
 //! }
@@ -51,6 +47,7 @@
 //! ## License
 //! MIT License. See [LICENSE](https://github.com/wangfu91/usn-journal-rs/blob/main/LICENSE).
 
+mod display;
 pub mod errors;
 mod file_attributes;
 pub mod journal;
@@ -72,10 +69,10 @@ pub type UsnResult<T> = std::result::Result<T, UsnError>;
 pub mod prelude {
     pub use crate::{
         Fid, FileAttributes, Filetime, Usn, UsnError, UsnReason, UsnResult, UsnSourceInfo,
-        journal::UsnJournal,
-        mft::Mft,
+        journal::{JournalIterOptions, UsnEntry, UsnJournal},
+        mft::{Mft, MftEntry, MftIterOptions, UsnRecordVersion},
         path::PathResolver,
-        raw_mft::{RawMft, RawMftPathResolver},
+        raw_mft::{RawMft, RawMftEntry, RawMftPathResolver, RawMftScanOptions},
         volume::Volume,
     };
 }
@@ -111,6 +108,13 @@ mod tests {
         accepts::<prelude::UsnReason>();
         accepts::<prelude::FileAttributes>();
         accepts::<prelude::UsnSourceInfo>();
+        accepts::<prelude::UsnEntry>();
+        accepts::<prelude::MftEntry>();
+        accepts::<prelude::RawMftEntry>();
+        accepts::<prelude::JournalIterOptions>();
+        accepts::<prelude::MftIterOptions>();
+        accepts::<prelude::RawMftScanOptions>();
+        accepts::<prelude::UsnRecordVersion>();
 
         let result: prelude::UsnResult<()> = Ok(());
         assert!(result.is_ok());

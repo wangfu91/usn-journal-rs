@@ -47,6 +47,29 @@ pub(super) fn entry_build_options(options: &RawMftScanOptions) -> EntryBuildOpti
     }
 }
 
+/// Look up, borrow, validate, and USA-fix-up one base FILE record.
+///
+/// Returns `Ok(None)` when the record number maps to a sparse hole in the
+/// `$MFT` or the bytes are not a valid FILE record. Shared by the rich and
+/// lean per-record readers below.
+fn parse_record_at<'b>(
+    reader: &'b mut VolumeReader,
+    boot: &BootSector,
+    extent_map: &ExtentMap,
+    record_number: u64,
+) -> Result<Option<FileRecord<'b>>, UsnError> {
+    let Some(offset) = extent_map.record_offset(record_number)? else {
+        return Ok(None);
+    };
+    let buf = reader
+        .borrow_at(offset, boot.file_record_size as usize)
+        .map_err(io_err)?;
+    if !FileRecord::is_valid(buf) {
+        return Ok(None);
+    }
+    Ok(Some(FileRecord::parse(record_number, Some(offset), buf)?))
+}
+
 /// Read one raw FILE record and return the rich entry plus any captured
 /// `$ATTRIBUTE_LIST` payload.
 pub(super) fn read_record_raw(
@@ -56,17 +79,9 @@ pub(super) fn read_record_raw(
     record_number: u64,
     build_options: EntryBuildOptions,
 ) -> Result<Option<(RawMftEntry, Option<AttributeListInfo>)>, UsnError> {
-    let offset = match extent_map.record_offset(record_number)? {
-        Some(offset) => offset,
-        None => return Ok(None),
-    };
-    let buf = reader
-        .borrow_at(offset, boot.file_record_size as usize)
-        .map_err(io_err)?;
-    if !FileRecord::is_valid(buf) {
+    let Some(rec) = parse_record_at(reader, boot, extent_map, record_number)? else {
         return Ok(None);
-    }
-    let rec = FileRecord::parse(record_number, Some(offset), buf)?;
+    };
     Ok(Some(RawMftEntry::from_record_with_attr_list(
         &rec,
         build_options,
@@ -82,17 +97,9 @@ pub(super) fn read_batch_record_raw(
     record_number: u64,
     collect_dos_file_name_links: bool,
 ) -> Result<Option<(RawMftBatchScratch, Option<AttributeListInfo>)>, UsnError> {
-    let offset = match extent_map.record_offset(record_number)? {
-        Some(offset) => offset,
-        None => return Ok(None),
-    };
-    let buf = reader
-        .borrow_at(offset, boot.file_record_size as usize)
-        .map_err(io_err)?;
-    if !FileRecord::is_valid(buf) {
+    let Some(rec) = parse_record_at(reader, boot, extent_map, record_number)? else {
         return Ok(None);
-    }
-    let rec = FileRecord::parse(record_number, Some(offset), buf)?;
+    };
     Ok(Some(RawMftBatchScratch::from_record_with_attr_list(
         &rec,
         collect_dos_file_name_links,

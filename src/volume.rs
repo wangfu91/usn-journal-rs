@@ -39,6 +39,19 @@ pub struct Volume {
 impl Volume {
     /// Creates a new `Volume` instance with the given drive letter.
     ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use usn_journal_rs::volume::Volume;
+    ///
+    /// // Requires Administrator privileges.
+    /// let volume = Volume::from_drive_letter('C')?;
+    /// for result in volume.journal().try_iter()?.take(10) {
+    ///     println!("{}", result?);
+    /// }
+    /// # Ok::<(), usn_journal_rs::UsnError>(())
+    /// ```
+    ///
     /// # Errors
     ///
     /// Returns [`UsnError::NotElevated`] if the process does not have the
@@ -58,7 +71,7 @@ impl Volume {
     ///
     /// Returns [`UsnError::NotElevated`] if the process does not have the
     /// Administrator privileges required to open raw volume handles. Returns
-    /// [`UsnError::WinApi`] or [`UsnError::InvalidMountPointError`] if the
+    /// [`UsnError::WinApi`] or [`UsnError::InvalidMountPoint`] if the
     /// mount point cannot be resolved to a volume handle.
     pub fn from_mount_point<P: AsRef<Path>>(mount_point: P) -> Result<Self, UsnError> {
         let path = mount_point.as_ref();
@@ -175,7 +188,7 @@ fn get_volume_handle_from_mount_point(mount_point: &Path) -> Result<HANDLE, UsnE
         .unwrap_or(volume_name.len());
     let name_data = volume_name
         .get(..end)
-        .ok_or_else(|| UsnError::InvalidMountPointError("Failed to get volume name data".into()))?;
+        .ok_or_else(|| UsnError::InvalidMountPoint("Failed to get volume name data".into()))?;
     let volume_guid = String::from_utf16_lossy(name_data);
 
     debug!("Volume GUID: {volume_guid}");
@@ -205,9 +218,24 @@ fn get_volume_handle_from_mount_point(mount_point: &Path) -> Result<HANDLE, UsnE
 
 #[cfg(test)]
 mod tests {
-    use windows::Win32::Foundation::ERROR_FILE_NOT_FOUND;
+    use windows::Win32::Foundation::{ERROR_FILE_NOT_FOUND, HANDLE};
 
-    use crate::{errors::UsnError, volume::Volume};
+    use crate::{
+        errors::UsnError,
+        volume::{Volume, VolumeSource},
+    };
+
+    #[test]
+    fn volume_accessors_construct_without_io() {
+        // A mock volume has an invalid handle, but `journal()`, `mft()`, and
+        // `path_resolver()` only borrow the volume and perform no I/O at
+        // construction, so they must succeed.
+        let volume = Volume::mock(HANDLE(std::ptr::null_mut()), VolumeSource::DriveLetter('C'));
+        let _journal = volume.journal();
+        let _mft = volume.mft();
+        let _resolver = volume.path_resolver();
+        assert_eq!(volume.drive_letter(), Some('C'));
+    }
 
     // Integration tests that require actual filesystem access
     mod integration_tests {

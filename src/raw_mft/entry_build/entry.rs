@@ -1,6 +1,7 @@
 //! Rich per-record metadata extracted from a single FILE record.
 
 use std::ffi::OsString;
+use std::fmt;
 
 use log::warn;
 
@@ -14,7 +15,10 @@ use crate::{
     Fid, FileAttributes, Filetime,
     file_attributes::FileAttributeView,
     raw_mft::layout::{
-        attribute::{FileNameNamespace, NtfsAttribute, file_attr_flags, osstring_from_utf16le},
+        attribute::{
+            FileNameNamespace, NtfsAttribute, attr_header_flags, file_attr_flags,
+            osstring_from_utf16le,
+        },
         data_run::{DataRunSummary, summarize_runs},
         record::FileRecord,
     },
@@ -151,6 +155,24 @@ pub struct RawMftEntry {
     pub alternate_data_streams: Box<[AdsInfo]>,
     /// All `$FILE_NAME` links observed on this record and any loaded extension records.
     pub links: Box<[RawMftLink]>,
+}
+
+impl fmt::Display for RawMftEntry {
+    /// One-line, compact summary suitable for logging. For a full multi-line
+    /// dump, format the individual public fields.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let kind = if self.is_directory { "DIR " } else { "FILE" };
+        write!(
+            f,
+            "raw #{} {kind} fid={} parent={} links={} size={} \"{}\"",
+            self.record_number,
+            self.file_reference,
+            self.parent_reference,
+            self.hard_link_count,
+            self.real_size,
+            self.file_name.to_string_lossy(),
+        )
+    }
 }
 
 impl RawMftEntry {
@@ -309,9 +331,9 @@ impl RawMftEntryBuilder {
             None
         };
         let attr_flags = attr.flags();
-        let is_compressed = attr_flags & 0x0001 != 0;
-        let is_encrypted = attr_flags & 0x4000 != 0;
-        let is_sparse = attr_flags & 0x8000 != 0;
+        let is_compressed = attr_flags & attr_header_flags::COMPRESSED != 0;
+        let is_encrypted = attr_flags & attr_header_flags::ENCRYPTED != 0;
+        let is_sparse = attr_flags & attr_header_flags::SPARSE != 0;
         match stream_name {
             None => {
                 if !self.have_unnamed_data {

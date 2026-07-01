@@ -228,7 +228,7 @@ fn usn_entry_reason_string_conversion() {
     let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
 
     let entry = UsnEntry::new(crate::usn_record::UsnRecordView::V2(record));
-    let reason_string = entry.get_reason_string();
+    let reason_string = entry.reason.to_string();
 
     assert!(reason_string.contains("FILE_CREATE"));
     assert!(reason_string.contains("DATA_EXTEND"));
@@ -237,17 +237,16 @@ fn usn_entry_reason_string_conversion() {
 }
 
 #[test]
-fn usn_entry_unknown_reason() {
+fn usn_entry_empty_reason() {
     let record_data = create_mock_usn_record(
-        0x6000, 0x789123, 0x654321, 0, // No known reason flags
+        0x6000, 0x789123, 0x654321, 0, // No reason flags set
         "test.txt", 0,
     );
 
     let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
 
     let entry = UsnEntry::new(crate::usn_record::UsnRecordView::V2(record));
-    let reason_string = entry.get_reason_string();
-    assert_eq!(reason_string, "UNKNOWN");
+    assert_eq!(entry.reason.to_string(), "NONE");
 }
 
 #[test]
@@ -272,4 +271,29 @@ fn usn_entry_creation_v3_extended_ids() {
     assert_eq!(entry.file_name, OsString::from("refs.txt"));
     assert!(entry.fid.is_extended());
     assert!(entry.parent_fid.is_extended());
+}
+
+#[test]
+fn usn_entry_attribute_predicates_delegate_to_file_attributes() {
+    use crate::{FileAttributes, Filetime, UsnReason, UsnSourceInfo};
+
+    let entry = UsnEntry {
+        usn: Usn::new(1),
+        time: Filetime::new(0),
+        fid: Fid::new(0x10),
+        parent_fid: Fid::new(0x5),
+        reason: UsnReason::FILE_CREATE,
+        source_info: UsnSourceInfo::empty(),
+        file_name: OsString::from("archive.enc"),
+        file_attributes: FileAttributes::ENCRYPTED | FileAttributes::ARCHIVE,
+    };
+
+    assert!(entry.is_encrypted());
+    assert!(entry.is_archive());
+    assert!(!entry.is_compressed());
+    assert!(!entry.is_reparse_point());
+    assert!(!entry.is_system());
+    // Reason predicates on the same entry.
+    assert!(entry.reason.is_file_create());
+    assert!(!entry.reason.is_file_delete());
 }

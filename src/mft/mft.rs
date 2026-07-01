@@ -39,7 +39,17 @@ impl<'a> Mft<'a> {
             options.high_usn.get(),
             options.max_usn_record_version.as_u16(),
             vec![0u8; options.buffer_bytes.get()],
-            options.low_usn.get() as u64,
         ))
+    }
+}
+
+impl Volume {
+    /// Create an [`Mft`] enumerator for this volume.
+    ///
+    /// Convenience for [`Mft::new`], so you can write
+    /// `volume.mft().try_iter()?` without importing [`Mft`].
+    #[must_use]
+    pub fn mft(&self) -> Mft<'_> {
+        Mft::new(self)
     }
 }

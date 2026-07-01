@@ -281,4 +281,45 @@ mod tests {
             Err(UsnError::InvalidDataRun("volume offset overflow"))
         ));
     }
+
+    #[test]
+    fn record_count_includes_sparse_holes() {
+        // Sparse clusters still occupy logical address space, so they count
+        // toward the number of addressable records.
+        let runs = vec![
+            DataRun::Sparse { clusters: 2 },
+            DataRun::Data {
+                lcn: 500,
+                clusters: 2,
+            },
+        ];
+        let map = ExtentMap::from_runs(&runs, 4096, 1024);
+        // 4 clusters * 4096 bytes / 1024-byte records = 16 records.
+        assert_eq!(map.record_count(), 16);
+    }
+
+    #[test]
+    fn record_count_is_zero_when_file_record_size_is_zero() {
+        let runs = vec![DataRun::Data {
+            lcn: 100,
+            clusters: 4,
+        }];
+        let map = ExtentMap::from_runs(&runs, 4096, 0);
+        assert_eq!(map.record_count(), 0);
+    }
+
+    #[test]
+    fn resolves_sub_cluster_offset_within_data_run() {
+        // Record 9 lands inside the data run (VCN 2) at a 1024-byte sub-cluster
+        // offset, exercising the intra-cluster remainder arithmetic.
+        let runs = vec![
+            DataRun::Sparse { clusters: 2 },
+            DataRun::Data {
+                lcn: 500,
+                clusters: 2,
+            },
+        ];
+        let map = ExtentMap::from_runs(&runs, 4096, 1024);
+        assert_eq!(map.record_offset(9).unwrap(), Some(500 * 4096 + 1024));
+    }
 }

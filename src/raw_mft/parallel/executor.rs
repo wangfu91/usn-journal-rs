@@ -273,3 +273,67 @@ fn worker_panicked(payload: Box<dyn std::any::Any + Send + 'static>) -> UsnError
         "raw_mft parallel worker panicked: {details}"
     )))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn contiguous_worker_range_partitions_evenly() {
+        // 9 chunks across 3 workers: three contiguous bands of 3.
+        assert_eq!(contiguous_worker_range(9, 3, 0), (0, 3));
+        assert_eq!(contiguous_worker_range(9, 3, 1), (3, 6));
+        assert_eq!(contiguous_worker_range(9, 3, 2), (6, 9));
+    }
+
+    #[test]
+    fn contiguous_worker_range_spreads_remainder_to_early_workers() {
+        // 10 chunks across 3 workers: the extra chunk goes to worker 0.
+        assert_eq!(contiguous_worker_range(10, 3, 0), (0, 4));
+        assert_eq!(contiguous_worker_range(10, 3, 1), (4, 7));
+        assert_eq!(contiguous_worker_range(10, 3, 2), (7, 10));
+    }
+
+    #[test]
+    fn contiguous_worker_ranges_cover_all_chunks_without_gaps() {
+        let chunk_count = 37;
+        let worker_count = 8;
+        let mut covered = Vec::new();
+        for worker in 0..worker_count {
+            let (start, end) = contiguous_worker_range(chunk_count, worker_count, worker);
+            assert!(start <= end);
+            covered.extend(start..end);
+        }
+        let expected: Vec<usize> = (0..chunk_count).collect();
+        assert_eq!(covered, expected);
+    }
+
+    #[test]
+    fn contiguous_worker_range_handles_more_workers_than_chunks() {
+        // 2 chunks, 4 workers: workers 2 and 3 get empty ranges.
+        assert_eq!(contiguous_worker_range(2, 4, 0), (0, 1));
+        assert_eq!(contiguous_worker_range(2, 4, 1), (1, 2));
+        assert_eq!(contiguous_worker_range(2, 4, 2), (2, 2));
+        assert_eq!(contiguous_worker_range(2, 4, 3), (2, 2));
+    }
+
+    #[test]
+    fn worker_panicked_extracts_str_and_string_payloads() {
+        let from_str = worker_panicked(Box::new("boom"));
+        assert!(from_str.to_string().contains("boom"));
+
+        let from_string = worker_panicked(Box::new(String::from("kaboom")));
+        assert!(from_string.to_string().contains("kaboom"));
+
+        let from_unknown = worker_panicked(Box::new(42u32));
+        assert!(from_unknown.to_string().contains("unknown panic payload"));
+    }
+
+    #[test]
+    fn channel_closed_and_parallelism_errors_are_io() {
+        assert!(channel_closed().is_io_error());
+        let err = available_parallelism_error(io::Error::other("nope"));
+        assert!(err.is_io_error());
+        assert!(err.to_string().contains("available parallelism"));
+    }
+}

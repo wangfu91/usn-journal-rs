@@ -10,6 +10,14 @@ pub enum UsnError {
     #[error("This operation requires Administrator privileges")]
     NotElevated,
 
+    /// The volume's USN change journal is not active.
+    ///
+    /// Returned by [`crate::journal::UsnJournal::query`] when the volume has no
+    /// active change journal. Call [`crate::journal::UsnJournal::query_or_create`]
+    /// to create one on demand.
+    #[error("The USN change journal is not active on this volume")]
+    JournalNotActive,
+
     /// Caller-provided options failed validation.
     #[error("Invalid options: {0}")]
     InvalidOptions(&'static str),
@@ -69,7 +77,7 @@ pub enum UsnError {
 
     /// A mount point path could not be resolved to a volume.
     #[error("Invalid mount point: {0}")]
-    InvalidMountPointError(String),
+    InvalidMountPoint(String),
 
     /// A timestamp could not be represented in the target format.
     #[error("Invalid timestamp: {0}")]
@@ -232,6 +240,18 @@ mod tests {
         }
 
         #[test]
+        fn test_journal_not_active_display_and_classification() {
+            let error = UsnError::JournalNotActive;
+            assert_eq!(
+                error.to_string(),
+                "The USN change journal is not active on this volume"
+            );
+            // It is a precondition error, neither I/O nor on-disk parse.
+            assert!(!error.is_io_error());
+            assert!(!error.is_parse_error());
+        }
+
+        #[test]
         fn test_buffer_too_small_display() {
             let error = UsnError::BufferTooSmall {
                 needed: 1024,
@@ -307,7 +327,7 @@ mod tests {
         #[test]
         fn test_invalid_mount_point_error_display() {
             let mount_point = "C:\\invalid\\path";
-            let error = UsnError::InvalidMountPointError(mount_point.to_string());
+            let error = UsnError::InvalidMountPoint(mount_point.to_string());
             let error_string = error.to_string();
             assert_eq!(error_string, "Invalid mount point: C:\\invalid\\path");
         }
@@ -405,7 +425,7 @@ mod tests {
             ];
 
             for path in invalid_paths {
-                let error = UsnError::InvalidMountPointError(path.to_string());
+                let error = UsnError::InvalidMountPoint(path.to_string());
                 assert!(error.to_string().contains("Invalid mount point:"));
                 assert!(error.to_string().contains(path));
             }

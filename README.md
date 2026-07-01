@@ -44,7 +44,7 @@ Iterate the USN change journal on drive `C:`:
 
 ```rust
 use usn_journal_rs::errors::UsnError;
-use usn_journal_rs::journal::{JournalIterOptions, UsnEntry, UsnJournal, USN_REASON_MASK_ALL};
+use usn_journal_rs::journal::{JournalIterOptions, UsnEntry, UsnJournal};
 use usn_journal_rs::volume::Volume;
 use usn_journal_rs::{Usn, UsnReason};
 use std::num::NonZeroUsize;
@@ -54,8 +54,8 @@ fn main() -> Result<(), UsnError> {
     let journal = UsnJournal::new(&volume);
 
     let opts = JournalIterOptions::builder()
-        .start_usn(Usn::new(0))
-        .reason_mask(UsnReason::from_bits_retain(USN_REASON_MASK_ALL))
+        .start_usn(Usn::ZERO)
+        .reason_mask(UsnReason::ALL)
         .only_on_close(false)
         .buffer_bytes(NonZeroUsize::new(64 * 1024).unwrap())
         .build();
@@ -63,6 +63,50 @@ fn main() -> Result<(), UsnError> {
     for result in journal.try_iter_with_options(opts)? {
         let entry: UsnEntry = result?;
         println!("{}", entry); // compact one-line Display
+    }
+    Ok(())
+}
+```
+
+### Watch for live changes
+
+`Volume` exposes convenience accessors — `journal()`, `mft()`, `raw_mft()`, and
+`path_resolver()` — so you rarely need to import the reader types directly. To
+follow the journal tail and resolve each change to a full path:
+
+```rust
+use usn_journal_rs::errors::UsnError;
+use usn_journal_rs::journal::JournalIterOptions;
+use usn_journal_rs::volume::Volume;
+
+fn main() -> Result<(), UsnError> {
+    let volume = Volume::from_drive_letter('C')?;
+    let journal = volume.journal();
+    let resolver = volume.path_resolver(); // resolve_path takes &self
+
+    // Start at the current tail, then block waiting for new records.
+    let tail = journal.query_or_create()?.next_usn;
+    let opts = JournalIterOptions::builder()
+        .start_usn(tail)
+        .wait_for_more(true)
+        .build();
+
+    for result in journal.try_iter_with_options(opts)? {
+        let entry = result?;
+        // Named predicates make change classification read naturally:
+        let kind = if entry.reason.is_file_create() {
+            "created"
+        } else if entry.reason.is_file_delete() {
+            "deleted"
+        } else if entry.reason.is_rename() {
+            "renamed"
+        } else {
+            "modified"
+        };
+        match resolver.resolve_path(&entry) {
+            Some(path) => println!("{kind}: {}", path.display()),
+            None => println!("{kind}: {}", entry.file_name.to_string_lossy()),
+        }
     }
     Ok(())
 }
@@ -84,7 +128,7 @@ All examples require Administrator privileges.
 
 ## Performance notes
 
-Benchmarks are run with [Divan](https://github.com/nvzqz/divan) on a 200 k-record NTFS volume.
+Benchmarks use [Criterion](https://github.com/bheisler/criterion.rs) on a 200 k-record NTFS volume.
 
 - **Raw `$MFT` iteration** — ~6× faster than 0.4.x (262 ms vs 1.64 s). Achieved via
   zero-copy fixup parsing (`VolumeReader::borrow_at`) and elimination of per-record memcpy.
