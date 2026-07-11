@@ -13,10 +13,11 @@
 
 use std::env;
 
+mod raw_volume;
+
 use usn_journal_rs::{
     errors::UsnError,
     raw_mft::{RawMft, RawMftScanOptions, history::HistoricalPathIndex},
-    volume::Volume,
 };
 
 const DEFAULT_LIMIT: usize = 1_000;
@@ -29,17 +30,13 @@ fn main() {
 }
 
 fn run() -> Result<(), UsnError> {
-    let drive_letter = env::args()
-        .nth(1)
-        .and_then(|value| value.chars().next())
-        .unwrap_or('C')
-        .to_ascii_uppercase();
+    let mut args = env::args().skip(1);
+    let (volume, source) = raw_volume::open_raw_volume(args.next())?;
     let limit = env::args()
         .nth(2)
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(DEFAULT_LIMIT);
 
-    let volume = Volume::from_drive_letter(drive_letter)?;
     let mft = RawMft::new(&volume)?;
     let options = RawMftScanOptions::builder()
         .include_unused_records(true)
@@ -67,7 +64,7 @@ fn run() -> Result<(), UsnError> {
     }
 
     println!(
-        "unused raw MFT records on {drive_letter}: ({} total, showing up to {})",
+        "unused raw MFT records on {source}: ({} total, showing up to {})",
         deleted_records.len(),
         limit
     );

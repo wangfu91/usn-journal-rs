@@ -33,7 +33,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     let elapsed = start.elapsed();
 
     println!("raw_mft serial read profile");
+    #[cfg(windows)]
     println!("  drive:           {}:", config.drive);
+    #[cfg(target_os = "linux")]
+    println!(
+        "  volume:          {}",
+        std::env::var("USN_TEST_VOLUME").unwrap_or_else(|_| "<default mount>".to_owned())
+    );
     println!("  records:         {}", summary.records);
     println!("  errors:          {}", summary.errors);
     println!("  name_chars:      {}", summary.name_chars);

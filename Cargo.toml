@@ -71,19 +71,14 @@ name = "change_monitor"
 required-features = ["windows-examples"]
 [[example]]
 name = "raw_mft_serial_read"
-required-features = ["windows-examples"]
 [[example]]
 name = "raw_mft_serial_read_profile"
-required-features = ["windows-examples"]
 [[example]]
 name = "raw_mft_parallel_chunks"
-required-features = ["windows-examples"]
 [[example]]
 name = "raw_mft_parallel_ingest_profile"
-required-features = ["windows-examples"]
 [[example]]
 name = "deletion_forensic"
-required-features = ["windows-examples"]
 
 [[bench]]
 name = "raw_mft"
@@ -96,10 +91,12 @@ harness = false
 [[bench]]
 name = "journal"
 harness = false
+required-features = ["windows-examples"]
 
 [[bench]]
 name = "path_resolver"
 harness = false
+required-features = ["windows-examples"]
 
 [profile.test]
 opt-level = 0

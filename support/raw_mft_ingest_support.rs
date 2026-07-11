@@ -226,8 +226,8 @@ pub fn print_bench_config(config: &BenchConfig) {
     #[cfg(windows)]
     let source = config.drive.to_string();
     #[cfg(target_os = "linux")]
-    let source = env::var("USN_TEST_VOLUME")
-        .unwrap_or_else(|_| "/media/fu/CE5E5DFB5E5DDD31".to_owned());
+    let source =
+        env::var("USN_TEST_VOLUME").unwrap_or_else(|_| "/media/fu/CE5E5DFB5E5DDD31".to_owned());
     eprintln!(
         "raw_mft_ingest bench config: volume={} workers={} chunk_records={} main_buffer={} attr_buffer={} start_record={} end_record={}",
         source,
@@ -361,8 +361,8 @@ pub fn open_volume(drive: char) -> Option<Volume> {
     #[cfg(target_os = "linux")]
     let result = {
         let _ = drive;
-        let source = env::var("USN_TEST_VOLUME")
-            .unwrap_or_else(|_| "/media/fu/CE5E5DFB5E5DDD31".to_owned());
+        let source =
+            env::var("USN_TEST_VOLUME").unwrap_or_else(|_| "/media/fu/CE5E5DFB5E5DDD31".to_owned());
         if source.starts_with("/dev/") {
             Volume::from_device_path(source)
         } else {

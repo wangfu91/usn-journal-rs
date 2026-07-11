@@ -133,9 +133,9 @@ fn main() -> Result<(), UsnError> {
 | ------------------------- | ---------------------------------------------------------------- | ---------------------------------------------- |
 | `read_journal`            | Iterate all USN journal records on a volume                      | `cargo run --example read_journal`             |
 | `enum_mft`                | Enumerate every MFT entry via FSCTL                              | `cargo run --example enum_mft`                 |
-| `raw_mft_serial_read`     | Parse raw `$MFT` records with full metadata                      | `cargo run --example raw_mft_serial_read -- C` |
-| `raw_mft_parallel_chunks` | Measure parallel chunk parsing on the raw `$MFT`                 | `cargo run --example raw_mft_parallel_chunks`  |
-| `deletion_forensic`       | List unused raw `$MFT` records with best-effort historical paths | `cargo run --example deletion_forensic -- C`   |
+| `raw_mft_serial_read`     | Parse raw `$MFT` records with full metadata                      | `cargo run --example raw_mft_serial_read -- <drive-or-mount>` |
+| `raw_mft_parallel_chunks` | Measure parallel chunk parsing on the raw `$MFT`                 | `cargo run --example raw_mft_parallel_chunks -- <drive-or-mount>` |
+| `deletion_forensic`       | List unused raw `$MFT` records with best-effort historical paths | `cargo run --example deletion_forensic -- <drive-or-mount>` |
 | `change_monitor`          | Watch for live filesystem changes via USN                        | `cargo run --example change_monitor`           |
 | `journal_pretty_print`    | Multi-line formatted output for USN entries                      | `cargo run --example journal_pretty_print`     |
 

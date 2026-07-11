@@ -3,17 +3,18 @@
 //! timestamps, real / allocated size, alternate data streams, sparse and
 //! compressed flags).
 //!
-//! Run with administrator privileges:
+//! On Windows, pass a drive letter from an elevated shell. On Linux, pass an
+//! NTFS mount or device path with read permission for its backing device:
 //!
 //! ```text
-//! cargo run --example raw_mft_serial_read -- C
+//! cargo run --example raw_mft_serial_read -- /media/user/windows
 //! ```
 
 use std::env;
+mod raw_volume;
 use usn_journal_rs::{
     errors::UsnError,
     raw_mft::{RawMft, RawMftScanOptions},
-    volume::Volume,
 };
 
 const MAX_ENTRIES: usize = 1_000;
@@ -28,13 +29,7 @@ fn main() {
 
 /// Open the raw `$MFT`, iterate records, and print a compact metadata summary.
 fn run() -> Result<(), UsnError> {
-    let drive_letter = env::args()
-        .nth(1)
-        .and_then(|s| s.chars().next())
-        .unwrap_or('C')
-        .to_ascii_uppercase();
-
-    let volume = Volume::from_drive_letter(drive_letter)?;
+    let (volume, _) = raw_volume::open_raw_volume(env::args().nth(1))?;
     let mft = RawMft::new(&volume)?;
     let resolver = mft.path_resolver()?;
 

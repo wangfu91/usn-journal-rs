@@ -13,7 +13,6 @@ use super::{
 
 use crate::{
     Fid, FileAttributes, Filetime,
-    file_attributes::FileAttributeView,
     raw_mft::layout::{
         attribute::{
             FileNameNamespace, NtfsAttribute, attr_header_flags, file_attr_flags,
@@ -468,12 +467,6 @@ impl AttributeConsumer for RawMftEntryBuilder {
 
     fn on_attribute_list(&mut self, attr_list: AttributeListInfo) {
         self.attr_list = Some(attr_list);
-    }
-}
-
-impl FileAttributeView for RawMftEntry {
-    fn file_attributes(&self) -> FileAttributes {
-        self.si_file_attributes
     }
 }
 

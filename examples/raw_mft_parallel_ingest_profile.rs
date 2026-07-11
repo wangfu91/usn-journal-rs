@@ -21,7 +21,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     let elapsed = start.elapsed();
 
     println!("raw_mft parallel ingest profile");
+    #[cfg(windows)]
     println!("  drive:                    {}:", config.drive);
+    #[cfg(target_os = "linux")]
+    println!(
+        "  volume:                   {}",
+        std::env::var("USN_TEST_VOLUME").unwrap_or_else(|_| "<default mount>".to_owned())
+    );
     println!("  worker_count:             {}", config.worker_count);
     println!("  max_records_per_chunk:    {}", config.chunk_records);
     println!("  main_buffer_bytes:        {}", config.main_buffer_bytes);

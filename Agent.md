@@ -2,7 +2,7 @@
 
 ## Project summary
 
-- `usn-journal-rs` is a Windows-only Rust crate for reading the USN change journal, enumerating the MFT through the FSCTL APIs, and parsing the raw NTFS `$MFT` for richer metadata.
+- `usn-journal-rs` reads the Windows USN journal and FSCTL MFT APIs, and supports raw NTFS `$MFT` parsing on both Windows and Linux.
 - Public crate modules are rooted in `src\lib.rs`: `errors`, `journal`, `mft`, `path`, `privilege`, `raw_mft`, `types`, `volume`, plus the re-exported `Filetime` type and `UsnResult<T>` alias.
 - Opening a volume requires Administrator privileges. Journal and FSCTL-based MFT APIs target NTFS and ReFS; raw `$MFT` support is NTFS-only and returns `UsnError::UnsupportedFilesystem` on unsupported filesystems.
 
@@ -18,6 +18,7 @@
   - `cargo run --example raw_mft_serial_read -- C`
   - `cargo run --example raw_mft_parallel_chunks`
   - `cargo run --example deletion_forensic -- C`
+- On Linux, pass an NTFS mount or device path instead of `C`, for example `cargo run --example deletion_forensic -- /media/user/windows`.
   - `cargo run --example change_monitor`
   - `cargo run --example journal_pretty_print`
 - Profiling-oriented examples:

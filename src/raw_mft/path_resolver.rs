@@ -1,18 +1,12 @@
 //! Snapshot path resolver for entries produced by a raw `$MFT` scan.
 
-use std::{
-    path::{Path, PathBuf},
-};
 #[cfg(windows)]
 use std::cell::RefCell;
+use std::path::{Path, PathBuf};
 
-use crate::{
-    UsnResult,
-    path::InMemoryDirTree,
-    volume::Volume,
-};
 #[cfg(windows)]
 use crate::path::resolve::resolve_path as resolve_live_path;
+use crate::{UsnResult, path::InMemoryDirTree, volume::Volume};
 
 use super::{RawMft, RawMftEntry};
 
@@ -70,25 +64,24 @@ impl<'a> RawMftPathResolver<'a> {
     /// entries fall back to a live `OpenFileById` lookup against the mounted volume.
     #[must_use]
     pub fn resolve_path(&self, entry: &RawMftEntry) -> Option<PathBuf> {
-        self.in_memory_tree
+        let snapshot_path = self
+            .in_memory_tree
             .resolve_with_optional_drive(entry.file_reference, self.volume.drive_letter())
-            .map(|path| prefix_mount_point(self.volume, &path))
-            .or_else(|| {
-                #[cfg(windows)]
-                if self.live_fallback {
-                    resolve_live_path(
-                        self.volume,
-                        entry.file_reference,
-                        entry.parent_reference,
-                        entry.file_name.as_os_str(),
-                        &self.buffer,
-                    )
-                } else {
-                    None
-                }
-                #[cfg(not(windows))]
-                { None }
-            })
+            .map(|path| prefix_mount_point(self.volume, &path));
+        #[cfg(windows)]
+        return snapshot_path.or_else(|| {
+            self.live_fallback.then(|| {
+                resolve_live_path(
+                    self.volume,
+                    entry.file_reference,
+                    entry.parent_reference,
+                    entry.file_name.as_os_str(),
+                    &self.buffer,
+                )
+            })?
+        });
+        #[cfg(not(windows))]
+        snapshot_path
     }
 }
 

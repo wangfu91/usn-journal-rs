@@ -103,39 +103,42 @@ impl VolumeReader {
         {
             let bytes_read = self.file.read_at(&mut self.buf, sector_pos)?;
             if bytes_read == 0 {
-                return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "zero-length read from volume"));
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "zero-length read from volume",
+                ));
             }
             self.buf_pos = sector_pos;
             self.buf_len = bytes_read;
-            return Ok(());
+            Ok(())
         }
         #[cfg(windows)]
         {
-        let mut bytes_read: u32 = 0;
-        // SAFETY: `self.handle` is a live volume handle. The output
-        // buffer is `self.buf` of exactly the slice length we pass;
-        // `&mut bytes_read` is a unique stack out-pointer. The Win32
-        // `ReadFile` requires sector-aligned offsets and lengths for
-        // `FILE_FLAG_NO_BUFFERING` opens — the caller (`refill`) is
-        // responsible for invoking us with a sector-aligned offset.
-        let res = unsafe {
-            ReadFile(
-                self.handle,
-                Some(self.buf.as_mut_slice()),
-                Some(&mut bytes_read),
-                None,
-            )
-        };
-        res.map_err(io::Error::other)?;
-        if bytes_read == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "zero-length read from volume",
-            ));
-        }
-        self.buf_pos = sector_pos;
-        self.buf_len = bytes_read as usize;
-        Ok(())
+            let mut bytes_read: u32 = 0;
+            // SAFETY: `self.handle` is a live volume handle. The output
+            // buffer is `self.buf` of exactly the slice length we pass;
+            // `&mut bytes_read` is a unique stack out-pointer. The Win32
+            // `ReadFile` requires sector-aligned offsets and lengths for
+            // `FILE_FLAG_NO_BUFFERING` opens — the caller (`refill`) is
+            // responsible for invoking us with a sector-aligned offset.
+            let res = unsafe {
+                ReadFile(
+                    self.handle,
+                    Some(self.buf.as_mut_slice()),
+                    Some(&mut bytes_read),
+                    None,
+                )
+            };
+            res.map_err(io::Error::other)?;
+            if bytes_read == 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "zero-length read from volume",
+                ));
+            }
+            self.buf_pos = sector_pos;
+            self.buf_len = bytes_read as usize;
+            Ok(())
         }
     }
 
@@ -240,10 +243,12 @@ mod tests {
     fn reader() -> VolumeReader {
         #[cfg(windows)]
         let volume = crate::volume::Volume::mock(
-            HANDLE(std::ptr::null_mut()), crate::volume::VolumeSource::DriveLetter('C'));
+            HANDLE(std::ptr::null_mut()),
+            crate::volume::VolumeSource::DriveLetter('C'),
+        );
         #[cfg(target_os = "linux")]
-        let volume = crate::volume::Volume::from_device_path("/dev/zero")
-            .expect("open test byte source");
+        let volume =
+            crate::volume::Volume::from_device_path("/dev/zero").expect("open test byte source");
         VolumeReader::new(&volume, 512).expect("construct test reader")
     }
 
@@ -262,10 +267,12 @@ mod tests {
     fn rejects_non_power_of_two_sector_size() {
         #[cfg(windows)]
         let volume = crate::volume::Volume::mock(
-            HANDLE(std::ptr::null_mut()), crate::volume::VolumeSource::DriveLetter('C'));
+            HANDLE(std::ptr::null_mut()),
+            crate::volume::VolumeSource::DriveLetter('C'),
+        );
         #[cfg(target_os = "linux")]
-        let volume = crate::volume::Volume::from_device_path("/dev/zero")
-            .expect("open test byte source");
+        let volume =
+            crate::volume::Volume::from_device_path("/dev/zero").expect("open test byte source");
         assert!(VolumeReader::new(&volume, 0).is_err());
         assert!(VolumeReader::new(&volume, 3).is_err());
         assert!(VolumeReader::new(&volume, 6).is_err());
