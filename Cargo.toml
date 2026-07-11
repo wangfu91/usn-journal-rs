@@ -2,14 +2,16 @@
 name = "usn-journal-rs"
 version = "0.5.0"
 edition = "2024"
+autoexamples = false
 description = "A Rust library for working with the NTFS USN change journal and enumerating the MFT."
 license = "MIT"
 repository = "https://github.com/wangfu91/usn-journal-rs"
 keywords = ["usn-journal", "filesystem", "ntfs", "mft", "refs"]
-categories = ["filesystem", "os::windows-apis"]
+categories = ["filesystem"]
 
 [package.metadata.docs.rs]
 targets = [
+    "x86_64-unknown-linux-gnu",
     "x86_64-pc-windows-msvc",
     "aarch64-pc-windows-msvc",
     "i686-pc-windows-msvc",
@@ -31,7 +33,7 @@ rustc-hash = "2"
 thiserror = "2"
 zerocopy = { version = "0.8.48", features = ["derive"] }
 
-[dependencies.windows]
+[target.'cfg(windows)'.dependencies.windows]
 version = "0.62"
 features = [
     "Win32_Foundation",
@@ -47,6 +49,41 @@ features = [
 [dev-dependencies]
 criterion = "0.8.2"
 injectorpp = "0.5"
+
+[features]
+windows-examples = []
+
+[[example]]
+name = "raw_mft_read"
+path = "examples/raw_mft_read.rs"
+
+[[example]]
+name = "read_journal"
+required-features = ["windows-examples"]
+[[example]]
+name = "enum_mft"
+required-features = ["windows-examples"]
+[[example]]
+name = "journal_pretty_print"
+required-features = ["windows-examples"]
+[[example]]
+name = "change_monitor"
+required-features = ["windows-examples"]
+[[example]]
+name = "raw_mft_serial_read"
+required-features = ["windows-examples"]
+[[example]]
+name = "raw_mft_serial_read_profile"
+required-features = ["windows-examples"]
+[[example]]
+name = "raw_mft_parallel_chunks"
+required-features = ["windows-examples"]
+[[example]]
+name = "raw_mft_parallel_ingest_profile"
+required-features = ["windows-examples"]
+[[example]]
+name = "deletion_forensic"
+required-features = ["windows-examples"]
 
 [[bench]]
 name = "raw_mft"

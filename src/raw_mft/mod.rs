@@ -11,6 +11,7 @@
 //! ```no_run
 //! use usn_journal_rs::{volume::Volume, raw_mft::RawMft};
 //!
+//! # #[cfg(windows)] {
 //! let volume = Volume::from_drive_letter('C').expect("open volume");
 //! let mft = RawMft::new(&volume).expect("read $MFT");
 //! for entry in mft.try_iter().expect("iter") {
@@ -21,6 +22,7 @@
 //!         _ => {}
 //!     }
 //! }
+//! # }
 //! ```
 //!
 //! ## Limitations
@@ -28,7 +30,8 @@
 //! * NTFS only — ReFS volumes return [`crate::errors::UsnError::UnsupportedFilesystem`].
 //! * `$ATTRIBUTE_LIST` enrichment is intentionally one level deep; extension
 //!   records are loaded when needed but are not recursively enriched.
-//! * Reading the volume requires Administrator privileges.
+//! * Windows requires Administrator privileges; Linux requires read permission
+//!   for the backing block device. All opens are read-only.
 
 mod attr_list;
 mod bootstrap;
@@ -42,7 +45,7 @@ mod parallel;
 mod path_resolver;
 mod reader;
 mod serial;
-#[cfg(test)]
+#[cfg(all(test, windows))]
 mod tests;
 
 use std::num::NonZeroUsize;
@@ -141,7 +144,7 @@ impl<'a> RawMft<'a> {
     /// record falls in a sparse hole or does not contain a valid FILE record.
     #[must_use = "the returned record is discarded if not inspected"]
     pub fn read_record(&self, number: u64) -> Result<Option<RawMftEntry>, UsnError> {
-        let mut reader = VolumeReader::new(self.volume.handle, self.boot.bytes_per_sector as u64)?;
+        let mut reader = VolumeReader::new(self.volume, self.boot.bytes_per_sector as u64)?;
         read_record_at(
             &mut reader,
             &self.boot,

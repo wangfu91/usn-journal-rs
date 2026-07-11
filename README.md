@@ -15,9 +15,10 @@ the Windows FSCTL APIs, and parse the raw `$MFT` file directly for rich
 per-record metadata. It exposes idiomatic Rust iterators and builder-pattern
 option structs over the underlying `DeviceIoControl` calls.
 
-The crate is **Windows-only**. It targets NTFS and ReFS volumes and requires the
-calling process to be running as Administrator — raw volume handles and the USN
-journal IOCTLs are privilege-gated by the OS.
+The USN journal and FSCTL APIs are Windows-only and require Administrator
+privileges. Raw NTFS `$MFT` parsing also works on Linux, where the caller needs
+read permission for the backing block device. Linux device opens are strictly
+read-only; the crate never remounts or modifies the filesystem.
 
 ## Features
 
@@ -25,6 +26,7 @@ journal IOCTLs are privilege-gated by the OS.
 - Enumerate MFT entries via the `FSCTL_ENUM_USN_DATA` API, including ReFS 128-bit file IDs
 - Parse raw `$MFT` records (NTFS only) for full timestamps, real/allocated sizes, hard-link
   counts, alternate data streams, and sparse/compressed/encrypted flags
+- Open Linux NTFS sources by mount point or block-device path using read-only descriptors
 - Resolve file IDs to full paths with three strategies: syscall-only, LRU-cached,
   or an in-memory directory tree for O(1) resolution on large scans
 - Lightweight `Filetime(u64)` newtype with standard-library conversions
@@ -38,6 +40,19 @@ Add to `Cargo.toml`:
 ```toml
 [dependencies]
 usn-journal-rs = "0.5"
+```
+
+Read a Linux-mounted NTFS volume:
+
+```rust,no_run
+use usn_journal_rs::{raw_mft::RawMft, volume::Volume};
+
+let volume = Volume::from_mount_point("/media/user/windows")?;
+let mft = RawMft::new(&volume)?;
+for entry in mft.try_iter()?.take(20) {
+    println!("{}", entry?.file_name.to_string_lossy());
+}
+# Ok::<(), usn_journal_rs::UsnError>(())
 ```
 
 Iterate the USN change journal on drive `C:`:

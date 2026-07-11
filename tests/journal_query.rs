@@ -1,3 +1,5 @@
+#![cfg(windows)]
+
 //! Integration tests for the split `UsnJournal::query` / `query_or_create` API.
 //!
 //! These exercise the real USN journal on the `USN_TEST_DRIVE` volume

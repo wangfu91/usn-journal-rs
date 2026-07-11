@@ -89,6 +89,7 @@ pub enum UsnError {
 
     /// A Win32 API call failed.
     #[error("Win32 API error: {0}")]
+    #[cfg(windows)]
     WinApi(#[from] windows::core::Error),
 
     /// The NTFS boot sector failed validation.
@@ -157,7 +158,12 @@ impl UsnError {
     /// Return `true` if this error came from operating-system I/O.
     #[must_use]
     pub const fn is_io_error(&self) -> bool {
-        matches!(self, Self::Io(_) | Self::WinApi(_))
+        match self {
+            Self::Io(_) => true,
+            #[cfg(windows)]
+            Self::WinApi(_) => true,
+            _ => false,
+        }
     }
 
     /// Return `true` if this error indicates malformed on-disk data.
@@ -199,7 +205,7 @@ impl UsnError {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 mod tests {
     use super::*;
     use std::io::{Error as IoError, ErrorKind};

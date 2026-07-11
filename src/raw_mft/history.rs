@@ -285,7 +285,7 @@ fn compose_path(
     path
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 mod tests {
     use super::*;
     use crate::{

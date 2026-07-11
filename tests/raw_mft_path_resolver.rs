@@ -1,3 +1,5 @@
+#![cfg(windows)]
+
 //! Integration test: `RawMft::path_resolver` resolves paths that exist on disk.
 //!
 //! Opens the NTFS C: volume, builds a `RawMft`, constructs its optimized

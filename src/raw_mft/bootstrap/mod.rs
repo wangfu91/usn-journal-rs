@@ -44,7 +44,7 @@ impl<'a> RawMft<'a> {
 
 /// Read and parse the NTFS boot sector from the raw volume.
 fn read_boot_sector(volume: &Volume) -> Result<BootSector, UsnError> {
-    let mut reader = VolumeReader::new(volume.handle, 512)?;
+    let mut reader = VolumeReader::new(volume, 512)?;
     let mut boot_buf = vec![0u8; 512];
     reader.seek(SeekFrom::Start(0)).map_err(io_err)?;
     reader.read_exact(&mut boot_buf).map_err(io_err)?;

@@ -1,3 +1,5 @@
+#![cfg(windows)]
+
 //! Best-effort integration coverage for ReFS / USN v3 128-bit file IDs.
 //!
 //! On the developer machine D: is ReFS, so journal and MFT enumeration should

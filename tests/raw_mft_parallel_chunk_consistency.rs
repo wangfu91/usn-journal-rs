@@ -1,3 +1,5 @@
+#![cfg(windows)]
+
 //! Integration test: parallel raw-MFT chunk parsing matches the serial chunk path.
 //!
 //! The test intentionally samples an early, relatively stable prefix of the MFT

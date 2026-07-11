@@ -8,9 +8,10 @@ use crate::{Fid, raw_mft::RawMft};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::{
     ffi::OsString,
-    os::windows::ffi::{OsStrExt, OsStringExt},
     path::PathBuf,
 };
+#[cfg(windows)]
+use std::os::windows::ffi::{OsStrExt, OsStringExt};
 
 /// NTFS root directory MFT record number (`$Root`).
 const NTFS_ROOT_RECORD_NUMBER: u64 = 5;
@@ -66,7 +67,10 @@ impl InMemoryDirTree {
                 continue;
             };
             // Encode the file name as raw UTF-16 once and store it.
+            #[cfg(windows)]
             let units: Vec<u16> = entry.file_name.encode_wide().collect();
+            #[cfg(not(windows))]
+            let units: Vec<u16> = entry.file_name.to_string_lossy().encode_utf16().collect();
             entries.insert(
                 key,
                 DirEntry {
@@ -164,7 +168,10 @@ impl InMemoryDirTree {
             path.push(format!("{drive}:\\"));
         }
         for units in chain.iter().rev() {
+            #[cfg(windows)]
             path.push(OsString::from_wide(units));
+            #[cfg(not(windows))]
+            path.push(OsString::from(String::from_utf16_lossy(units)));
         }
         Some(path)
     }
