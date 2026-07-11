@@ -4,7 +4,23 @@
 
 Optimized the serial `RawMft` read path (single-threaded, sequential record enumeration) through profiling and targeted improvements. **~10% throughput improvement** (888ms → 797ms median for 300k warm records on drive C).
 
-## Baseline Profiling
+### Linux follow-up (July 2026)
+
+Criterion and `perf` were run against a read-only mounted Windows NTFS volume:
+
+- 3,340,288 addressable records; 2,115,174 allocated records parsed
+- baseline median: 1.090 s
+- optimized median: 1.023 s
+- change: **6.18% faster**, with identical counts and zero parse errors
+
+The Linux profile placed `osstring_from_utf16le` at about 15% of sampled
+cycles. The Linux-only path now constructs ASCII `OsString` bytes directly and
+streams non-ASCII UTF-16 decoding without an intermediate `Vec<u16>`. Windows
+retains `OsString::from_wide` so lone-surrogate/WTF-16 behavior is unchanged.
+
+Use `USN_TEST_VOLUME=<mount-or-device>` for Linux Criterion runs.
+
+## Windows baseline profiling
 
 Established Criterion baseline using a 300k-record warm read on drive C (NTFS with typical WinSxS hard-linked files):
 - **Median: 888ms** (~2.96µs per record)
@@ -125,9 +141,10 @@ The extension enrichment bucket (28% of CPU, 27% random I/O) is a larger archite
    - I/O-bound sections (ReadFile 27%) don't improve much with CPU optimizations
    - Allocation-based optimizations are most effective for CPU time, not overall throughput
 
-## Next Steps
+## Next steps
 
-1. Convert remaining Divan benches (`journal.rs`, `path_resolver.rs`) to Criterion for consistency
+1. Re-profile after material changes to entry/link ownership; the remaining
+   costs are distributed across required attribute walking and allocations.
 2. Add rustdoc comments to key optimization points (osstring_from_utf16le, borrowed name accessors)
 3. Consider full-volume re-benchmark to validate improvements at scale
 4. Document attribute-list optimization opportunity for future maintainers

@@ -1,3 +1,5 @@
+#![cfg(windows)]
+
 //! Integration test: compare `RawMft` records with `Mft` API records.
 //!
 //! We sample entries from `Mft` (`FSCTL_ENUM_USN_DATA`), then look up the

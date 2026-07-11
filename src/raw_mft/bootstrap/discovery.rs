@@ -65,7 +65,7 @@ pub(super) fn bootstrap_mft_state(
     volume: &Volume,
     boot: &BootSector,
 ) -> Result<MftBootstrap, UsnError> {
-    let mut reader = VolumeReader::new(volume.handle, boot.bytes_per_sector as u64)?;
+    let mut reader = VolumeReader::new(volume, boot.bytes_per_sector as u64)?;
     let mut record0 = read_mft_record_zero(&mut reader, boot)?;
     let mut streams = {
         let record =

@@ -24,12 +24,12 @@ impl<'a> RawMft<'a> {
         options: &RawMftScanOptions,
     ) -> Result<(VolumeReader, VolumeReader), UsnError> {
         let reader = VolumeReader::with_buffer_bytes(
-            self.volume.handle,
+            self.volume,
             self.boot.bytes_per_sector as u64,
             options.buffers.main.get(),
         )?;
         let attr_reader = VolumeReader::with_buffer_bytes(
-            self.volume.handle,
+            self.volume,
             self.boot.bytes_per_sector as u64,
             options.buffers.attr.get(),
         )?;
@@ -206,10 +206,17 @@ pub(super) fn io_err(error: std::io::Error) -> UsnError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(windows)]
     use windows::Win32::Foundation::HANDLE;
 
     fn sparse_only_reader() -> VolumeReader {
-        VolumeReader::new(HANDLE(std::ptr::null_mut()), 512)
+        #[cfg(windows)]
+        let volume = crate::volume::Volume::mock(
+            HANDLE(std::ptr::null_mut()), crate::volume::VolumeSource::DriveLetter('C'));
+        #[cfg(target_os = "linux")]
+        let volume = crate::volume::Volume::from_device_path("/dev/zero")
+            .expect("open test byte source");
+        VolumeReader::new(&volume, 512)
             .expect("test reader construction should succeed")
     }
 

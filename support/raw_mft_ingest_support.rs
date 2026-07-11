@@ -223,9 +223,14 @@ pub fn bench_config() -> &'static BenchConfig {
 
 /// Print the benchmark configuration to stderr.
 pub fn print_bench_config(config: &BenchConfig) {
+    #[cfg(windows)]
+    let source = config.drive.to_string();
+    #[cfg(target_os = "linux")]
+    let source =
+        env::var("USN_TEST_VOLUME").unwrap_or_else(|_| "<unset: set USN_TEST_VOLUME>".to_owned());
     eprintln!(
-        "raw_mft_ingest bench config: drive={} workers={} chunk_records={} main_buffer={} attr_buffer={} start_record={} end_record={}",
-        config.drive,
+        "raw_mft_ingest bench config: volume={} workers={} chunk_records={} main_buffer={} attr_buffer={} start_record={} end_record={}",
+        source,
         config.worker_count,
         config.chunk_records,
         config.main_buffer_bytes,
@@ -351,7 +356,25 @@ pub fn run_serial_ingest(mft: &RawMft<'_>, config: &BenchConfig) -> Result<Bench
 
 /// Open the requested drive, or report why the bench should be skipped.
 pub fn open_volume(drive: char) -> Option<Volume> {
-    match Volume::from_drive_letter(drive) {
+    #[cfg(windows)]
+    let result = Volume::from_drive_letter(drive);
+    #[cfg(target_os = "linux")]
+    let result = {
+        let _ = drive;
+        let source = match env::var("USN_TEST_VOLUME") {
+            Ok(source) => source,
+            Err(_) => {
+                eprintln!("skipping bench: set USN_TEST_VOLUME to an NTFS mount or device");
+                return None;
+            }
+        };
+        if source.starts_with("/dev/") {
+            Volume::from_device_path(source)
+        } else {
+            Volume::from_mount_point(source)
+        }
+    };
+    match result {
         Ok(volume) => Some(volume),
         Err(UsnError::NotElevated) => {
             eprintln!("skipping bench: requires admin privileges");

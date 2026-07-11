@@ -23,7 +23,18 @@ const WIN_EPOCH_OFFSET: u64 = 116_444_736_000_000_000;
 /// Return the first `RawMftEntry` that has a non-zero `si_created` timestamp,
 /// or `None` if the volume isn't accessible (e.g. non-elevated).
 fn get_seed_entry() -> Option<usn_journal_rs::raw_mft::RawMftEntry> {
+    #[cfg(windows)]
     let volume = Volume::from_drive_letter('C').ok()?;
+    #[cfg(target_os = "linux")]
+    let volume = {
+        let source = std::env::var_os("USN_TEST_VOLUME")?;
+        let source = std::path::Path::new(&source);
+        if source.starts_with("/dev") {
+            Volume::from_device_path(source).ok()?
+        } else {
+            Volume::from_mount_point(source).ok()?
+        }
+    };
     let raw_mft = RawMft::new(&volume).ok()?;
     raw_mft
         .try_iter()

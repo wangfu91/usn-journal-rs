@@ -83,6 +83,7 @@ benchmark on its own.
 Useful environment variables:
 
 - `USN_RAW_MFT_BENCH_DRIVE=C`
+- `USN_TEST_VOLUME=/media/user/windows` (Linux mount or device source)
 - `USN_RAW_MFT_BENCH_WORKERS=10`
 - `USN_RAW_MFT_BENCH_WORKERS_LIST=1,2,4,8,11`
 - `USN_RAW_MFT_BENCH_SCHEDULING=dynamic`
@@ -95,12 +96,20 @@ Useful environment variables:
 
 Example commands:
 
+Windows:
+
 ```powershell
 cargo bench --bench raw_mft_ingest -- --sample-size 10 --warm-up-time 3 --measurement-time 10
 
 $env:USN_RAW_MFT_BENCH_DRIVE='C'
 $env:USN_RAW_MFT_BENCH_WORKERS_LIST='1,2,4,8,11'
 cargo bench --bench raw_mft_ingest -- --sample-size 10 --warm-up-time 3 --measurement-time 10
+```
+
+Linux:
+
+```bash
+USN_TEST_VOLUME=/media/user/windows cargo bench --bench raw_mft_ingest -- --sample-size 10 --warm-up-time 3 --measurement-time 10
 ```
 
 Recent Criterion runs on a large `C:` NTFS volume, using the current ingest
@@ -131,4 +140,3 @@ one benchmark volume blindly.
 For the fuller experiment log and the code-path explanation of the worker-count
 and scheduling results, see
 [`../../docs/raw_mft_parallel_ingest_findings.md`](../../docs/raw_mft_parallel_ingest_findings.md).
-

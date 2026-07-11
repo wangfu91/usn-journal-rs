@@ -14,6 +14,8 @@ and idiomatic Rust refactoring. **Breaking changes throughout** — see the
 
 ### Highlights
 
+- Raw NTFS `$MFT` reading now supports Linux mount points and device paths with
+  read-only device access; Windows-only USN/FSCTL APIs are compile-time gated.
 - Raw `$MFT` iteration is ~6× faster (262 ms vs 1.64 s for 200 k records).
 - New in-memory directory-tree path resolver: full-volume scans drop from ~21 s
   to <500 ms (~40× faster).
@@ -25,6 +27,8 @@ and idiomatic Rust refactoring. **Breaking changes throughout** — see the
 
 ### Performance
 
+- Linux raw-MFT filename decoding avoids an intermediate UTF-16 allocation,
+  improving the measured 2.1 M-record serial workload by about 6.2%.
 - Raw `$MFT` reader: zero-copy fixup parsing via `VolumeReader::borrow_at`,
   eliminated per-record memcpy.
 - Path resolver: `Arc<Path>` cache values for cheap clones; reusable scratch
@@ -35,6 +39,8 @@ and idiomatic Rust refactoring. **Breaking changes throughout** — see the
 
 ### Added
 
+- Linux `Volume::from_device_path`; Linux `Volume::from_mount_point` resolves
+  NTFS backing devices through `/proc/self/mountinfo` and opens them read-only.
 - `usn_journal_rs::types` module with `Usn` and `Fid` newtypes.
 - `usn_journal_rs::time::Filetime` with `to_system_time`, `from_system_time`,
   `TryFrom` conversions, `to_unix_seconds`, and `to_unix_nanos`.

@@ -100,7 +100,25 @@ pub fn pick_drive() -> char {
 
 /// Open the requested drive, or report why the bench should be skipped.
 pub fn open_volume(drive: char) -> Option<Volume> {
-    match Volume::from_drive_letter(drive) {
+    #[cfg(windows)]
+    let result = Volume::from_drive_letter(drive);
+    #[cfg(target_os = "linux")]
+    let result = {
+        let _ = drive;
+        let source = match env::var("USN_TEST_VOLUME") {
+            Ok(source) => source,
+            Err(_) => {
+                eprintln!("skipping bench: set USN_TEST_VOLUME to an NTFS mount or device");
+                return None;
+            }
+        };
+        if source.starts_with("/dev/") {
+            Volume::from_device_path(source)
+        } else {
+            Volume::from_mount_point(source)
+        }
+    };
+    match result {
         Ok(volume) => Some(volume),
         Err(UsnError::NotElevated) => {
             eprintln!("skipping bench: requires admin privileges");
@@ -115,9 +133,14 @@ pub fn open_volume(drive: char) -> Option<Volume> {
 
 /// Print the serial read configuration to stderr.
 pub fn print_serial_config(config: &SerialConfig) {
+    #[cfg(windows)]
+    let source = config.drive.to_string();
+    #[cfg(target_os = "linux")]
+    let source =
+        env::var("USN_TEST_VOLUME").unwrap_or_else(|_| "<unset: set USN_TEST_VOLUME>".to_owned());
     eprintln!(
-        "raw_mft serial read config: drive={} start_record={} end_record={} max_records={} ads={} runs={} dos={} unused={}",
-        config.drive,
+        "raw_mft serial read config: volume={} start_record={} end_record={} max_records={} ads={} runs={} dos={} unused={}",
+        source,
         config.start_record,
         config
             .end_record

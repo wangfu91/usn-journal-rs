@@ -8,7 +8,9 @@
 //! iterator) then sees a familiar byte-oriented stream.
 
 use crate::errors::UsnError;
+use crate::volume::Volume;
 use std::io::{self, Read, Seek, SeekFrom};
+#[cfg(windows)]
 use windows::Win32::{
     Foundation::HANDLE,
     Storage::FileSystem::{FILE_BEGIN, ReadFile, SetFilePointerEx},
@@ -26,7 +28,10 @@ pub const DEFAULT_BUFFER_BYTES: usize = 256 * 1024;
 /// copied into the caller's buffer.
 pub(crate) struct VolumeReader {
     /// Borrowed raw volume handle.
+    #[cfg(windows)]
     handle: HANDLE,
+    #[cfg(target_os = "linux")]
+    file: std::fs::File,
     /// Required sector alignment for I/O.
     sector_size: u64,
     /// Byte-oriented cursor exposed through `Read + Seek`.
@@ -41,13 +46,13 @@ pub(crate) struct VolumeReader {
 
 impl VolumeReader {
     /// Create a reader with the default internal buffer size.
-    pub fn new(handle: HANDLE, sector_size: u64) -> Result<Self, UsnError> {
-        Self::with_buffer_bytes(handle, sector_size, DEFAULT_BUFFER_BYTES)
+    pub fn new(volume: &Volume, sector_size: u64) -> Result<Self, UsnError> {
+        Self::with_buffer_bytes(volume, sector_size, DEFAULT_BUFFER_BYTES)
     }
 
     /// Create a reader with a caller-chosen internal buffer size.
     pub fn with_buffer_bytes(
-        handle: HANDLE,
+        volume: &Volume,
         sector_size: u64,
         buffer_bytes: usize,
     ) -> Result<Self, UsnError> {
@@ -59,7 +64,10 @@ impl VolumeReader {
         let sectors = (buffer_bytes as u64 / sector_size).max(1);
         let cap = (sectors * sector_size) as usize;
         Ok(Self {
-            handle,
+            #[cfg(windows)]
+            handle: volume.handle,
+            #[cfg(target_os = "linux")]
+            file: volume.file.try_clone()?,
             sector_size,
             position: 0,
             buf: vec![0u8; cap],
@@ -74,6 +82,7 @@ impl VolumeReader {
     }
 
     /// Seek the underlying volume handle to an absolute byte offset.
+    #[cfg(windows)]
     fn raw_seek(&self, offset: u64) -> io::Result<()> {
         let mut new_pos: i64 = 0;
         // SAFETY: `self.handle` is a live volume handle owned by this
@@ -86,32 +95,51 @@ impl VolumeReader {
 
     /// Refill the internal buffer starting at a sector-aligned volume offset.
     fn refill(&mut self, sector_pos: u64) -> io::Result<()> {
+        #[cfg(windows)]
         self.raw_seek(sector_pos)?;
-        let mut bytes_read: u32 = 0;
-        // SAFETY: `self.handle` is a live volume handle. The output
-        // buffer is `self.buf` of exactly the slice length we pass;
-        // `&mut bytes_read` is a unique stack out-pointer. The Win32
-        // `ReadFile` requires sector-aligned offsets and lengths for
-        // `FILE_FLAG_NO_BUFFERING` opens — the caller (`refill`) is
-        // responsible for invoking us with a sector-aligned offset.
-        let res = unsafe {
-            ReadFile(
-                self.handle,
-                Some(self.buf.as_mut_slice()),
-                Some(&mut bytes_read),
-                None,
-            )
-        };
-        res.map_err(io::Error::other)?;
-        if bytes_read == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "zero-length read from volume",
-            ));
+        #[cfg(target_os = "linux")]
+        use std::os::unix::fs::FileExt;
+        #[cfg(target_os = "linux")]
+        {
+            let bytes_read = self.file.read_at(&mut self.buf, sector_pos)?;
+            if bytes_read == 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "zero-length read from volume",
+                ));
+            }
+            self.buf_pos = sector_pos;
+            self.buf_len = bytes_read;
+            Ok(())
         }
-        self.buf_pos = sector_pos;
-        self.buf_len = bytes_read as usize;
-        Ok(())
+        #[cfg(windows)]
+        {
+            let mut bytes_read: u32 = 0;
+            // SAFETY: `self.handle` is a live volume handle. The output
+            // buffer is `self.buf` of exactly the slice length we pass;
+            // `&mut bytes_read` is a unique stack out-pointer. The Win32
+            // `ReadFile` requires sector-aligned offsets and lengths for
+            // `FILE_FLAG_NO_BUFFERING` opens — the caller (`refill`) is
+            // responsible for invoking us with a sector-aligned offset.
+            let res = unsafe {
+                ReadFile(
+                    self.handle,
+                    Some(self.buf.as_mut_slice()),
+                    Some(&mut bytes_read),
+                    None,
+                )
+            };
+            res.map_err(io::Error::other)?;
+            if bytes_read == 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "zero-length read from volume",
+                ));
+            }
+            self.buf_pos = sector_pos;
+            self.buf_len = bytes_read as usize;
+            Ok(())
+        }
     }
 
     /// Return whether the internal buffer fully covers the requested range.
@@ -212,16 +240,21 @@ impl Seek for VolumeReader {
 mod tests {
     use super::*;
 
+    fn reader() -> VolumeReader {
+        #[cfg(windows)]
+        let volume = crate::volume::Volume::mock(
+            HANDLE(std::ptr::null_mut()),
+            crate::volume::VolumeSource::DriveLetter('C'),
+        );
+        #[cfg(target_os = "linux")]
+        let volume =
+            crate::volume::Volume::from_device_path("/dev/zero").expect("open test byte source");
+        VolumeReader::new(&volume, 512).expect("construct test reader")
+    }
+
     #[test]
     fn round_down_aligns_to_sector() {
-        let r = VolumeReader {
-            handle: HANDLE(std::ptr::null_mut()),
-            sector_size: 512,
-            position: 0,
-            buf: vec![0u8; 4096],
-            buf_pos: u64::MAX,
-            buf_len: 0,
-        };
+        let r = reader();
         assert_eq!(r.round_down(0), 0);
         assert_eq!(r.round_down(511), 0);
         assert_eq!(r.round_down(512), 512);
@@ -232,23 +265,25 @@ mod tests {
 
     #[test]
     fn rejects_non_power_of_two_sector_size() {
-        let h = HANDLE(std::ptr::null_mut());
-        assert!(VolumeReader::new(h, 0).is_err());
-        assert!(VolumeReader::new(h, 3).is_err());
-        assert!(VolumeReader::new(h, 6).is_err());
-        assert!(VolumeReader::new(h, 512).is_ok());
+        #[cfg(windows)]
+        let volume = crate::volume::Volume::mock(
+            HANDLE(std::ptr::null_mut()),
+            crate::volume::VolumeSource::DriveLetter('C'),
+        );
+        #[cfg(target_os = "linux")]
+        let volume =
+            crate::volume::Volume::from_device_path("/dev/zero").expect("open test byte source");
+        assert!(VolumeReader::new(&volume, 0).is_err());
+        assert!(VolumeReader::new(&volume, 3).is_err());
+        assert!(VolumeReader::new(&volume, 6).is_err());
+        assert!(VolumeReader::new(&volume, 512).is_ok());
     }
 
     #[test]
     fn buf_contains_handles_window() {
-        let mut r = VolumeReader {
-            handle: HANDLE(std::ptr::null_mut()),
-            sector_size: 512,
-            position: 0,
-            buf: vec![0u8; 4096],
-            buf_pos: 1024,
-            buf_len: 2048,
-        };
+        let mut r = reader();
+        r.buf_pos = 1024;
+        r.buf_len = 2048;
         assert!(r.buf_contains(1024, 1));
         assert!(r.buf_contains(1024, 2048));
         assert!(!r.buf_contains(1024, 2049));

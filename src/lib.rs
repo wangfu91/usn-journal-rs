@@ -18,6 +18,7 @@
 //! ```no_run
 //! use usn_journal_rs::volume::Volume;
 //!
+//! # #[cfg(windows)] {
 //! let volume = Volume::from_drive_letter('C').unwrap();
 //! for result in volume.journal().try_iter().unwrap().take(10) {
 //!     match result {
@@ -25,12 +26,14 @@
 //!         Err(e) => eprintln!("Error reading entry: {e}"),
 //!     }
 //! }
+//! # }
 //! ```
 //!
 //! # Example: Enumerating MFT Entries
 //! ```no_run
 //! use usn_journal_rs::volume::Volume;
 //!
+//! # #[cfg(windows)] {
 //! let volume = Volume::from_drive_letter('C').unwrap();
 //! for result in volume.mft().try_iter().unwrap().take(10) {
 //!     match result {
@@ -38,24 +41,33 @@
 //!         Err(e) => eprintln!("Error reading MFT entry: {e}"),
 //!     }
 //! }
+//! # }
 //! ```
 //!
 //! ## Platform
-//! - Windows NTFS/ReFS volumes
-//! - Requires appropriate privileges to access the USN journal
+//! - Raw NTFS `$MFT` reading is supported on Windows and Linux.
+//! - USN journal, FSCTL MFT enumeration, and live file-ID lookup are Windows-only.
+//! - Raw devices are always opened read-only; appropriate OS permissions are required.
 //!
 //! ## License
 //! MIT License. See [LICENSE](https://github.com/wangfu91/usn-journal-rs/blob/main/LICENSE).
 
+#[cfg(not(any(windows, target_os = "linux")))]
+compile_error!("usn-journal-rs supports only Windows and Linux targets");
+
 mod display;
 pub mod errors;
 mod file_attributes;
+#[cfg(windows)]
 pub mod journal;
+#[cfg(windows)]
 pub mod mft;
 pub mod path;
+#[cfg(windows)]
 pub mod privilege;
 pub mod raw_mft;
 pub mod types;
+#[cfg(windows)]
 mod usn_record;
 
 // Re-export commonly used types
@@ -69,11 +81,12 @@ pub type UsnResult<T> = std::result::Result<T, UsnError>;
 pub mod prelude {
     pub use crate::{
         Fid, FileAttributes, Filetime, Usn, UsnError, UsnReason, UsnResult, UsnSourceInfo,
+        raw_mft::{RawMft, RawMftEntry, RawMftPathResolver, RawMftScanOptions}, volume::Volume,
+    };
+    #[cfg(windows)]
+    pub use crate::{
         journal::{JournalIterOptions, UsnEntry, UsnJournal},
-        mft::{Mft, MftEntry, MftIterOptions, UsnRecordVersion},
-        path::PathResolver,
-        raw_mft::{RawMft, RawMftEntry, RawMftPathResolver, RawMftScanOptions},
-        volume::Volume,
+        mft::{Mft, MftEntry, MftIterOptions, UsnRecordVersion}, path::PathResolver,
     };
 }
 
@@ -84,10 +97,10 @@ pub use time::Filetime;
 mod time;
 pub mod volume;
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 mod test_support;
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 mod tests {
     use super::prelude;
 

@@ -1,15 +1,12 @@
 //! Snapshot path resolver for entries produced by a raw `$MFT` scan.
 
-use std::{
-    cell::RefCell,
-    path::{Path, PathBuf},
-};
+#[cfg(windows)]
+use std::cell::RefCell;
+use std::path::{Path, PathBuf};
 
-use crate::{
-    UsnResult,
-    path::{InMemoryDirTree, resolve::resolve_path as resolve_live_path},
-    volume::Volume,
-};
+#[cfg(windows)]
+use crate::path::resolve::resolve_path as resolve_live_path;
+use crate::{UsnResult, path::InMemoryDirTree, volume::Volume};
 
 use super::{RawMft, RawMftEntry};
 
@@ -21,8 +18,8 @@ use super::{RawMft, RawMftEntry};
 /// to one point-in-time snapshot and avoids mixing live filesystem state into
 /// the default result.
 ///
-/// If you explicitly want best-effort live fallback for paths that are missing
-/// from the snapshot tree, call [`Self::with_live_fallback`].
+/// On Windows, callers can explicitly enable best-effort live fallback for
+/// paths missing from the snapshot tree with `with_live_fallback`.
 #[derive(Debug)]
 pub struct RawMftPathResolver<'a> {
     /// Volume from which the raw `$MFT` snapshot was built.
@@ -30,8 +27,10 @@ pub struct RawMftPathResolver<'a> {
     /// Snapshot-local directory tree built from the raw `$MFT` scan.
     in_memory_tree: InMemoryDirTree,
     /// Whether live `OpenFileById` fallback is allowed when the snapshot tree misses.
+    #[cfg(windows)]
     live_fallback: bool,
     /// Reusable heap buffer for optional live fallback lookups.
+    #[cfg(windows)]
     buffer: RefCell<Vec<u8>>,
 }
 
@@ -41,7 +40,9 @@ impl<'a> RawMftPathResolver<'a> {
         Ok(Self {
             volume: raw_mft.volume(),
             in_memory_tree: InMemoryDirTree::try_from(raw_mft)?,
+            #[cfg(windows)]
             live_fallback: false,
+            #[cfg(windows)]
             buffer: RefCell::new(Vec::new()),
         })
     }
@@ -51,6 +52,7 @@ impl<'a> RawMftPathResolver<'a> {
     /// This is opt-in because live fallback mixes current filesystem state into
     /// results derived from a point-in-time raw-`$MFT` snapshot.
     #[must_use]
+    #[cfg(windows)]
     pub fn with_live_fallback(mut self) -> Self {
         self.live_fallback = true;
         self
@@ -58,26 +60,28 @@ impl<'a> RawMftPathResolver<'a> {
 
     /// Resolve `entry` to a path using the raw-`$MFT` snapshot tree.
     ///
-    /// When [`Self::with_live_fallback`] has been enabled, unresolved snapshot
-    /// entries fall back to a live `OpenFileById` lookup against the mounted volume.
+    /// On Windows, when `with_live_fallback` has been enabled, unresolved
+    /// snapshot entries fall back to `OpenFileById` against the mounted volume.
     #[must_use]
     pub fn resolve_path(&self, entry: &RawMftEntry) -> Option<PathBuf> {
-        self.in_memory_tree
+        let snapshot_path = self
+            .in_memory_tree
             .resolve_with_optional_drive(entry.file_reference, self.volume.drive_letter())
-            .map(|path| prefix_mount_point(self.volume, &path))
-            .or_else(|| {
-                if self.live_fallback {
-                    resolve_live_path(
-                        self.volume,
-                        entry.file_reference,
-                        entry.parent_reference,
-                        entry.file_name.as_os_str(),
-                        &self.buffer,
-                    )
-                } else {
-                    None
-                }
-            })
+            .map(|path| prefix_mount_point(self.volume, &path));
+        #[cfg(windows)]
+        return snapshot_path.or_else(|| {
+            self.live_fallback.then(|| {
+                resolve_live_path(
+                    self.volume,
+                    entry.file_reference,
+                    entry.parent_reference,
+                    entry.file_name.as_os_str(),
+                    &self.buffer,
+                )
+            })?
+        });
+        #[cfg(not(windows))]
+        snapshot_path
     }
 }
 
@@ -90,7 +94,7 @@ fn prefix_mount_point(volume: &Volume, path: &Path) -> PathBuf {
         .map_or_else(|| path.to_path_buf(), |mount_point| mount_point.join(path))
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 mod tests {
     use super::*;
     use crate::volume::VolumeSource;

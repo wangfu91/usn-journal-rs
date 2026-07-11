@@ -24,8 +24,9 @@
 //! cargo flamegraph -o raw_mft_serial_read.svg --example raw_mft_serial_read_profile
 //! ```
 //!
-//! Set `USN_TEST_DRIVE` to choose the drive letter (default `C`). All benches
-//! skip gracefully when the drive isn't NTFS or the process is not elevated.
+//! On Windows, set `USN_TEST_DRIVE` to choose the drive letter (default `C`).
+//! On Linux, set `USN_TEST_VOLUME` to an NTFS mount or device path. All benches
+//! skip gracefully when the source isn't NTFS or cannot be read.
 //! Set `USN_RAW_MFT_SERIAL_MAX_RECORDS` to cap the per-run record count for
 //! faster optimization-loop iterations.
 

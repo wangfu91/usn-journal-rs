@@ -2,6 +2,7 @@
 
 use crate::errors::UsnError;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+#[cfg(windows)]
 use windows::Win32::Foundation::FILETIME;
 
 /// Number of 100-nanosecond intervals between the Windows FILETIME epoch
@@ -128,6 +129,7 @@ impl Filetime {
     }
 }
 
+#[cfg(windows)]
 impl From<FILETIME> for Filetime {
     #[inline]
     fn from(value: FILETIME) -> Self {
@@ -135,6 +137,7 @@ impl From<FILETIME> for Filetime {
     }
 }
 
+#[cfg(windows)]
 impl From<Filetime> for FILETIME {
     #[inline]
     fn from(value: Filetime) -> Self {
@@ -185,7 +188,7 @@ fn system_time_to_filetime_raw(value: SystemTime) -> Option<u64> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 mod tests {
     use super::*;
     use std::time::{Duration, UNIX_EPOCH};

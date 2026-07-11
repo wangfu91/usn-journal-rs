@@ -2,14 +2,23 @@
 
 ## Scope
 
-This note captures the validated performance work around the parallel raw-MFT ingest path and the current measurement state for drive `C:`.
+This note captures the validated performance work around the parallel raw-MFT
+ingest path. The original sweeps below are Windows `C:` measurements; a Linux
+follow-up is recorded separately.
+
+### Linux follow-up (July 2026)
+
+On a read-only mounted NTFS volume with 3,340,288 addressable records, the
+10-worker dynamic ingest baseline measured 204.9 ms. The Linux filename-decoder
+optimization measured 203.2 ms (about 1.3%, within the configured noise
+threshold). Set `USN_TEST_VOLUME=<mount-or-device>` for Linux runs.
 
 ## What was kept
 
 The current diff keeps these meaningful changes:
 
 - Migrated `benches\raw_mft_ingest.rs` from Divan to Criterion for more stable measurements and baseline comparisons.
-- Added `src\raw_mft\ingest_support.rs` so the benchmark and profiling target share the exact same ingest workload.
+- Added `support/raw_mft_ingest_support.rs` so the benchmark and profiling target share the exact same ingest workload.
 - Added `examples\raw_mft_parallel_ingest_profile.rs` as the exact-match profiling target for flamegraph and ETW runs.
 - Kept the lean batch parsing path in `src\raw_mft\entry_build\batch.rs`, with the batch types wired through `src\raw_mft\entry_build\mod.rs` and re-exported from `src\raw_mft\mod.rs`, so folded chunk consumers avoid rebuilding the full `RawMftEntry` shape when they only need the reduced batch form.
 
@@ -27,7 +36,7 @@ cargo bench --bench raw_mft_ingest -- --sample-size 10
 
 - `Cargo.toml`
 - `benches\raw_mft_ingest.rs`
-- `src\raw_mft\ingest_support.rs`
+- `support/raw_mft_ingest_support.rs`
 - `examples\raw_mft_parallel_ingest_profile.rs`
 
 copied in, while leaving `src\raw_mft\*.rs` at `HEAD`.
@@ -351,7 +360,7 @@ The current parallel path is not a producer/consumer pipeline. Each worker does
 its own I/O and parsing end to end:
 
 1. `RawMft::parallel()` builds a `RawMftParallelScan` (`src\raw_mft\parallel\scan.rs`).
-2. `run_parallel_ingest()` calls `.fold_chunks(...)` with a worker count and scheduling mode (`src\raw_mft\ingest_support.rs`).
+2. `run_parallel_ingest()` calls `.fold_chunks(...)` with a worker count and scheduling mode (`support/raw_mft_ingest_support.rs`).
 3. `for_each_folded_chunk()` forwards that work into `run_parallel_chunks_in_order()` (`src\raw_mft\parallel\chunks.rs`, `src\raw_mft\parallel\executor.rs`).
 4. Each worker thread:
    - reopens the volume (`open_parallel_volume`)
@@ -390,9 +399,11 @@ This part is partly code fact and partly measurement-backed inference.
 
 Facts from the code:
 
-- every worker reopens the raw volume handle (`open_parallel_volume`)
+- every worker reopens the raw volume source (`open_parallel_volume`)
 - every worker allocates two readers (`buffered_readers_for_options`)
-- every reader performs its own `SetFilePointerEx` / `ReadFile` flow (`VolumeReader::raw_seek`, `VolumeReader::refill`)
+- on Windows, every reader performs its own `SetFilePointerEx` / `ReadFile`
+  flow; on Linux, each reader uses positional `FileExt::read_at` on a read-only
+  descriptor (`VolumeReader::refill`)
 - `$ATTRIBUTE_LIST` enrichment can trigger extra extension-record loads on the per-worker `attr_reader` (`enrich_batch_from_attr_list`)
 
 So more workers do **not** only mean more CPU. They also mean:

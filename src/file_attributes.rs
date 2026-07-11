@@ -3,6 +3,7 @@
 use std::fmt;
 
 /// Shared view over a raw Windows file-attribute bitmask.
+#[cfg(windows)]
 pub(crate) trait FileAttributeView {
     /// Returns the underlying Windows file-attribute flags.
     fn file_attributes(&self) -> crate::FileAttributes;
@@ -45,7 +46,10 @@ const FILE_ATTRIBUTE_NAMES: &[(u32, &str)] = &[
     ),
     (crate::FileAttributes::VIRTUAL.bits(), "VIRTUAL"),
     (crate::FileAttributes::NO_SCRUB_DATA.bits(), "NO_SCRUB_DATA"),
-    (crate::FileAttributes::RECALL_ON_OPEN.bits(), "RECALL_ON_OPEN"),
+    (
+        crate::FileAttributes::RECALL_ON_OPEN.bits(),
+        "RECALL_ON_OPEN",
+    ),
     (
         crate::FileAttributes::RECALL_ON_DATA_ACCESS.bits(),
         "RECALL_ON_DATA_ACCESS",

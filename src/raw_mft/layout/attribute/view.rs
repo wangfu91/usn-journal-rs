@@ -7,6 +7,7 @@
 
 use std::ffi::OsString;
 use std::mem::size_of;
+#[cfg(windows)]
 use std::os::windows::ffi::OsStringExt;
 
 use zerocopy::FromBytes;
@@ -36,18 +37,42 @@ pub(crate) fn osstring_from_utf16le(bytes: &[u8]) -> Option<OsString> {
         .chunks_exact(2)
         .all(|chunk| chunk[1] == 0 && chunk[0] < 0x80)
     {
-        let mut ascii = String::with_capacity(bytes.len() / 2);
-        for chunk in bytes.chunks_exact(2) {
-            ascii.push(chunk[0] as char);
+        #[cfg(windows)]
+        {
+            let mut ascii = String::with_capacity(bytes.len() / 2);
+            for chunk in bytes.chunks_exact(2) {
+                ascii.push(chunk[0] as char);
+            }
+            return Some(OsString::from(ascii));
         }
-        return Some(OsString::from(ascii));
+        #[cfg(not(windows))]
+        {
+            use std::os::unix::ffi::OsStringExt;
+
+            let ascii = bytes.chunks_exact(2).map(|chunk| chunk[0]).collect();
+            return Some(OsString::from_vec(ascii));
+        }
     }
 
+    #[cfg(windows)]
     let units: Vec<u16> = bytes
         .chunks_exact(2)
         .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
         .collect();
-    Some(OsString::from_wide(&units))
+    #[cfg(windows)]
+    {
+        Some(OsString::from_wide(&units))
+    }
+    #[cfg(not(windows))]
+    {
+        let units = bytes
+            .chunks_exact(2)
+            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]));
+        let decoded: String = char::decode_utf16(units)
+            .map(|result| result.unwrap_or(char::REPLACEMENT_CHARACTER))
+            .collect();
+        Some(OsString::from(decoded))
+    }
 }
 
 /// A view into a single attribute record borrowed from a FILE record's

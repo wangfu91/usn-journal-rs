@@ -1,3 +1,5 @@
+#![cfg(windows)]
+
 //! Integration test: live and raw-snapshot path resolvers agree.
 //!
 //! Builds a `RawMft` for C:, collects every 1 000th entry (up to 50),

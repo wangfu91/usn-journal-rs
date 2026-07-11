@@ -1,7 +1,7 @@
 //! Experimental historical path reconstruction helpers for raw `$MFT` snapshots.
 //!
 //! These helpers index one raw-`$MFT` snapshot and intentionally keep their
-//! best-effort semantics separate from [`crate::path::PathResolver`]. They can
+//! best-effort semantics separate from the Windows live `PathResolver`. They can
 //! use deleted and stale records from the snapshot, report whether a path was
 //! resolved exactly or only by record-number fallback, and preserve partial
 //! results when the parent chain breaks.
@@ -285,7 +285,7 @@ fn compose_path(
     path
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 mod tests {
     use super::*;
     use crate::{

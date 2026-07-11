@@ -1,3 +1,5 @@
+#![cfg(windows)]
+
 //! Integration test: raw-MFT iteration on a ReFS volume returns
 //! `UsnError::UnsupportedFilesystem`.
 //!

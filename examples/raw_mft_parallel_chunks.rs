@@ -6,17 +6,12 @@ use std::{
     time::Instant,
 };
 
-use usn_journal_rs::{
-    raw_mft::{RawMft, RawMftChunkPlanOptions, RawMftScanOptions},
-    volume::Volume,
-};
+use usn_journal_rs::raw_mft::{RawMft, RawMftChunkPlanOptions, RawMftScanOptions};
+
+mod raw_volume;
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let drive = env::args()
-        .nth(1)
-        .and_then(|arg| arg.chars().next())
-        .map(|ch| ch.to_ascii_uppercase())
-        .unwrap_or('C');
+    let source_arg = env::args().nth(1);
     let max_records_per_chunk = env::args()
         .nth(2)
         .and_then(|arg| arg.parse::<u64>().ok())
@@ -32,7 +27,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .unwrap_or(NonZeroUsize::MIN),
         );
 
-    let volume = Volume::from_drive_letter(drive)?;
+    let (volume, source) = raw_volume::open_raw_volume(source_arg)?;
     let raw_mft = RawMft::new(&volume)?;
     let chunk_plan = RawMftChunkPlanOptions::builder()
         .max_records_per_chunk(max_records_per_chunk)
@@ -60,7 +55,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let elapsed = start.elapsed();
 
     println!("raw_mft parallel chunks");
-    println!("  drive:                    {drive}:");
+    println!("  volume:                   {source}");
     println!("  worker_count:             {}", worker_count);
     println!("  max_records_per_chunk:    {}", max_records_per_chunk);
     println!("  chunk_count:              {chunk_count}");

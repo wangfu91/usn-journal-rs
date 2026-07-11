@@ -31,9 +31,13 @@ pub(crate) enum ChunkScheduling {
 #[derive(Debug, Clone)]
 pub(in crate::raw_mft) enum ParallelVolumeSource {
     /// Reopen by drive letter (e.g. `C`).
+    #[cfg(windows)]
     DriveLetter(char),
     /// Reopen by mount-point path.
     MountPoint(PathBuf),
+    /// Reopen a Linux block device directly.
+    #[cfg(target_os = "linux")]
+    DevicePath(PathBuf),
 }
 
 /// Run chunk work in parallel and visit results in original chunk order.
@@ -228,14 +232,20 @@ where
 pub(in crate::raw_mft) fn reusable_parallel_volume_source(
     volume: &Volume,
 ) -> Result<ParallelVolumeSource, UsnError> {
-    volume
-        .drive_letter()
-        .map(ParallelVolumeSource::DriveLetter)
-        .or_else(|| {
+    #[cfg(windows)]
+    let source = volume.drive_letter().map(ParallelVolumeSource::DriveLetter);
+    #[cfg(not(windows))]
+    let source: Option<ParallelVolumeSource> = None;
+    let source = source.or_else(|| {
             volume
                 .mount_point()
                 .map(|path| ParallelVolumeSource::MountPoint(path.to_path_buf()))
-        })
+        });
+    #[cfg(target_os = "linux")]
+    let source = source.or_else(|| volume.device_path().map(|path| {
+        ParallelVolumeSource::DevicePath(path.to_path_buf())
+    }));
+    source
         .ok_or_else(|| {
             UsnError::Io(io::Error::other(
                 "raw_mft parallel chunk parsing requires a reusable volume source",
@@ -248,8 +258,11 @@ pub(in crate::raw_mft) fn open_parallel_volume(
     source: &ParallelVolumeSource,
 ) -> Result<Volume, UsnError> {
     match source {
+        #[cfg(windows)]
         ParallelVolumeSource::DriveLetter(drive_letter) => Volume::from_drive_letter(*drive_letter),
         ParallelVolumeSource::MountPoint(path) => Volume::from_mount_point(path),
+        #[cfg(target_os = "linux")]
+        ParallelVolumeSource::DevicePath(path) => Volume::from_device_path(path),
     }
 }
 

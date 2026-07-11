@@ -185,7 +185,7 @@ impl RawMft<'_> {
         let mut ext_cache: HashMap<u64, Box<[u8]>> = HashMap::new();
         let mut deferred: Vec<DeferredBase> = Vec::new();
         let mut reader =
-            VolumeReader::with_buffer_bytes(self.volume().handle, self.boot.bytes_per_sector as u64, options.buffers.main.get())?;
+            VolumeReader::with_buffer_bytes(self.volume(), self.boot.bytes_per_sector as u64, options.buffers.main.get())?;
 
         loop {
             let index = next_chunk.fetch_add(1, Ordering::Relaxed);
@@ -252,7 +252,7 @@ impl RawMft<'_> {
         let mut acc = init();
         // Only needed for the rare non-resident `$ATTRIBUTE_LIST` payload.
         let mut attr_reader = VolumeReader::with_buffer_bytes(
-            self.volume().handle,
+            self.volume(),
             self.boot.bytes_per_sector as u64,
             options.buffers.attr.get(),
         )?;

@@ -12,7 +12,7 @@ The relevant code lives in:
 - `src/raw_mft/serial/`
 - `src/raw_mft/parallel/`
 - `src/raw_mft/io.rs`
-- `src/raw_mft/ondisk/`
+- `src/raw_mft/layout/`
 - `src/raw_mft/chunk_plan.rs`
 - `benches/raw_mft_ingest.rs`
 - `examples/raw_mft_parallel_chunks.rs`
@@ -20,7 +20,8 @@ The relevant code lives in:
 ## Scope and constraints
 
 - `RawMft` is NTFS-only. ReFS returns `UsnError::UnsupportedFilesystem` during `RawMft::new`.
-- Opening the volume requires Administrator privileges because the crate opens the raw volume handle directly.
+- Windows requires Administrator privileges for the raw volume handle. Linux
+  requires read permission for the backing block device and opens it read-only.
 - The raw reader is not using `FSCTL_ENUM_USN_DATA`. It reads the `$MFT` file itself, interprets NTFS on-disk structures, and yields richer metadata than the FSCTL-based `Mft` API.
 
 ## High-level pipeline
@@ -55,16 +56,17 @@ Screenshot from: [YouTube](https://www.youtube.com/watch?v=PQbGTP0bR9o&t=229s)
 
 ### `Volume`
 
-`src/volume.rs` owns the Windows volume handle and remembers how it was opened:
+`src/volume.rs` owns the platform volume source and remembers how it was opened:
 
-- drive letter, or
-- mount point.
+- Windows drive letter or mount point;
+- Linux mount point resolved through `/proc/self/mountinfo`, or direct device path.
 
-That source information matters for parallel reads because each worker thread reopens its own handle instead of sharing one mutable reader.
+That source information matters for parallel reads because each worker thread
+reopens its own read-only handle/file instead of sharing one mutable reader.
 
 ### `BootSector`
 
-`src/raw_mft/ondisk/boot.rs` parses the first 512 bytes of the volume and extracts:
+`src/raw_mft/layout/boot.rs` parses the first 512 bytes of the volume and extracts:
 
 - `bytes_per_sector`,
 - `cluster_size`,
@@ -76,7 +78,7 @@ This is the geometry the rest of the reader uses.
 
 ### `ExtentMap`
 
-`src/raw_mft/ondisk/extent.rs` converts the unnamed `$DATA` runs of `$MFT` into a mapping from logical record number to physical byte offset on disk.
+`src/raw_mft/layout/extent.rs` converts the unnamed `$DATA` runs of `$MFT` into a mapping from logical record number to physical byte offset on disk.
 
 The important detail is that the reader does not assume the `$MFT` is contiguous. The extent map can represent:
 
@@ -87,9 +89,11 @@ The important detail is that the reader does not assume the `$MFT` is contiguous
 
 ### `VolumeReader`
 
-`src/raw_mft/io.rs` wraps the raw Windows handle with a sector-aligned buffered reader.
+`src/raw_mft/io.rs` provides the shared buffered reader over a platform volume.
 
-This exists because raw volume reads on Windows must respect sector alignment. `VolumeReader` exposes a byte-oriented interface anyway by:
+Windows uses `SetFilePointerEx` / `ReadFile` and respects sector-aligned refill
+boundaries. Linux uses positional `FileExt::read_at` on independently cloned
+read-only descriptors. `VolumeReader` exposes the same byte-oriented interface by:
 
 - aligning internal refill offsets to sector boundaries,
 - keeping a sector-aligned backing buffer,
@@ -99,7 +103,7 @@ The main performance win is that the iterator can parse FILE records directly ou
 
 ### `FileRecord`
 
-`src/raw_mft/ondisk/record.rs` validates and fixes up one FILE record.
+`src/raw_mft/layout/record.rs` validates and fixes up one FILE record.
 
 The flow is:
 
@@ -138,7 +142,8 @@ FILE record 0 stream discovery and bitmap loading split into
 
 ### 1. Open a temporary reader and parse the boot sector
 
-The function starts with `VolumeReader::new(volume.handle, 512)` because the NTFS boot sector is always read as the first 512-byte sector.
+The function starts with `VolumeReader::new(volume, 512)` because the NTFS boot
+sector is always read as the first 512-byte sector.
 
 After `BootSector::parse` succeeds, the reader is recreated using the real `bytes_per_sector` from the volume. That matters on volumes whose physical sector size is not 512 bytes.
 
@@ -378,12 +383,13 @@ That keeps the code path predictable and avoids thread setup overhead when paral
 
 The original `RawMft` only holds a borrowed `&Volume`, so worker threads cannot safely share a mutable `VolumeReader`.
 
-Instead the parallel path first extracts a reusable volume source from the original `Volume` (drive letter or mount point):
+Instead the parallel path extracts a reusable source from the original `Volume`:
 
 - `DriveLetter(char)`, or
-- `MountPoint(PathBuf)`.
+- `MountPoint(PathBuf)`, or
+- Linux `DevicePath(PathBuf)`.
 
-Each worker then calls `open_parallel_volume` and gets its own fresh `Volume` handle.
+Each worker then calls `open_parallel_volume` and gets its own fresh read-only `Volume`.
 
 If the original volume does not have a reusable source, the parallel APIs fail rather than trying to share a non-thread-safe reader.
 

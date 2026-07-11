@@ -1,3 +1,5 @@
+#![cfg(windows)]
+
 //! Integration tests for the `Volume` convenience accessors
 //! (`journal()`, `mft()`, `raw_mft()`, `path_resolver()`) and a couple of
 //! MFT enumeration edge cases.

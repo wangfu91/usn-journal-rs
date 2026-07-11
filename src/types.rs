@@ -457,7 +457,7 @@ impl UsnReason {
     /// Every reason bit set — including bits this crate does not yet name.
     ///
     /// This is the recommended catch-all value for
-    /// [`JournalIterOptions`](crate::journal::JournalIterOptions)'s reason mask:
+    /// the Windows `JournalIterOptions` reason mask:
     /// unlike [`UsnReason::all`] (which only covers the flags defined above), it
     /// also matches reason bits introduced by newer Windows versions so no
     /// records are filtered out.
