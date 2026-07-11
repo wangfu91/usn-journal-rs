@@ -15,5 +15,7 @@ pub(crate) use headers::{
     NtfsNonResidentAttributeHeader, NtfsResidentAttributeHeader, NtfsStandardInformation,
     attr_header_flags, file_attr_flags,
 };
-pub(crate) use iter::{for_each_attr_list_entry, for_each_attribute};
+pub(crate) use iter::{
+    for_each_attr_list_entry, for_each_attr_list_entry_header, for_each_attribute,
+};
 pub(crate) use view::{NtfsAttribute, osstring_from_utf16le};
