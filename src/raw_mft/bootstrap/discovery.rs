@@ -39,6 +39,7 @@ pub(super) struct MftBootstrap {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct StreamExtent {
     lowest_vcn: u64,
+    record_number: u64,
     attribute_id: u16,
     runs: Vec<DataRun>,
 }
@@ -129,14 +130,14 @@ fn capture_stream_attributes(
         let unnamed = !attr.has_name();
 
         if type_id == NtfsAttributeType::Data as u32 && unnamed && attr.is_non_resident() {
-            if let Some(extent) = decode_nonresident_extent(attr, "$MFT $DATA") {
+            if let Some(extent) = decode_nonresident_extent(attr, record.number, "$MFT $DATA") {
                 insert_extent(&mut streams.data_extents, extent);
             }
         } else if type_id == NtfsAttributeType::Bitmap as u32 && unnamed && attr.is_non_resident() {
             if let Some(header) = attr.nonresident_header() {
                 streams.bitmap_size = streams.bitmap_size.max(header.data_size);
             }
-            if let Some(extent) = decode_nonresident_extent(attr, "$MFT $BITMAP") {
+            if let Some(extent) = decode_nonresident_extent(attr, record.number, "$MFT $BITMAP") {
                 insert_extent(&mut streams.bitmap_extents, extent);
             }
         } else if capture_attribute_list
@@ -150,7 +151,9 @@ fn capture_stream_attributes(
 
 fn insert_extent(extents: &mut Vec<StreamExtent>, extent: StreamExtent) {
     if !extents.iter().any(|existing| {
-        existing.lowest_vcn == extent.lowest_vcn && existing.attribute_id == extent.attribute_id
+        existing.lowest_vcn == extent.lowest_vcn
+            && existing.record_number == extent.record_number
+            && existing.attribute_id == extent.attribute_id
     }) {
         extents.push(extent);
     }
@@ -259,7 +262,9 @@ fn target_is_loaded(streams: &MftStreamRuns, target: StreamTarget) -> bool {
         &streams.bitmap_extents
     };
     extents.iter().any(|extent| {
-        extent.lowest_vcn == target.lowest_vcn && extent.attribute_id == target.attribute_id
+        extent.lowest_vcn == target.lowest_vcn
+            && extent.record_number == target.record_number
+            && extent.attribute_id == target.attribute_id
     })
 }
 
@@ -309,7 +314,12 @@ fn assemble_runs(
         if extent.lowest_vcn > expected_vcn && stop_at_gap {
             return Ok((runs, false));
         }
-        if extent.lowest_vcn != expected_vcn {
+        if extent.lowest_vcn < expected_vcn {
+            return Err(UsnError::InvalidDataRun(
+                "non-resident stream extents overlap in VCN space",
+            ));
+        }
+        if extent.lowest_vcn > expected_vcn {
             return Ok((runs, false));
         }
         let clusters = extent.runs.iter().try_fold(0u64, |total, run| {
@@ -330,6 +340,7 @@ fn assemble_runs(
 
 fn decode_nonresident_extent(
     attr: &NtfsAttribute<'_>,
+    record_number: u64,
     label: &'static str,
 ) -> Option<StreamExtent> {
     let header = attr.nonresident_header()?;
@@ -338,6 +349,7 @@ fn decode_nonresident_extent(
     }
     decode_nonresident_runs(attr, label).map(|runs| StreamExtent {
         lowest_vcn: header.lowest_vcn as u64,
+        record_number,
         attribute_id: attr.header.id,
         runs,
     })
@@ -456,6 +468,7 @@ mod tests {
         let extents = vec![
             StreamExtent {
                 lowest_vcn: 3,
+                record_number: 11,
                 attribute_id: 2,
                 runs: vec![DataRun::Data {
                     lcn: 200,
@@ -464,6 +477,7 @@ mod tests {
             },
             StreamExtent {
                 lowest_vcn: 0,
+                record_number: 0,
                 attribute_id: 1,
                 runs: vec![DataRun::Data {
                     lcn: 100,
@@ -492,6 +506,7 @@ mod tests {
         let extents = vec![
             StreamExtent {
                 lowest_vcn: 0,
+                record_number: 0,
                 attribute_id: 1,
                 runs: vec![DataRun::Data {
                     lcn: 100,
@@ -500,6 +515,7 @@ mod tests {
             },
             StreamExtent {
                 lowest_vcn: 3,
+                record_number: 11,
                 attribute_id: 2,
                 runs: vec![DataRun::Data {
                     lcn: 200,
@@ -516,5 +532,69 @@ mod tests {
                 clusters: 2,
             }]
         );
+    }
+
+    #[test]
+    fn rejects_stream_extent_vcn_overlaps_even_for_prefix_assembly() {
+        let extents = vec![
+            StreamExtent {
+                lowest_vcn: 0,
+                record_number: 0,
+                attribute_id: 1,
+                runs: vec![DataRun::Data {
+                    lcn: 100,
+                    clusters: 3,
+                }],
+            },
+            StreamExtent {
+                lowest_vcn: 2,
+                record_number: 11,
+                attribute_id: 2,
+                runs: vec![DataRun::Data {
+                    lcn: 200,
+                    clusters: 1,
+                }],
+            },
+        ];
+
+        assert!(assemble_stream_runs(&extents).is_err());
+        assert!(assemble_contiguous_prefix(&extents).is_err());
+    }
+
+    #[test]
+    fn target_loadedness_includes_source_record_number() {
+        let streams = MftStreamRuns {
+            data_extents: vec![StreamExtent {
+                lowest_vcn: 4,
+                record_number: 10,
+                attribute_id: 2,
+                runs: vec![DataRun::Data {
+                    lcn: 100,
+                    clusters: 1,
+                }],
+            }],
+            bitmap_extents: Vec::new(),
+            bitmap_size: 0,
+            attribute_list: None,
+        };
+
+        assert!(target_is_loaded(
+            &streams,
+            StreamTarget {
+                type_id: NtfsAttributeType::Data as u32,
+                lowest_vcn: 4,
+                record_number: 10,
+                attribute_id: 2,
+            }
+        ));
+        assert!(!target_is_loaded(
+            &streams,
+            StreamTarget {
+                type_id: NtfsAttributeType::Data as u32,
+                lowest_vcn: 4,
+                record_number: 11,
+                attribute_id: 2,
+            }
+        ));
     }
 }
