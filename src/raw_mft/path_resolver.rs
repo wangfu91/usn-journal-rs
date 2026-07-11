@@ -1,6 +1,9 @@
 //! Snapshot path resolver for entries produced by a raw `$MFT` scan.
 
-use std::{cell::RefCell, path::PathBuf};
+use std::{
+    cell::RefCell,
+    path::{Path, PathBuf},
+};
 
 use crate::{
     UsnResult,
@@ -61,6 +64,7 @@ impl<'a> RawMftPathResolver<'a> {
     pub fn resolve_path(&self, entry: &RawMftEntry) -> Option<PathBuf> {
         self.in_memory_tree
             .resolve_with_optional_drive(entry.file_reference, self.volume.drive_letter())
+            .map(|path| prefix_mount_point(self.volume, &path))
             .or_else(|| {
                 if self.live_fallback {
                     resolve_live_path(
@@ -74,5 +78,41 @@ impl<'a> RawMftPathResolver<'a> {
                     None
                 }
             })
+    }
+}
+
+/// Snapshot tree paths already include drive-letter roots. For volumes opened
+/// through a mount point the tree returns a relative path, so attach that
+/// source prefix before exposing the result.
+fn prefix_mount_point(volume: &Volume, path: &Path) -> PathBuf {
+    volume
+        .mount_point()
+        .map_or_else(|| path.to_path_buf(), |mount_point| mount_point.join(path))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::volume::VolumeSource;
+    use windows::Win32::Foundation::HANDLE;
+
+    #[test]
+    fn snapshot_path_is_prefixed_for_mount_point_volumes() {
+        let volume = Volume::mock(
+            HANDLE(std::ptr::null_mut()),
+            VolumeSource::MountPoint(PathBuf::from(r"C:\mnt\data")),
+        );
+
+        assert_eq!(
+            prefix_mount_point(&volume, Path::new(r"dir\file.txt")),
+            PathBuf::from(r"C:\mnt\data\dir\file.txt")
+        );
+    }
+
+    #[test]
+    fn drive_letter_snapshot_path_is_unchanged() {
+        let volume = Volume::mock(HANDLE(std::ptr::null_mut()), VolumeSource::DriveLetter('C'));
+        let path = Path::new(r"C:\dir\file.txt");
+        assert_eq!(prefix_mount_point(&volume, path), path);
     }
 }

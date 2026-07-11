@@ -217,6 +217,10 @@ pub(crate) fn find_next_record<'a>(
 
     let min_record_len = size_of::<USN_RECORD_COMMON_HEADER>();
     if bytes_read - offset_usize < min_record_len {
+        // The remaining bytes cannot contain a record boundary that we can
+        // trust. Consume this kernel buffer so the iterator does not return
+        // the same error forever on subsequent calls to `next()`.
+        *offset = bytes_read as u32;
         return Err(UsnError::TruncatedRecord {
             offset: offset_usize as u64,
             needed: min_record_len,
@@ -234,6 +238,7 @@ pub(crate) fn find_next_record<'a>(
 
     let record_len = header.RecordLength as usize;
     if record_len < min_record_len {
+        *offset = bytes_read as u32;
         return Err(UsnError::InvalidRecordLength {
             offset: offset_usize as u64,
             length: header.RecordLength,
@@ -241,12 +246,24 @@ pub(crate) fn find_next_record<'a>(
         });
     }
     if record_len > bytes_read - offset_usize {
+        *offset = bytes_read as u32;
         return Err(UsnError::TruncatedRecord {
             offset: offset_usize as u64,
             needed: record_len,
             got: bytes_read - offset_usize,
         });
     }
+
+    // From this point on the record boundary is trustworthy. Advance before
+    // performing version-specific validation so a malformed item is yielded
+    // once instead of trapping Journal/MFT iterators on the same offset.
+    let next_offset = offset_usize
+        .checked_add(record_len)
+        .ok_or(UsnError::InvalidRecord {
+            offset: offset_usize as u64,
+            reason: "next record offset overflowed",
+        })?;
+    *offset = next_offset as u32;
 
     let record = match header.MajorVersion {
         2 => {
@@ -308,14 +325,6 @@ pub(crate) fn find_next_record<'a>(
         });
     }
 
-    let next_offset = offset_usize
-        .checked_add(record_len)
-        .ok_or(UsnError::InvalidRecord {
-            offset: offset_usize as u64,
-            reason: "next record offset overflowed",
-        })?;
-
-    *offset = next_offset as u32;
     Ok(Some(record))
 }
 
@@ -371,6 +380,7 @@ mod tests {
                 got: 2
             } if needed == size_of::<USN_RECORD_COMMON_HEADER>()
         ));
+        assert_eq!(offset, 2, "unusable buffer tail must be consumed");
     }
 
     #[test]
@@ -389,6 +399,11 @@ mod tests {
                 reason: "record length is smaller than header"
             } if length == (header_len - 1) as u32
         ));
+        assert_eq!(
+            offset,
+            buf.len() as u32,
+            "invalid boundary must consume buffer"
+        );
     }
 
     #[test]
@@ -406,6 +421,11 @@ mod tests {
                 major_version: 99
             }
         ));
+        assert_eq!(
+            offset,
+            buf.len() as u32,
+            "unsupported record must be consumed"
+        );
     }
 
     /// Build a `USN_RECORD_V2` buffer with the given fields and file name.
@@ -544,7 +564,11 @@ mod tests {
         assert_eq!(second.fid(), Fid::new(0x11));
 
         assert_eq!(offset, total);
-        assert!(find_next_record(&buf, total, &mut offset).unwrap().is_none());
+        assert!(
+            find_next_record(&buf, total, &mut offset)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -574,6 +598,11 @@ mod tests {
         let mut offset = 0u32;
         let err = find_next_record(&buf, buf.len() as u32, &mut offset).unwrap_err();
         assert!(matches!(err, UsnError::MisalignedRecord { offset: 0, .. }));
+        assert_eq!(
+            offset,
+            buf.len() as u32,
+            "malformed record must be consumed"
+        );
     }
 
     #[test]
@@ -592,6 +621,29 @@ mod tests {
                 reason: "file name range exceeds record length"
             }
         ));
+        assert_eq!(
+            offset,
+            buf.len() as u32,
+            "malformed record must be consumed"
+        );
+    }
+
+    #[test]
+    fn malformed_record_does_not_block_following_record() {
+        let mut first = build_v2_record(1, 0x10, 0x5, 0, 0, "bad");
+        let len_off = std::mem::offset_of!(USN_RECORD_V2, FileNameLength);
+        first[len_off..len_off + 2].copy_from_slice(&3u16.to_le_bytes());
+        let first_len = first.len() as u32;
+        first.extend(build_v2_record(2, 0x11, 0x5, 0, 0, "good"));
+
+        let mut offset = 0u32;
+        assert!(find_next_record(&first, first.len() as u32, &mut offset).is_err());
+        assert_eq!(offset, first_len);
+
+        let second = find_next_record(&first, first.len() as u32, &mut offset)
+            .expect("second parse")
+            .expect("second record");
+        assert_eq!(second.usn(), 2);
     }
 
     #[test]

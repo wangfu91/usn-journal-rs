@@ -21,6 +21,19 @@ pub(crate) fn for_each_attr_list_entry<F>(data: &[u8], mut f: F)
 where
     F: FnMut(u32, u64),
 {
+    for_each_attr_list_entry_header(data, |header| {
+        f(header.type_id, header.file_reference);
+    });
+}
+
+/// Call `f` with the complete header of each valid `$ATTRIBUTE_LIST` entry.
+///
+/// Bootstrap code needs the lowest VCN and attribute instance identifier in
+/// addition to the record reference, so keep that detail in one bounded parser.
+pub(crate) fn for_each_attr_list_entry_header<F>(data: &[u8], mut f: F)
+where
+    F: FnMut(AttributeListEntryHeader),
+{
     let mut offset = 0usize;
     while offset + ATTR_LIST_ENTRY_MIN_SIZE <= data.len() {
         let bytes = &data[offset..offset + ATTR_LIST_ENTRY_MIN_SIZE];
@@ -32,11 +45,13 @@ where
         if len < ATTR_LIST_ENTRY_MIN_SIZE {
             break;
         }
-        f(h.type_id, h.file_reference);
-        offset = match offset.checked_add(len) {
-            Some(o) => o,
+        let next = match offset.checked_add(len) {
+            Some(o) if o <= data.len() => o,
             None => break,
+            _ => break,
         };
+        f(h);
+        offset = next;
     }
 }
 
