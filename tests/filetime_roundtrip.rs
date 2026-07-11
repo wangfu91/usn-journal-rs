@@ -26,10 +26,15 @@ fn get_seed_entry() -> Option<usn_journal_rs::raw_mft::RawMftEntry> {
     #[cfg(windows)]
     let volume = Volume::from_drive_letter('C').ok()?;
     #[cfg(target_os = "linux")]
-    let volume = Volume::from_mount_point(
-        std::env::var_os("USN_TEST_MOUNT")
-            .unwrap_or_else(|| "/media/fu/CE5E5DFB5E5DDD31".into()),
-    ).ok()?;
+    let volume = {
+        let source = std::env::var_os("USN_TEST_VOLUME")?;
+        let source = std::path::Path::new(&source);
+        if source.starts_with("/dev") {
+            Volume::from_device_path(source).ok()?
+        } else {
+            Volume::from_mount_point(source).ok()?
+        }
+    };
     let raw_mft = RawMft::new(&volume).ok()?;
     raw_mft
         .try_iter()

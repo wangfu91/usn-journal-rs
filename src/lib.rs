@@ -52,6 +52,9 @@
 //! ## License
 //! MIT License. See [LICENSE](https://github.com/wangfu91/usn-journal-rs/blob/main/LICENSE).
 
+#[cfg(not(any(windows, target_os = "linux")))]
+compile_error!("usn-journal-rs supports only Windows and Linux targets");
+
 mod display;
 pub mod errors;
 mod file_attributes;

@@ -4,9 +4,17 @@ use usn_journal_rs::{raw_mft::RawMft, volume::Volume};
 
 #[test]
 fn mounted_ntfs_raw_mft_smoke_test() {
-    let mount =
-        std::env::var_os("USN_TEST_MOUNT").unwrap_or_else(|| "/media/fu/CE5E5DFB5E5DDD31".into());
-    let volume = match Volume::from_mount_point(&mount) {
+    let Some(source) = std::env::var_os("USN_TEST_VOLUME") else {
+        eprintln!("linux_raw_mft: skipping; set USN_TEST_VOLUME to an NTFS mount or device");
+        return;
+    };
+    let source = std::path::Path::new(&source);
+    let open_result = if source.starts_with("/dev") {
+        Volume::from_device_path(source)
+    } else {
+        Volume::from_mount_point(source)
+    };
+    let volume = match open_result {
         Ok(volume) => volume,
         Err(error) => {
             eprintln!("linux_raw_mft: skipping unavailable read-only source: {error}");
