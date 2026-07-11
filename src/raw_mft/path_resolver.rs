@@ -18,8 +18,8 @@ use super::{RawMft, RawMftEntry};
 /// to one point-in-time snapshot and avoids mixing live filesystem state into
 /// the default result.
 ///
-/// If you explicitly want best-effort live fallback for paths that are missing
-/// from the snapshot tree, call [`Self::with_live_fallback`].
+/// On Windows, callers can explicitly enable best-effort live fallback for
+/// paths missing from the snapshot tree with `with_live_fallback`.
 #[derive(Debug)]
 pub struct RawMftPathResolver<'a> {
     /// Volume from which the raw `$MFT` snapshot was built.
@@ -60,8 +60,8 @@ impl<'a> RawMftPathResolver<'a> {
 
     /// Resolve `entry` to a path using the raw-`$MFT` snapshot tree.
     ///
-    /// When [`Self::with_live_fallback`] has been enabled, unresolved snapshot
-    /// entries fall back to a live `OpenFileById` lookup against the mounted volume.
+    /// On Windows, when `with_live_fallback` has been enabled, unresolved
+    /// snapshot entries fall back to `OpenFileById` against the mounted volume.
     #[must_use]
     pub fn resolve_path(&self, entry: &RawMftEntry) -> Option<PathBuf> {
         let snapshot_path = self

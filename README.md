@@ -5,8 +5,8 @@
 
 # usn-journal-rs
 
-Safe, ergonomic Rust bindings for the Windows NTFS/ReFS USN change journal and
-Master File Table (MFT).
+Safe, ergonomic Rust APIs for the Windows NTFS/ReFS USN change journal and MFT,
+plus cross-platform raw NTFS `$MFT` parsing on Windows and Linux.
 
 ## Overview
 
@@ -131,15 +131,17 @@ fn main() -> Result<(), UsnError> {
 
 | Example                   | Description                                                      | Run                                            |
 | ------------------------- | ---------------------------------------------------------------- | ---------------------------------------------- |
-| `read_journal`            | Iterate all USN journal records on a volume                      | `cargo run --example read_journal`             |
-| `enum_mft`                | Enumerate every MFT entry via FSCTL                              | `cargo run --example enum_mft`                 |
+| `read_journal`            | Iterate all USN journal records on a volume                      | `cargo run --features windows-examples --example read_journal` |
+| `enum_mft`                | Enumerate every MFT entry via FSCTL                              | `cargo run --features windows-examples --example enum_mft` |
 | `raw_mft_serial_read`     | Parse raw `$MFT` records with full metadata                      | `cargo run --example raw_mft_serial_read -- <drive-or-mount>` |
 | `raw_mft_parallel_chunks` | Measure parallel chunk parsing on the raw `$MFT`                 | `cargo run --example raw_mft_parallel_chunks -- <drive-or-mount>` |
 | `deletion_forensic`       | List unused raw `$MFT` records with best-effort historical paths | `cargo run --example deletion_forensic -- <drive-or-mount>` |
-| `change_monitor`          | Watch for live filesystem changes via USN                        | `cargo run --example change_monitor`           |
-| `journal_pretty_print`    | Multi-line formatted output for USN entries                      | `cargo run --example journal_pretty_print`     |
+| `change_monitor`          | Watch for live filesystem changes via USN                        | `cargo run --features windows-examples --example change_monitor` |
+| `journal_pretty_print`    | Multi-line formatted output for USN entries                      | `cargo run --features windows-examples --example journal_pretty_print` |
 
-All examples require Administrator privileges.
+The journal, FSCTL, and live-path examples are Windows-only and require
+Administrator privileges. Raw `$MFT` examples run on Windows or Linux; Linux
+requires read permission for the backing device and always opens it read-only.
 
 ## Performance notes
 
@@ -160,14 +162,22 @@ need statistically useful worker-count or scheduling comparisons.
 
 Run benchmarks:
 
-```powershell
+```text
 cargo bench --bench raw_mft
-cargo bench --bench journal
-cargo bench --bench path_resolver
+cargo bench --features windows-examples --bench journal
+cargo bench --features windows-examples --bench path_resolver
 cargo bench --bench raw_mft_ingest
 ```
 
-Set `USN_TEST_DRIVE=D` to target a different volume (default: `C`).
+On Windows, set `USN_TEST_DRIVE=D` to target a different volume (default: `C`).
+On Linux, set `USN_TEST_VOLUME` to an NTFS mount or device path:
+
+```bash
+USN_TEST_VOLUME=/media/user/windows cargo bench --bench raw_mft
+USN_TEST_VOLUME=/media/user/windows cargo bench --bench raw_mft_ingest
+```
+
+The `journal` and live `path_resolver` benchmarks are Windows-only.
 
 The raw-`$MFT` ingest harness also understands a few environment variables:
 
@@ -223,17 +233,19 @@ explanation of why `dynamic` scheduling wins, see
 
 ## Privileges
 
-All APIs that open a volume (`Volume::from_drive_letter`, `Volume::from_mount_point`) require
-the process to run as **Administrator**. On non-elevated processes the crate returns
-`UsnError::NotElevated` before attempting any system call.
+- Windows raw-volume, journal, FSCTL, and live-path operations require an
+  **Administrator** process and return `UsnError::NotElevated` otherwise.
+- Linux raw `$MFT` operations accept `Volume::from_mount_point` or
+  `Volume::from_device_path` and require read permission for the backing block
+  device. They use read-only descriptors and never remount or modify the volume.
 
 ## Filesystem support
 
-| Feature                 | NTFS | ReFS                                          |
-| ----------------------- | ---- | --------------------------------------------- |
-| USN journal             | ✅    | ✅                                             |
-| MFT enumeration (`Mft`) | ✅    | ✅                                             |
-| Raw `$MFT` (`RawMft`)   | ✅    | ❌ — returns `UsnError::UnsupportedFilesystem` |
+| Feature                 | Windows NTFS | Windows ReFS | Linux NTFS |
+| ----------------------- | ------------ | ------------ | ---------- |
+| USN journal             | ✅           | ✅           | ❌         |
+| MFT enumeration (`Mft`) | ✅           | ✅           | ❌         |
+| Raw `$MFT` (`RawMft`)   | ✅           | ❌           | ✅         |
 
 On ReFS, journal and `Mft` entries may expose 128-bit file IDs via
 `Fid::is_extended()`, `Fid::as_u128()`, and `Fid::as_bytes()`.

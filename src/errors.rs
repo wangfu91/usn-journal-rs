@@ -12,8 +12,8 @@ pub enum UsnError {
 
     /// The volume's USN change journal is not active.
     ///
-    /// Returned by [`crate::journal::UsnJournal::query`] when the volume has no
-    /// active change journal. Call [`crate::journal::UsnJournal::query_or_create`]
+    /// Returned by the Windows `UsnJournal::query` API when the volume has no
+    /// active change journal. Call `UsnJournal::query_or_create`
     /// to create one on demand.
     #[error("The USN change journal is not active on this volume")]
     JournalNotActive,

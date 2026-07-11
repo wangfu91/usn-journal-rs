@@ -2,7 +2,7 @@
 //!
 //! This module reads the `$MFT` file directly from the volume and parses
 //! each FILE record to expose rich per-record metadata that the USN-based
-//! [`crate::mft::Mft`] enumerator cannot surface (full timestamps, real
+//! the Windows FSCTL-based `Mft` enumerator cannot surface (full timestamps, real
 //! and allocated size, hard link count, alternate data streams, sparse
 //! / compressed flags, data-run summary, file-name namespace, etc.).
 //!
@@ -134,8 +134,8 @@ impl<'a> RawMft<'a> {
     /// Create a [`RawMftPathResolver`] for entries produced by this raw `$MFT` reader.
     ///
     /// The returned resolver uses a snapshot-local in-memory directory tree by
-    /// default. Call [`RawMftPathResolver::with_live_fallback`] if you explicitly
-    /// want best-effort current-volume fallback for snapshot misses.
+    /// default. On Windows, call `RawMftPathResolver::with_live_fallback` if you
+    /// explicitly want best-effort current-volume fallback for snapshot misses.
     pub fn path_resolver(&self) -> crate::UsnResult<RawMftPathResolver<'a>> {
         RawMftPathResolver::new(self)
     }
