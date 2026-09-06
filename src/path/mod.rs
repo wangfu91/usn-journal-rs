@@ -1,8 +1,7 @@
 //! Live path resolution utilities for NTFS/ReFS volumes.
 //!
 //! Provides types and logic to resolve current on-disk paths from file IDs
-//! surfaced by the USN journal or `FSCTL_ENUM_USN_DATA`. For raw-`$MFT`
-//! snapshot path reconstruction, use the separate `ntfs-mft` crate.
+//! surfaced by the USN journal or `FSCTL_ENUM_USN_DATA`.
 
 #[cfg(windows)]
 mod entry;

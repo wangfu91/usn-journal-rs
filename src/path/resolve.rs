@@ -6,15 +6,16 @@ use std::{
     ffi::{OsStr, OsString, c_void},
     mem::size_of,
     os::windows::ffi::OsStringExt,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     sync::Arc,
 };
 use windows::Win32::{
     Foundation,
-    Storage::FileSystem::{self, FILE_FLAGS_AND_ATTRIBUTES, FILE_ID_DESCRIPTOR},
+    Storage::FileSystem::{self, FILE_FLAG_BACKUP_SEMANTICS, FILE_ID_DESCRIPTOR},
 };
 
 use crate::{Fid, volume::Volume};
+use windows::core::Owned;
 
 /// LRU cache mapping a file ID to its `(full_path, leaf_name)` pair.
 pub(super) type DirLruCache = LruCache<Fid, (Arc<Path>, OsString)>;
@@ -28,7 +29,12 @@ pub(crate) fn resolve_path(
     buffer: &RefCell<Vec<u8>>,
 ) -> Option<PathBuf> {
     if let Ok(resolved_parent_path) = file_id_to_path(volume, parent_fid, buffer) {
-        return Some(resolved_parent_path.join(file_name));
+        return Some(join_resolved_path(
+            &resolved_parent_path,
+            fid,
+            parent_fid,
+            file_name,
+        ));
     } else if let Ok(resolved_path) = file_id_to_path(volume, fid, buffer) {
         return Some(resolved_path);
     }
@@ -72,7 +78,7 @@ pub(super) fn resolve_path_with_cache(
     }
 
     // 3. Construct the current item's path using the parent's path and the current file_name.
-    let current_path = parent_dir_path.join(file_name);
+    let current_path = join_resolved_path(&parent_dir_path, fid, parent_fid, file_name);
 
     // 4. If the current item is a directory, cache its path and current name.
     if is_dir {
@@ -81,6 +87,36 @@ pub(super) fn resolve_path_with_cache(
     }
 
     Some(current_path)
+}
+
+fn join_resolved_path(
+    parent_dir_path: &Path,
+    fid: Fid,
+    parent_fid: Fid,
+    file_name: &OsStr,
+) -> PathBuf {
+    // NTFS can surface the volume root as a self-entry in USN/MFT data where
+    // `fid == parent_fid` and `file_name == "."`.
+    //
+    // `fsutil file queryfilenamebyid <drive> 0x...` confirms this FID resolves
+    // to the volume root (for example `\\?\G:\`). If we join that root path
+    // with a literal `.` component, the cache stores `G:\.` and descendants are
+    // later reconstructed as `G:\.\foo`. Treat the self-entry as the already
+    // resolved root path instead.
+    if fid == parent_fid && file_name == OsStr::new(".") {
+        parent_dir_path.to_path_buf()
+    } else {
+        parent_dir_path.join(file_name)
+    }
+}
+
+fn push_volume_relative_path(base_path: &mut PathBuf, volume_relative_path: &Path) {
+    let mut components = volume_relative_path.components();
+    if matches!(components.next(), Some(Component::RootDir)) {
+        base_path.push(components.as_path());
+    } else {
+        base_path.push(volume_relative_path);
+    }
 }
 
 /// Resolves a file ID to its full path on the specified NTFS/ReFS volume.
@@ -112,37 +148,29 @@ fn file_id_to_path(
         Anonymous: id,
     };
 
-    // SAFETY: `volume.handle` is a live volume handle owned by `volume`.
-    // `&file_id_desc` is a stack-local that outlives the call. Returns
-    // either an owned file handle or an error; ownership transfers to us.
     let file_handle = unsafe {
-        FileSystem::OpenFileById(
-            volume.handle,
+        Owned::new(FileSystem::OpenFileById(
+            volume.handle(),
             &file_id_desc,
-            0,
+            FileSystem::FILE_GENERIC_READ.0,
             FileSystem::FILE_SHARE_READ
                 | FileSystem::FILE_SHARE_WRITE
                 | FileSystem::FILE_SHARE_DELETE,
             None,
-            FILE_FLAGS_AND_ATTRIBUTES(FileSystem::FILE_FLAG_BACKUP_SEMANTICS.0),
-        )?
+            FILE_FLAG_BACKUP_SEMANTICS,
+        )?)
     };
 
-    // Reuse the per-resolver buffer to avoid reallocating per call.
+    let init_len = size_of::<u32>() + (Foundation::MAX_PATH as usize) * size_of::<u16>();
     let mut info_buffer = buffer.borrow_mut();
-    let min_len = size_of::<FileSystem::FILE_NAME_INFO>() + 128 * size_of::<u16>();
-    if info_buffer.len() < min_len {
-        info_buffer.resize(min_len, 0);
+    if info_buffer.len() < init_len {
+        info_buffer.resize(init_len, 0);
     }
 
     loop {
-        // SAFETY: `file_handle` is a live, owned handle from the
-        // `OpenFileById` call above. `info_buffer` is a `Vec<u8>` of
-        // exactly `info_buffer.len()` writable bytes; the FSCTL writes
-        // a `FILE_NAME_INFO` into the front of that buffer.
         if let Err(err) = unsafe {
             FileSystem::GetFileInformationByHandleEx(
-                file_handle,
+                *file_handle,
                 FileSystem::FileNameInfo,
                 info_buffer.as_mut_ptr() as *mut c_void,
                 info_buffer.len() as u32,
@@ -150,44 +178,65 @@ fn file_id_to_path(
         } {
             if err.code() == Foundation::ERROR_MORE_DATA.into() {
                 // Long paths, needs to extend buffer size to hold it.
-                let name_info = unsafe {
-                    std::ptr::read(info_buffer.as_ptr() as *const FileSystem::FILE_NAME_INFO)
-                };
+                let name_len = read_u32_le(&info_buffer, 0).ok_or_else(|| {
+                    windows::core::Error::new(
+                        Foundation::ERROR_INVALID_DATA.to_hresult(),
+                        "Invalid FILE_NAME_INFO header",
+                    )
+                })?;
 
-                let needed_len = name_info.FileNameLength + size_of::<u32>() as u32;
+                let needed_len =
+                    name_len
+                        .checked_add(size_of::<u32>() as u32)
+                        .ok_or_else(|| {
+                            windows::core::Error::new(
+                                Foundation::ERROR_INVALID_DATA.to_hresult(),
+                                "FILE_NAME_INFO length overflow",
+                            )
+                        })?;
+                // expand info_buffer capacity to needed_len to hold the long path
                 info_buffer.resize(needed_len as usize, 0);
+                // try again
                 continue;
             }
 
-            // SAFETY: `file_handle` is the live, owned handle from
-            // `OpenFileById` above; we are closing it exactly once on
-            // the error path. We deliberately ignore any close error
-            // here because we are already returning the original `err`.
-            unsafe {
-                let _ = Foundation::CloseHandle(file_handle);
-            };
             return Err(err);
         }
 
         break;
     }
+    let file_name_len_bytes = read_u32_le(&info_buffer, 0).ok_or_else(|| {
+        windows::core::Error::new(
+            Foundation::ERROR_INVALID_DATA.to_hresult(),
+            "Invalid FILE_NAME_INFO header",
+        )
+    })? as usize;
+    if !file_name_len_bytes.is_multiple_of(size_of::<u16>()) {
+        return Err(windows::core::Error::new(
+            Foundation::ERROR_INVALID_DATA.to_hresult(),
+            "Invalid UTF-16 file name length",
+        ));
+    }
+    let name_start = size_of::<u32>();
+    let name_end = name_start.checked_add(file_name_len_bytes).ok_or_else(|| {
+        windows::core::Error::new(
+            Foundation::ERROR_INVALID_DATA.to_hresult(),
+            "FILE_NAME_INFO length overflow",
+        )
+    })?;
+    let name_bytes = info_buffer.get(name_start..name_end).ok_or_else(|| {
+        windows::core::Error::new(
+            Foundation::ERROR_INVALID_DATA.to_hresult(),
+            "FILE_NAME_INFO buffer too short",
+        )
+    })?;
+    let mut name_u16 = Vec::with_capacity(file_name_len_bytes / 2);
+    for chunk in name_bytes.as_chunks::<2>().0 {
+        name_u16.push(u16::from_le_bytes([chunk[0], chunk[1]]));
+    }
+    let sub_path = OsString::from_wide(&name_u16);
 
-    // SAFETY: `file_handle` is the live, owned handle from
-    // `OpenFileById`; this is the unique close on the success path.
-    unsafe { Foundation::CloseHandle(file_handle) }?;
-    // SAFETY: The successful `GetFileInformationByHandleEx` call above
-    // wrote a `FILE_NAME_INFO` (sized to fit) into the front of
-    // `info_buffer`.
-    let info: &FileSystem::FILE_NAME_INFO =
-        unsafe { &*(info_buffer.as_ptr() as *const FileSystem::FILE_NAME_INFO) };
-
-    let name_len = info.FileNameLength as usize / size_of::<u16>();
-    // SAFETY: `info` was filled by a successful FSCTL call, so its
-    // `FileNameLength` reflects the true number of UTF-16 bytes
-    // written into the trailing `FileName` array.
-    let name_u16 = unsafe { std::slice::from_raw_parts(info.FileName.as_ptr(), name_len) };
-    let sub_path = OsString::from_wide(name_u16);
-
+    // Create the full path directly with a single allocation
     let mut full_path = PathBuf::new();
 
     if let Some(drive_letter) = volume.drive_letter() {
@@ -202,6 +251,35 @@ fn file_id_to_path(
         full_path.push(mount_point);
     }
 
-    full_path.push(sub_path);
+    push_volume_relative_path(&mut full_path, Path::new(&sub_path));
     Ok(full_path)
+}
+
+fn read_u32_le(buffer: &[u8], offset: usize) -> Option<u32> {
+    let bytes = buffer.get(offset..offset.checked_add(4)?)?;
+    Some(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+}
+
+#[cfg(test)]
+mod merge_tests {
+    use super::*;
+    #[test]
+    fn test_join_resolved_path_keeps_root_self_entry_at_volume_root() {
+        let path = join_resolved_path(
+            Path::new(r"C:\"),
+            Fid::new(0x5),
+            Fid::new(0x5),
+            OsStr::new("."),
+        );
+
+        assert_eq!(path, PathBuf::from(r"C:\"));
+    }
+
+    #[test]
+    fn test_push_volume_relative_path_strips_root_for_mount_points() {
+        let mut path = PathBuf::from(r"C:\Mounts\Data");
+        push_volume_relative_path(&mut path, Path::new(r"\Windows\System32"));
+
+        assert_eq!(path, PathBuf::from(r"C:\Mounts\Data\Windows\System32"));
+    }
 }

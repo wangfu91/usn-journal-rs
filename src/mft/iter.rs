@@ -25,7 +25,7 @@ use super::entry::MftEntry;
 /// to handle individual entry errors without stopping the entire iteration process.
 pub struct MftIter {
     /// Open volume handle used for enumeration.
-    volume_handle: HANDLE,
+    volume_handle: std::rc::Rc<windows::core::Owned<HANDLE>>,
     /// Inclusive lower USN bound passed to the kernel.
     low_usn: i64,
     /// Inclusive upper USN bound passed to the kernel.
@@ -45,7 +45,7 @@ pub struct MftIter {
 impl MftIter {
     /// Construct an iterator around an open volume handle and enumeration settings.
     pub(super) fn new(
-        volume_handle: HANDLE,
+        volume_handle: std::rc::Rc<windows::core::Owned<HANDLE>>,
         low_usn: i64,
         high_usn: i64,
         max_usn_record_version: u16,
@@ -100,7 +100,7 @@ impl MftIter {
         // we pass; `&mut self.bytes_read` is a unique out-pointer.
         if let Err(err) = unsafe {
             DeviceIoControl(
-                self.volume_handle,
+                **self.volume_handle,
                 Ioctl::FSCTL_ENUM_USN_DATA,
                 Some(&mft_enum_data as *const _ as _),
                 size_of::<MFT_ENUM_DATA_V1>() as u32,
@@ -152,5 +152,22 @@ impl Iterator for MftIter {
                 Some(Err(err))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod ownership_tests {
+    use crate::test_support::mock_volume;
+    #[test]
+    fn iterator_keeps_handle_after_volume_and_clone_drop() {
+        let volume = mock_volume();
+        let cloned = volume.clone();
+        let weak = std::rc::Rc::downgrade(&volume.handle);
+        let iter = volume.mft().into_iter();
+        drop(volume);
+        drop(cloned);
+        assert!(weak.upgrade().is_some());
+        drop(iter);
+        assert!(weak.upgrade().is_none());
     }
 }

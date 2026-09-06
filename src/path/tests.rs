@@ -1,7 +1,7 @@
 use super::entry::sealed::Sealed;
 use super::*;
 
-use crate::{Fid, mft::MftEntry, usn_record::UsnRecordView, volume::Volume};
+use crate::{Fid, mft::MftEntry, volume::Volume};
 use std::{
     ffi::{OsStr, OsString},
     mem,
@@ -108,9 +108,11 @@ fn usn_entry_path_resolvable_trait() {
         );
     }
 
-    let record_ref = unsafe { &*(buffer.as_ptr() as *const USN_RECORD_V2) };
+    let record_ref = crate::usn_record::find_next_record(&buffer, buffer.len() as u32, &mut 0)
+        .unwrap()
+        .unwrap();
 
-    let entry = crate::journal::UsnEntry::new(UsnRecordView::V2(record_ref));
+    let entry = crate::journal::UsnEntry::new(record_ref);
 
     assert_eq!(entry.fid(), Fid::new(0x789ABC));
     assert_eq!(entry.parent_fid(), Fid::new(0xDEF123));

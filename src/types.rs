@@ -142,7 +142,8 @@ impl Fid {
     #[inline]
     pub const fn from_parts(record_number: u64, sequence: u16) -> Self {
         Self::Standard(
-            ((sequence as u64) << Self::SEQUENCE_SHIFT) | (record_number & Self::RECORD_NUMBER_MASK),
+            ((sequence as u64) << Self::SEQUENCE_SHIFT)
+                | (record_number & Self::RECORD_NUMBER_MASK),
         )
     }
 
@@ -266,7 +267,7 @@ bitflags::bitflags! {
     /// Strongly-typed view over an NTFS file-attribute bitmask
     /// (the value stored in `USN_RECORD_V2::FileAttributes`,
     /// `USN_RECORD_V3::FileAttributes`,
-    /// `MftEntry::file_attributes`, and `RawMftEntry::si_file_attributes`).
+    /// `MftEntry::file_attributes`).
     ///
     /// Mirrors the Win32 `FILE_ATTRIBUTE_*` constants. Unknown bits are
     /// preserved on round-trip via [`bitflags`]'s `from_bits_retain`.

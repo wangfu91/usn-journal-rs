@@ -35,9 +35,6 @@ const DEFAULT_DIRECTORY_CACHE_CAPACITY: NonZeroUsize = unsafe {
 /// let resolver = PathResolver::new(&volume).with_directory_cache(0);
 /// ```
 ///
-/// For raw-`$MFT` snapshot resolution, use
-/// `ntfs_mft::RawMft::path_resolver` instead.
-///
 /// [`resolve_path`](Self::resolve_path) takes `&self`: the directory cache and
 /// scratch buffer are held behind interior mutability, so a single resolver can
 /// be shared across an iteration loop without a `mut` binding. `PathResolver` is
@@ -58,8 +55,7 @@ impl<'a> PathResolver<'a> {
     /// Use [`Self::with_directory_cache`] to resize or disable the cache.
     ///
     /// This resolver is intended for live/current path resolution against the
-    /// mounted volume. For raw-`$MFT` snapshot scans, prefer
-    /// `ntfs_mft::RawMft::path_resolver`.
+    /// mounted volume.
     #[must_use]
     pub fn new(volume: &'a Volume) -> Self {
         Self {
@@ -122,8 +118,7 @@ impl Volume {
     /// Create a live [`PathResolver`] for this volume.
     ///
     /// Convenience for [`PathResolver::new`] (includes the default directory
-    /// cache). For raw-`$MFT` snapshot resolution, use
-    /// `ntfs_mft::RawMft::path_resolver` instead.
+    /// cache).
     #[must_use]
     pub fn path_resolver(&self) -> PathResolver<'_> {
         PathResolver::new(self)

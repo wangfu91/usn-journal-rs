@@ -28,7 +28,7 @@ pub struct MftEntry {
 impl MftEntry {
     /// Create a new `MftEntry` from a validated raw USN record view.
     pub(crate) fn new(record: UsnRecordView<'_>) -> Self {
-        let file_name = OsString::from_wide(record.file_name_slice());
+        let file_name = OsString::from_wide(&record.file_name_slice());
 
         MftEntry {
             usn: Usn::new(record.usn()),

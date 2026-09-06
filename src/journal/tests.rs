@@ -163,9 +163,12 @@ fn usn_entry_creation() {
         0,
     );
 
-    let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
+    let record =
+        crate::usn_record::find_next_record(&record_data, record_data.len() as u32, &mut 0)
+            .unwrap()
+            .unwrap();
 
-    let entry = UsnEntry::new(crate::usn_record::UsnRecordView::V2(record));
+    let entry = UsnEntry::new(record);
     assert_eq!(entry.usn, Usn::new(0x2000));
     assert_eq!(entry.fid, Fid::new(0x123456));
     assert_eq!(entry.parent_fid, Fid::new(0x654321));
@@ -189,9 +192,12 @@ fn usn_entry_directory_detection() {
         FILE_ATTRIBUTE_DIRECTORY.0,
     );
 
-    let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
+    let record =
+        crate::usn_record::find_next_record(&record_data, record_data.len() as u32, &mut 0)
+            .unwrap()
+            .unwrap();
 
-    let entry = UsnEntry::new(crate::usn_record::UsnRecordView::V2(record));
+    let entry = UsnEntry::new(record);
     assert!(entry.is_dir());
     assert!(!entry.is_hidden());
 }
@@ -207,9 +213,12 @@ fn usn_entry_hidden_detection() {
         FILE_ATTRIBUTE_HIDDEN.0,
     );
 
-    let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
+    let record =
+        crate::usn_record::find_next_record(&record_data, record_data.len() as u32, &mut 0)
+            .unwrap()
+            .unwrap();
 
-    let entry = UsnEntry::new(crate::usn_record::UsnRecordView::V2(record));
+    let entry = UsnEntry::new(record);
     assert!(!entry.is_dir());
     assert!(entry.is_hidden());
 }
@@ -225,9 +234,12 @@ fn usn_entry_reason_string_conversion() {
         0,
     );
 
-    let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
+    let record =
+        crate::usn_record::find_next_record(&record_data, record_data.len() as u32, &mut 0)
+            .unwrap()
+            .unwrap();
 
-    let entry = UsnEntry::new(crate::usn_record::UsnRecordView::V2(record));
+    let entry = UsnEntry::new(record);
     let reason_string = entry.reason.to_string();
 
     assert!(reason_string.contains("FILE_CREATE"));
@@ -243,9 +255,12 @@ fn usn_entry_empty_reason() {
         "test.txt", 0,
     );
 
-    let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
+    let record =
+        crate::usn_record::find_next_record(&record_data, record_data.len() as u32, &mut 0)
+            .unwrap()
+            .unwrap();
 
-    let entry = UsnEntry::new(crate::usn_record::UsnRecordView::V2(record));
+    let entry = UsnEntry::new(record);
     assert_eq!(entry.reason.to_string(), "NONE");
 }
 
@@ -262,8 +277,11 @@ fn usn_entry_creation_v3_extended_ids() {
         0,
     );
 
-    let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V3) };
-    let entry = UsnEntry::new(crate::usn_record::UsnRecordView::V3(record));
+    let record =
+        crate::usn_record::find_next_record(&record_data, record_data.len() as u32, &mut 0)
+            .unwrap()
+            .unwrap();
+    let entry = UsnEntry::new(record);
 
     assert_eq!(entry.usn, Usn::new(0x2000));
     assert_eq!(entry.fid, Fid::from_u128(fid));

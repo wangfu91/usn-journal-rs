@@ -3,9 +3,8 @@
 ## Scope
 
 `usn-journal-rs` owns Windows USN journal APIs, FSCTL MFT enumeration and live
-path resolution. Raw NTFS parsing and snapshot/historical paths live in the
-independent sibling `ntfs-mft` repository. See `docs/raw-mft-extraction.md`.
-Keep the current branch's refinements over main.
+path resolution. Preserve the released 0.4.1 correctness fixes when refining APIs.
+See README.md and CHANGELOG.md for the current API and migration guide.
 
 ## Validation
 
@@ -21,7 +20,7 @@ selects ReFS coverage, and `BENCH_RECORD_LIMIT` bounds journal benchmarks.
 
 - `src/journal` and `src/mft` own the Windows APIs and fallible iterators.
 - `src/path` owns live file-ID resolution with optional LRU directory caching.
-- `src/volume.rs` owns read-only volume handles and source accessors.
+- `src/volume.rs` owns shared Windows volume handles and source accessors.
 - `src/usn_record.rs` parses Windows USN buffers; reuse its checked parsing.
 - `src/types.rs`, `src/time.rs`, and `src/errors.rs` own strong identifiers,
   Filetime, and the non-exhaustive UsnError enum.

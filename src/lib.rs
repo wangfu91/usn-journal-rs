@@ -45,15 +45,14 @@
 //! ```
 //!
 //! ## Platform
-//! - Raw NTFS `$MFT` scanning is provided by the separate `ntfs-mft` crate.
 //! - USN journal, FSCTL MFT enumeration, and live file-ID lookup are Windows-only.
-//! - Raw devices are always opened read-only; appropriate OS permissions are required.
+//! - Volume handles require appropriate OS permissions.
 //!
 //! ## License
 //! MIT License. See [LICENSE](https://github.com/wangfu91/usn-journal-rs/blob/main/LICENSE).
 
-#[cfg(not(any(windows, target_os = "linux")))]
-compile_error!("usn-journal-rs supports only Windows and Linux targets");
+#[cfg(not(windows))]
+compile_error!("usn-journal-rs supports Windows targets");
 
 mod display;
 pub mod errors;
@@ -85,7 +84,8 @@ pub mod prelude {
     #[cfg(windows)]
     pub use crate::{
         journal::{JournalIterOptions, UsnEntry, UsnJournal},
-        mft::{Mft, MftEntry, MftIterOptions, UsnRecordVersion}, path::PathResolver,
+        mft::{Mft, MftEntry, MftIterOptions, UsnRecordVersion},
+        path::PathResolver,
     };
 }
 

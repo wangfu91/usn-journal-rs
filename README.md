@@ -1,6 +1,6 @@
 [![Crates.io](https://img.shields.io/crates/v/usn-journal-rs.svg)](https://crates.io/crates/usn-journal-rs)
 [![Docs.rs](https://docs.rs/usn-journal-rs/badge.svg)](https://docs.rs/usn-journal-rs)
-[![CI](https://github.com/wangfu91/usn-journal-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/wangfu91/usn-journal-rs/actions)
+[![CI](https://github.com/wangfu91/usn-journal-rs/actions/workflows/rust.yml/badge.svg)](https://github.com/wangfu91/usn-journal-rs/actions)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 # usn-journal-rs
@@ -28,11 +28,12 @@ and Administrator privileges.
 
 ## Quick start
 
-Add to `Cargo.toml`:
+The examples below target the unreleased 0.5.0 API on `api-refine`.
+Use the Git dependency until that version is published:
 
 ```toml
 [dependencies]
-usn-journal-rs = "0.5"
+usn-journal-rs = { git = "https://github.com/wangfu91/usn-journal-rs", branch = "api-refine" }
 ```
 
 Iterate the USN change journal on drive `C:`:
@@ -116,7 +117,19 @@ fn main() -> Result<(), UsnError> {
 | `change_monitor`          | Watch for live filesystem changes via USN                        | `cargo run --features windows-examples --example change_monitor` |
 | `journal_pretty_print`    | Multi-line formatted output for USN entries                      | `cargo run --features windows-examples --example journal_pretty_print` |
 
-The examples require Windows and Administrator privileges.
+The examples require Windows and Administrator privileges. `read_journal`,
+`enum_mft`, and `change_monitor` accept a drive letter such as `C` or `C:`
+as the first argument (default `C`).
+
+## Development
+
+Run `cargo build`, `cargo test --all-features`, and
+`cargo clippy --all-targets --all-features -- -D warnings` on Windows.
+Device-dependent tests skip when privileges or a suitable volume are unavailable.
+`cargo package` verifies the publishable crate without publishing it.
+
+Cloned volumes and iterators share handle ownership; an iterator can outlive
+the volume value that created it.
 
 ## Benchmarks
 
@@ -125,22 +138,18 @@ cargo bench --features windows-examples --bench journal
 cargo bench --features windows-examples --bench path_resolver
 ```
 
-Raw-reader examples, benchmarks and performance reports moved to `ntfs-mft`.
-
 ## Privileges and filesystem support
 
 Journal, FSCTL enumeration, and live path operations require Windows and an
 Administrator process. Journal and enumeration APIs support NTFS/ReFS; ReFS
-entries may use extended file IDs. Raw NTFS scanning on Windows/Linux belongs
-to `ntfs-mft`.
+entries may use extended file IDs.
 
 On ReFS, journal and `Mft` entries may expose 128-bit file IDs via
 `Fid::is_extended()`, `Fid::as_u128()`, and `Fid::as_bytes()`.
 
 ## Migrating from 0.4.x
 
-See [CHANGELOG.md](CHANGELOG.md) for a full list of breaking changes and before/after
-migration snippets.
+See [CHANGELOG.md](CHANGELOG.md) for the 0.4.1 migration table and release history.
 
 ## License
 

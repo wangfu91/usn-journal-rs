@@ -9,12 +9,12 @@
 //! gracefully when the process is not elevated or the drive is unavailable.
 
 use usn_journal_rs::{
+    Usn,
     errors::UsnError,
     journal::UsnJournal,
     mft::{Mft, MftIterOptions},
     path::PathResolver,
     volume::Volume,
-    Usn,
 };
 
 /// Pick the NTFS test volume, honoring `USN_TEST_DRIVE` (default `C`).
@@ -81,10 +81,16 @@ fn mft_accessor_matches_constructor_first_entries() {
     };
 
     let via_accessor = collect_prefix(volume.mft().try_iter().expect("accessor mft try_iter"));
-    let via_constructor =
-        collect_prefix(Mft::new(&volume).try_iter().expect("constructor mft try_iter"));
+    let via_constructor = collect_prefix(
+        Mft::new(&volume)
+            .try_iter()
+            .expect("constructor mft try_iter"),
+    );
 
-    assert!(!via_accessor.is_empty(), "MFT enumeration yielded no entries");
+    assert!(
+        !via_accessor.is_empty(),
+        "MFT enumeration yielded no entries"
+    );
     assert_eq!(
         via_accessor, via_constructor,
         "volume.mft() must enumerate the same records as Mft::new"
@@ -142,7 +148,11 @@ fn mft_high_usn_zero_yields_no_entries() {
         .build();
 
     let mut yielded = 0usize;
-    for result in volume.mft().try_iter_with_options(options).expect("try_iter") {
+    for result in volume
+        .mft()
+        .try_iter_with_options(options)
+        .expect("try_iter")
+    {
         match result {
             Ok(_) => yielded += 1,
             Err(e) => panic!("unexpected error during bounded MFT enumeration: {e}"),

@@ -32,7 +32,7 @@ pub(super) struct UsnJournalIterConfig {
 /// This iterator yields `Result<UsnEntry, UsnError>` items.
 pub struct UsnJournalIter {
     /// Open volume handle used for journal reads.
-    volume_handle: HANDLE,
+    volume_handle: std::rc::Rc<windows::core::Owned<HANDLE>>,
     /// Identifier of the journal being read.
     journal_id: u64,
     /// Scratch buffer reused across `DeviceIoControl` calls.
@@ -56,7 +56,7 @@ pub struct UsnJournalIter {
 impl UsnJournalIter {
     /// Construct an iterator around an open volume handle and journal configuration.
     pub(super) fn new(
-        volume_handle: HANDLE,
+        volume_handle: std::rc::Rc<windows::core::Owned<HANDLE>>,
         journal_id: u64,
         buffer: Vec<u8>,
         config: UsnJournalIterConfig,
@@ -113,7 +113,7 @@ impl UsnJournalIter {
         // which we propagate.
         if let Err(err) = unsafe {
             DeviceIoControl(
-                self.volume_handle,
+                **self.volume_handle,
                 FSCTL_READ_USN_JOURNAL,
                 Some(&read_data as *const _ as *mut _),
                 size_of::<READ_USN_JOURNAL_DATA_V1>() as u32,
@@ -171,5 +171,31 @@ impl Iterator for UsnJournalIter {
                 Some(Err(err))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod ownership_tests {
+    use super::*;
+    #[test]
+    fn iterator_keeps_handle_after_volume_drop() {
+        let volume = crate::test_support::mock_volume();
+        let weak = std::rc::Rc::downgrade(&volume.handle);
+        let iter = UsnJournalIter::new(
+            volume.shared_handle(),
+            1,
+            vec![0; 64],
+            UsnJournalIterConfig {
+                next_start_usn: 0,
+                reason_mask: 0,
+                return_only_on_close: 0,
+                timeout: 0,
+                bytes_to_wait_for: 0,
+            },
+        );
+        drop(volume);
+        assert!(weak.upgrade().is_some());
+        drop(iter);
+        assert!(weak.upgrade().is_none());
     }
 }

@@ -8,7 +8,7 @@ use windows::Win32::{
     System::Ioctl::{USN_RECORD_V2, USN_RECORD_V3},
 };
 
-use crate::{Usn, errors::UsnError, usn_record};
+use crate::{Usn, errors::UsnError};
 
 // Test data generators
 #[allow(clippy::too_many_arguments)]
@@ -131,8 +131,11 @@ mod entry {
             "test.txt", 0x20, // FILE_ATTRIBUTE_ARCHIVE
         );
 
-        let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
-        let entry = MftEntry::new(usn_record::UsnRecordView::V2(record));
+        let record =
+            crate::usn_record::find_next_record(&record_data, record_data.len() as u32, &mut 0)
+                .unwrap()
+                .unwrap();
+        let entry = MftEntry::new(record);
 
         assert_eq!(entry.usn, Usn::new(100));
         assert_eq!(entry.fid, Fid::new(12345));
@@ -147,8 +150,11 @@ mod entry {
             100, 12345, 67890, "folder", 0x10, // FILE_ATTRIBUTE_DIRECTORY
         );
 
-        let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
-        let entry = MftEntry::new(usn_record::UsnRecordView::V2(record));
+        let record =
+            crate::usn_record::find_next_record(&record_data, record_data.len() as u32, &mut 0)
+                .unwrap()
+                .unwrap();
+        let entry = MftEntry::new(record);
 
         assert!(entry.is_dir());
         assert!(!entry.is_hidden());
@@ -160,8 +166,11 @@ mod entry {
             100, 12345, 67890, "file.txt", 0x20, // FILE_ATTRIBUTE_ARCHIVE
         );
 
-        let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
-        let entry = MftEntry::new(usn_record::UsnRecordView::V2(record));
+        let record =
+            crate::usn_record::find_next_record(&record_data, record_data.len() as u32, &mut 0)
+                .unwrap()
+                .unwrap();
+        let entry = MftEntry::new(record);
 
         assert!(!entry.is_dir());
         assert!(!entry.is_hidden());
@@ -173,8 +182,11 @@ mod entry {
             100, 12345, 67890, ".hidden", 0x02, // FILE_ATTRIBUTE_HIDDEN
         );
 
-        let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
-        let entry = MftEntry::new(usn_record::UsnRecordView::V2(record));
+        let record =
+            crate::usn_record::find_next_record(&record_data, record_data.len() as u32, &mut 0)
+                .unwrap()
+                .unwrap();
+        let entry = MftEntry::new(record);
 
         assert!(entry.is_hidden());
         assert!(!entry.is_dir());
@@ -190,8 +202,11 @@ mod entry {
             0x12, // FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_HIDDEN
         );
 
-        let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
-        let entry = MftEntry::new(usn_record::UsnRecordView::V2(record));
+        let record =
+            crate::usn_record::find_next_record(&record_data, record_data.len() as u32, &mut 0)
+                .unwrap()
+                .unwrap();
+        let entry = MftEntry::new(record);
 
         assert!(entry.is_dir());
         assert!(entry.is_hidden());
@@ -201,8 +216,11 @@ mod entry {
     fn mft_entry_unicode_filename() {
         let record_data = create_mock_usn_record(100, 12345, 67890, "测试文件.txt", 0x20);
 
-        let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
-        let entry = MftEntry::new(usn_record::UsnRecordView::V2(record));
+        let record =
+            crate::usn_record::find_next_record(&record_data, record_data.len() as u32, &mut 0)
+                .unwrap()
+                .unwrap();
+        let entry = MftEntry::new(record);
 
         assert_eq!(entry.file_name.to_string_lossy(), "测试文件.txt");
     }
@@ -211,8 +229,11 @@ mod entry {
     fn mft_entry_empty_filename() {
         let record_data = create_mock_usn_record(100, 12345, 67890, "", 0x20);
 
-        let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V2) };
-        let entry = MftEntry::new(usn_record::UsnRecordView::V2(record));
+        let record =
+            crate::usn_record::find_next_record(&record_data, record_data.len() as u32, &mut 0)
+                .unwrap()
+                .unwrap();
+        let entry = MftEntry::new(record);
 
         assert!(entry.file_name.is_empty());
     }
@@ -223,8 +244,11 @@ mod entry {
         let parent_id = 0xffee_ddcc_bbaa_9988_7766_5544_3322_1100u128;
         let record_data = create_mock_usn_record_v3(100, file_id, parent_id, "refs.txt", 0x20);
 
-        let record = unsafe { &*(record_data.as_ptr() as *const USN_RECORD_V3) };
-        let entry = MftEntry::new(usn_record::UsnRecordView::V3(record));
+        let record =
+            crate::usn_record::find_next_record(&record_data, record_data.len() as u32, &mut 0)
+                .unwrap()
+                .unwrap();
+        let entry = MftEntry::new(record);
 
         assert_eq!(entry.usn, Usn::new(100));
         assert_eq!(entry.fid, Fid::from_u128(file_id));

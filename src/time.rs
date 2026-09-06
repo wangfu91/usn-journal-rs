@@ -402,10 +402,7 @@ mod tests {
             // 2020-01-01T00:00:00Z in FILETIME 100 ns ticks.
             let filetime = Filetime::new(132_223_104_000_000_000);
             assert_eq!(filetime.to_unix_seconds(), 1_577_836_800);
-            assert_eq!(
-                filetime.to_unix_nanos(),
-                1_577_836_800 * 1_000_000_000
-            );
+            assert_eq!(filetime.to_unix_nanos(), 1_577_836_800 * 1_000_000_000);
         }
 
         #[test]

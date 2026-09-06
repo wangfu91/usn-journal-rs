@@ -1,7 +1,7 @@
 //! Low-level parsing helpers for raw USN journal and MFT buffers.
 //!
 //! This module validates the raw Windows FSCTL output, exposes a borrowed
-//! view over `USN_RECORD_V2` / `USN_RECORD_V3`, and converts the records into
+//! view with copied `USN_RECORD_V2` / `USN_RECORD_V3` headers, and converts the records into
 //! the smaller owned types used by the rest of the crate.
 
 use crate::{Fid, Usn, UsnError, UsnResult};
@@ -15,10 +15,10 @@ use windows::Win32::System::Ioctl::{USN_RECORD_COMMON_HEADER, USN_RECORD_V2, USN
 /// common fields without duplicating the parser logic.
 #[derive(Copy, Clone, Debug)]
 pub(crate) enum UsnRecordView<'a> {
-    /// Borrowed `USN_RECORD_V2` view.
-    V2(&'a USN_RECORD_V2),
-    /// Borrowed `USN_RECORD_V3` view.
-    V3(&'a USN_RECORD_V3),
+    /// Copied V2 header and validated filename bytes.
+    V2(USN_RECORD_V2, &'a [u8]),
+    /// Copied V3 header and validated filename bytes.
+    V3(USN_RECORD_V3, &'a [u8]),
 }
 
 impl<'a> UsnRecordView<'a> {
@@ -26,8 +26,8 @@ impl<'a> UsnRecordView<'a> {
     #[inline]
     pub(crate) const fn usn(self) -> i64 {
         match self {
-            Self::V2(record) => record.Usn,
-            Self::V3(record) => record.Usn,
+            Self::V2(record, _) => record.Usn,
+            Self::V3(record, _) => record.Usn,
         }
     }
 
@@ -35,8 +35,8 @@ impl<'a> UsnRecordView<'a> {
     #[inline]
     pub(crate) const fn timestamp(self) -> i64 {
         match self {
-            Self::V2(record) => record.TimeStamp,
-            Self::V3(record) => record.TimeStamp,
+            Self::V2(record, _) => record.TimeStamp,
+            Self::V3(record, _) => record.TimeStamp,
         }
     }
 
@@ -44,8 +44,8 @@ impl<'a> UsnRecordView<'a> {
     #[inline]
     pub(crate) const fn reason(self) -> u32 {
         match self {
-            Self::V2(record) => record.Reason,
-            Self::V3(record) => record.Reason,
+            Self::V2(record, _) => record.Reason,
+            Self::V3(record, _) => record.Reason,
         }
     }
 
@@ -53,8 +53,8 @@ impl<'a> UsnRecordView<'a> {
     #[inline]
     pub(crate) const fn source_info(self) -> u32 {
         match self {
-            Self::V2(record) => record.SourceInfo,
-            Self::V3(record) => record.SourceInfo,
+            Self::V2(record, _) => record.SourceInfo,
+            Self::V3(record, _) => record.SourceInfo,
         }
     }
 
@@ -62,8 +62,8 @@ impl<'a> UsnRecordView<'a> {
     #[inline]
     pub(crate) const fn file_attributes(self) -> u32 {
         match self {
-            Self::V2(record) => record.FileAttributes,
-            Self::V3(record) => record.FileAttributes,
+            Self::V2(record, _) => record.FileAttributes,
+            Self::V3(record, _) => record.FileAttributes,
         }
     }
 
@@ -71,8 +71,8 @@ impl<'a> UsnRecordView<'a> {
     #[inline]
     pub(crate) fn fid(self) -> Fid {
         match self {
-            Self::V2(record) => Fid::new(record.FileReferenceNumber),
-            Self::V3(record) => Fid::from(file_id_128_to_u128(record.FileReferenceNumber)),
+            Self::V2(record, _) => Fid::new(record.FileReferenceNumber),
+            Self::V3(record, _) => Fid::from(file_id_128_to_u128(record.FileReferenceNumber)),
         }
     }
 
@@ -80,8 +80,8 @@ impl<'a> UsnRecordView<'a> {
     #[inline]
     pub(crate) fn parent_fid(self) -> Fid {
         match self {
-            Self::V2(record) => Fid::new(record.ParentFileReferenceNumber),
-            Self::V3(record) => Fid::from(file_id_128_to_u128(record.ParentFileReferenceNumber)),
+            Self::V2(record, _) => Fid::new(record.ParentFileReferenceNumber),
+            Self::V3(record, _) => Fid::from(file_id_128_to_u128(record.ParentFileReferenceNumber)),
         }
     }
 
@@ -89,8 +89,8 @@ impl<'a> UsnRecordView<'a> {
     #[inline]
     pub(crate) const fn file_name_length(self) -> u16 {
         match self {
-            Self::V2(record) => record.FileNameLength,
-            Self::V3(record) => record.FileNameLength,
+            Self::V2(record, _) => record.FileNameLength,
+            Self::V3(record, _) => record.FileNameLength,
         }
     }
 
@@ -98,28 +98,20 @@ impl<'a> UsnRecordView<'a> {
     #[inline]
     pub(crate) const fn file_name_offset(self) -> u16 {
         match self {
-            Self::V2(record) => record.FileNameOffset,
-            Self::V3(record) => record.FileNameOffset,
+            Self::V2(record, _) => record.FileNameOffset,
+            Self::V3(record, _) => record.FileNameOffset,
         }
     }
 
-    /// Pointer to the first UTF-16 code unit of the file name.
-    #[inline]
-    pub(crate) fn file_name_ptr(self) -> *const u16 {
-        match self {
-            Self::V2(record) => record.FileName.as_ptr(),
-            Self::V3(record) => record.FileName.as_ptr(),
-        }
-    }
-
-    /// Borrow the UTF-16 file name as a slice of code units.
-    #[inline]
-    pub(crate) fn file_name_slice(self) -> &'a [u16] {
-        let file_name_len = self.file_name_length() as usize / std::mem::size_of::<u16>();
-        // SAFETY: Callers only obtain `UsnRecordView` from `find_next_record`,
-        // which validates that `FileNameOffset + FileNameLength` stays within
-        // the record bounds and that the length is aligned to UTF-16 units.
-        unsafe { std::slice::from_raw_parts(self.file_name_ptr(), file_name_len) }
+    /// Decode the validated UTF-16LE filename without borrowing aligned words.
+    pub(crate) fn file_name_slice(self) -> Vec<u16> {
+        let (Self::V2(_, bytes) | Self::V3(_, bytes)) = self;
+        bytes
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|b| u16::from_le_bytes(*b))
+            .collect()
     }
 }
 
@@ -267,33 +259,46 @@ pub(crate) fn find_next_record<'a>(
 
     let record = match header.MajorVersion {
         2 => {
-            if record_len < size_of::<USN_RECORD_V2>() {
+            let fixed_len = std::mem::offset_of!(USN_RECORD_V2, FileName);
+            if record_len < fixed_len {
                 return Err(UsnError::InvalidRecordLength {
                     offset: offset_usize as u64,
                     length: header.RecordLength,
                     reason: "record length is smaller than USN_RECORD_V2",
                 });
             }
-            // SAFETY: `record_len` has been validated against the V2 header size
-            // and stays within `buffer`. The FSCTL buffer is 8-byte aligned and
-            // USN records are quad-aligned, so reinterpreting the record bytes
-            // as `USN_RECORD_V2` is sound for the lifetime of `buffer`.
-            let record = unsafe { &*(buffer.as_ptr().add(offset_usize) as *const USN_RECORD_V2) };
-            UsnRecordView::V2(record)
+            let mut record = USN_RECORD_V2::default();
+            // SAFETY: only the checked fixed header is copied into an aligned,
+            // initialized value. All copied fields are integer representations.
+            unsafe {
+                ptr::copy_nonoverlapping(
+                    buffer.as_ptr().add(offset_usize),
+                    (&mut record as *mut USN_RECORD_V2).cast::<u8>(),
+                    fixed_len,
+                );
+            }
+            UsnRecordView::V2(record, &[])
         }
         3 => {
-            if record_len < size_of::<USN_RECORD_V3>() {
+            let fixed_len = std::mem::offset_of!(USN_RECORD_V3, FileName);
+            if record_len < fixed_len {
                 return Err(UsnError::InvalidRecordLength {
                     offset: offset_usize as u64,
                     length: header.RecordLength,
                     reason: "record length is smaller than USN_RECORD_V3",
                 });
             }
-            // SAFETY: same argument as the V2 branch above, but for the V3
-            // layout requested via `READ_USN_JOURNAL_DATA_V1` /
-            // `MFT_ENUM_DATA_V1`.
-            let record = unsafe { &*(buffer.as_ptr().add(offset_usize) as *const USN_RECORD_V3) };
-            UsnRecordView::V3(record)
+            let mut record = USN_RECORD_V3::default();
+            // SAFETY: only the checked fixed header is copied into an aligned,
+            // initialized value. All copied fields are integer representations.
+            unsafe {
+                ptr::copy_nonoverlapping(
+                    buffer.as_ptr().add(offset_usize),
+                    (&mut record as *mut USN_RECORD_V3).cast::<u8>(),
+                    fixed_len,
+                );
+            }
+            UsnRecordView::V3(record, &[])
         }
         _ => {
             return Err(UsnError::UnsupportedRecordVersion {
@@ -318,14 +323,22 @@ pub(crate) fn find_next_record<'a>(
                 offset: offset_usize as u64,
                 reason: "file name range overflowed",
             })?;
-    if file_name_end > record_len {
+    let fixed_len = match record {
+        UsnRecordView::V2(..) => std::mem::offset_of!(USN_RECORD_V2, FileName),
+        UsnRecordView::V3(..) => std::mem::offset_of!(USN_RECORD_V3, FileName),
+    };
+    if file_name_offset < fixed_len || file_name_end > record_len {
         return Err(UsnError::InvalidRecord {
             offset: offset_usize as u64,
             reason: "file name range exceeds record length",
         });
     }
 
-    Ok(Some(record))
+    let name = &buffer[offset_usize + file_name_offset..offset_usize + file_name_end];
+    Ok(Some(match record {
+        UsnRecordView::V2(header, _) => UsnRecordView::V2(header, name),
+        UsnRecordView::V3(header, _) => UsnRecordView::V3(header, name),
+    }))
 }
 
 #[cfg(test)]
@@ -672,5 +685,62 @@ mod tests {
             read_next_start_fid(&fid_buf, fid_buf.len() as u32).unwrap(),
             0xDEAD_BEEF
         );
+    }
+
+    #[test]
+    fn records_decode_unaligned_buffers_and_declared_filename_offsets() {
+        for mut record in [
+            build_v2_record(7, 42, 5, 0, 0, "offset.txt"),
+            build_v3_record(7, 42, 5, "offset.txt"),
+        ] {
+            let version = u16::from_le_bytes([record[4], record[5]]);
+            let (name_len_pos, name_offset_pos) = if version == 2 {
+                (
+                    std::mem::offset_of!(USN_RECORD_V2, FileNameLength),
+                    std::mem::offset_of!(USN_RECORD_V2, FileNameOffset),
+                )
+            } else {
+                (
+                    std::mem::offset_of!(USN_RECORD_V3, FileNameLength),
+                    std::mem::offset_of!(USN_RECORD_V3, FileNameOffset),
+                )
+            };
+            let name_len =
+                u16::from_le_bytes(record[name_len_pos..name_len_pos + 2].try_into().unwrap())
+                    as usize;
+            let old_offset = u16::from_le_bytes(
+                record[name_offset_pos..name_offset_pos + 2]
+                    .try_into()
+                    .unwrap(),
+            ) as usize;
+            let name = record[old_offset..old_offset + name_len].to_vec();
+            let new_offset = old_offset + 8;
+            record.resize((new_offset + name_len).next_multiple_of(8), 0);
+            record[old_offset..new_offset].fill(0x7f);
+            record[new_offset..new_offset + name_len].copy_from_slice(&name);
+            record[name_offset_pos..name_offset_pos + 2]
+                .copy_from_slice(&(new_offset as u16).to_le_bytes());
+            let len = record.len() as u32;
+            record[..4].copy_from_slice(&len.to_le_bytes());
+            let mut unaligned = vec![0];
+            unaligned.extend(record);
+            let parsed = find_next_record(&unaligned[1..], len, &mut 0)
+                .unwrap()
+                .unwrap();
+            assert_eq!(parsed.usn(), 7);
+            assert_eq!(
+                String::from_utf16(&parsed.file_name_slice()).unwrap(),
+                "offset.txt"
+            );
+        }
+    }
+
+    #[test]
+    fn fixed_header_respects_bytes_read_and_filename_must_follow_header() {
+        let mut record = build_v2_record(1, 42, 5, 0, 0, "a");
+        assert!(find_next_record(&record, 12, &mut 0).is_err());
+        let pos = std::mem::offset_of!(USN_RECORD_V2, FileNameOffset);
+        record[pos..pos + 2].copy_from_slice(&0u16.to_le_bytes());
+        assert!(find_next_record(&record, record.len() as u32, &mut 0).is_err());
     }
 }

@@ -51,7 +51,7 @@ impl<'a> UsnJournal<'a> {
     pub fn try_iter(&self) -> UsnResult<UsnJournalIter> {
         let journal_data = self.query_or_create()?;
         Ok(UsnJournalIter::new(
-            self.volume.handle,
+            self.volume.shared_handle(),
             journal_data.journal_id,
             vec![0u8; DEFAULT_BUFFER_BYTES],
             UsnJournalIterConfig {
@@ -72,7 +72,7 @@ impl<'a> UsnJournal<'a> {
     pub fn try_iter_with_options(&self, options: JournalIterOptions) -> UsnResult<UsnJournalIter> {
         let journal_data = self.query_or_create()?;
         Ok(UsnJournalIter::new(
-            self.volume.handle,
+            self.volume.shared_handle(),
             journal_data.journal_id,
             vec![0u8; options.buffer_bytes.get()],
             UsnJournalIterConfig {
@@ -114,10 +114,7 @@ impl<'a> UsnJournal<'a> {
     pub fn query_or_create(&self) -> UsnResult<UsnJournalData> {
         match self.query() {
             Err(UsnError::JournalNotActive) => {
-                self.create_or_update(
-                    DEFAULT_JOURNAL_MAX_SIZE,
-                    DEFAULT_JOURNAL_ALLOCATION_DELTA,
-                )?;
+                self.create_or_update(DEFAULT_JOURNAL_MAX_SIZE, DEFAULT_JOURNAL_ALLOCATION_DELTA)?;
                 let journal_data = self.query_core()?;
                 Ok(journal_data.into())
             }
@@ -127,8 +124,8 @@ impl<'a> UsnJournal<'a> {
 
     /// Core function to query the USN journal state.
     fn query_core(&self) -> std::result::Result<USN_JOURNAL_DATA_V0, windows::core::Error> {
-        let journal_data = USN_JOURNAL_DATA_V0::default();
-        let bytes_return = 0u32;
+        let mut journal_data = USN_JOURNAL_DATA_V0::default();
+        let mut bytes_return = 0u32;
 
         // SAFETY: `self.volume.handle` is a live volume handle owned by
         // `self`. The output buffer points to a stack-allocated
@@ -144,13 +141,13 @@ impl<'a> UsnJournal<'a> {
             // you must have system administrator privileges.
             // That is, you must be a member of the Administrators group.
             DeviceIoControl(
-                self.volume.handle,
+                self.volume.handle(),
                 FSCTL_QUERY_USN_JOURNAL,
                 None,
                 0,
-                Some(&journal_data as *const _ as *mut _),
+                Some(&mut journal_data as *mut _ as *mut _),
                 std::mem::size_of::<USN_JOURNAL_DATA_V0>() as u32,
-                Some(&bytes_return as *const _ as *mut _),
+                Some(&mut bytes_return),
                 None,
             )
         }?;
@@ -180,7 +177,7 @@ impl<'a> UsnJournal<'a> {
             // FSCTL_CREATE_USN_JOURNAL
             // Creates an update sequence number (USN) change journal stream on a target volume, or modifies an existing change journal stream.
             DeviceIoControl(
-                self.volume.handle,
+                self.volume.handle(),
                 FSCTL_CREATE_USN_JOURNAL,
                 Some(&create_data as *const _ as *mut _),
                 size_of::<CREATE_USN_JOURNAL_DATA>() as u32,
@@ -212,7 +209,7 @@ impl<'a> UsnJournal<'a> {
         // duration of the call; we pass no output buffer.
         unsafe {
             DeviceIoControl(
-                self.volume.handle,
+                self.volume.handle(),
                 FSCTL_DELETE_USN_JOURNAL,
                 Some(&delete_data as *const _ as *mut _),
                 size_of::<DELETE_USN_JOURNAL_DATA>() as u32,

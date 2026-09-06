@@ -44,7 +44,10 @@ fn query_or_create_returns_self_consistent_state() {
         .query_or_create()
         .expect("query_or_create should succeed on an NTFS volume");
 
-    assert_ne!(data.journal_id, 0, "an active journal must have a non-zero id");
+    assert_ne!(
+        data.journal_id, 0,
+        "an active journal must have a non-zero id"
+    );
     assert!(
         data.first_usn <= data.next_usn,
         "first_usn ({}) must not exceed next_usn ({})",

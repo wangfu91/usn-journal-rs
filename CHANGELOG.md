@@ -1,286 +1,157 @@
 # Changelog
 
-## Unreleased: raw MFT extraction
+## [Unreleased] — 0.5.0
 
-Raw MFT reading, snapshot/historical paths and their examples, tests and
-benchmarks moved to the independent `ntfs-mft` repository. The journal, FSCTL
-enumeration, live-path and shared-type refinements remain here. Raw-MFT entries
-below describe pre-extraction branch history; use `ntfs_mft` imports and
-`MftError`/`MftResult` for the extracted APIs.
-
-
-All notable changes to this project will be documented in this file.
-
-The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/).
-
----
-
-## [0.5.0] — Unreleased
-
-Major version bump with extensive performance work, ergonomic API improvements,
-and idiomatic Rust refactoring. **Breaking changes throughout** — see the
-[migration guide](#migrating-from-04x) below.
-
-### Highlights
-
-- Raw NTFS `$MFT` reading now supports Linux mount points and device paths with
-  read-only device access; Windows-only USN/FSCTL APIs are compile-time gated.
-- Raw `$MFT` iteration is ~6× faster (262 ms vs 1.64 s for 200 k records).
-- New in-memory directory-tree path resolver: full-volume scans drop from ~21 s
-  to <500 ms (~40× faster).
-- Timestamps now use a lightweight `Filetime(u64)` newtype instead of an
-  external date/time dependency.
-- Strong typing via `Usn`, `Fid`, `UsnReason`, `UsnSourceInfo`, and `FileAttributes`.
-- Builder patterns for all iterator option structs.
-- Concrete `UsnError` variants — no more `OtherError(String)`.
-
-### Performance
-
-- Linux raw-MFT filename decoding avoids an intermediate UTF-16 allocation,
-  improving the measured 2.1 M-record serial workload by about 6.2%.
-- Raw `$MFT` reader: zero-copy fixup parsing via `VolumeReader::borrow_at`,
-  eliminated per-record memcpy.
-- Path resolver: `Arc<Path>` cache values for cheap clones; reusable scratch
-  buffer; in-memory directory tree.
-- USN reason-string formatting via static lookup table.
-- Checked unaligned-read helper for byte-oriented record parsers.
-- Shared data-run decoder used by both full decode and summary-only paths.
+API refinements for Windows USN journals, FSCTL enumeration, and live paths.
+This release is not yet published. The 0.4.1 fixes below are retained.
 
 ### Added
 
-- Linux `Volume::from_device_path`; Linux `Volume::from_mount_point` resolves
-  NTFS backing devices through `/proc/self/mountinfo` and opens them read-only.
-- `usn_journal_rs::types` module with `Usn` and `Fid` newtypes.
-- `usn_journal_rs::time::Filetime` with `to_system_time`, `from_system_time`,
-  `TryFrom` conversions, `to_unix_seconds`, and `to_unix_nanos`.
-- `Volume::from_drive_letter(c: char)` and `Volume::from_mount_point(p)` —
-  replaces the previous single constructor.
-- `Volume` now records the originating drive letter or mount point internally.
-- `JournalIterOptions::builder()`, `MftIterOptions::builder()`,
-  `RawMftScanOptions::builder()`, and `RawMftChunkPlanOptions::builder()`.
-- `RawMft::parallel()` builder-style facade for ordered parallel chunk scans.
-- `PathResolver::new(v).with_directory_cache(n)` for tuning (or disabling, with
-  `0`) the live resolver's LRU directory cache.
-- `usn_journal_rs::prelude` for common application imports.
-- The prelude now also re-exports the entry types (`UsnEntry`, `MftEntry`,
-  `RawMftEntry`) and the option builders (`JournalIterOptions`, `MftIterOptions`,
-  `RawMftScanOptions`, `UsnRecordVersion`).
-- `RawMft::path_resolver()` → `RawMftPathResolver` for snapshot-local O(1) path
-  reconstruction without per-lookup syscalls.
-- `Volume::journal()`, `Volume::mft()`, `Volume::raw_mft()`, and
-  `Volume::path_resolver()` convenience accessors for discovering the API from a
-  `Volume` (e.g. `volume.journal().try_iter()?`).
-- USN v3 / 128-bit file ID support for `UsnJournal`, `Mft`, and `PathResolver`.
-- `UsnError::NotElevated`, `UsnError::UnsupportedFilesystem(String)`,
-  `UsnError::BufferTooSmall { needed, got }`, precise USN parser error
-  variants, and offset-aware raw-MFT parse diagnostics.
-- `UsnError::JournalNotActive` plus `UsnJournal::query_or_create()` — explicit
-  "query, creating the journal only if it is missing" semantics.
-- `UsnReason::ALL` — a strongly-typed full 32-bit catch-all reason mask that also
-  matches reason bits newer than this crate (unlike bitflags' `UsnReason::all()`).
-- Named predicate methods on `UsnReason` (`is_file_create`, `is_file_delete`,
-  `is_rename`, `is_close`, `is_data_change`) and on `FileAttributes`
-  (`is_directory`, `is_read_only`, `is_hidden`, `is_system`, `is_archive`,
-  `is_reparse_point`, `is_compressed`, `is_encrypted`, `is_sparse`, `is_offline`,
-  `is_temporary`) for readable change/attribute classification.
-- `UsnEntry` and `MftEntry` gained matching attribute convenience methods
-  (`is_read_only`, `is_system`, `is_archive`, `is_reparse_point`, `is_compressed`,
-  `is_encrypted`, `is_sparse`) alongside the existing `is_dir` / `is_hidden`.
-- `Usn::ZERO` constant for the conventional scan-start cursor.
-- `Filetime::UNIX_EPOCH` constant, `Filetime::is_zero()`,
-  `Filetime::to_unix_millis()`, and `Filetime::from_unix_seconds()`
-  (the missing inverse of `to_unix_seconds`).
-- `Fid::from_parts(record_number, sequence)` — construct a standard NTFS file
-  reference from its parts (inverse of `record_number()` / `sequence()`).
-- `Usn::is_zero()`, `Usn::saturating_add(i64)`, and `Usn::checked_add(i64)`.
-- `fmt::LowerHex` / `fmt::UpperHex` for `Fid` so `{:x}` / `{:X}` / `{:#x}` compose.
-- `Display` for `UsnJournalData` (compact one-line summary for logging).
-- `Display` impl on `UsnEntry` and `MftEntry` (compact one-line format).
-- `Display` impl on `RawMftEntry` (compact one-line format), for parity with the
-  journal and FSCTL-based MFT entries.
-- Runnable doc examples on `Fid::from_parts`, `Filetime::from_unix_seconds`, and
-  `Volume::from_drive_letter`.
-- Benchmarks: `benches/journal.rs`, `benches/path_resolver.rs`.
-- Integration tests: `tests/journal_query.rs` (query / query_or_create
-  semantics), `tests/volume_accessors.rs` (Volume accessor equivalence + MFT
-  USN-range edge cases), `tests/path_resolver_consistency.rs`,
-  `tests/raw_mft_mft_consistency.rs`, `tests/refs_unsupported.rs`,
-  `tests/refs_v3_ids.rs`, and `tests/filetime_roundtrip.rs`.
+- Strong `Usn`, `Fid`, `FileAttributes`, `UsnReason`, and `UsnSourceInfo` types,
+  including 128-bit file IDs for V3/ReFS records.
+- `Filetime` at the crate root, with checked `SystemTime` conversions.
+- `JournalIterOptions` and `MftIterOptions` builders, typed `UsnRecordVersion`,
+  reusable iterator buffers, and a common `prelude`.
+- `Volume::journal()`, `Volume::mft()`, and `Volume::path_resolver()` accessors.
+- `UsnJournal::query_or_create()` for explicit create-on-demand behavior.
+- Entry formatting, flag predicates, journal/path benchmarks, and regression
+  tests for parsing, handle lifetimes, and path resolution.
 
 ### Changed
 
-- `Volume` fields are now private; use the public accessor methods.
-- `PathResolver::new` now enables the default LRU directory cache automatically;
-  call `.with_directory_cache(0)` for fully uncached syscall resolution.
-- `RawMftEntry` timestamps are `Filetime` instead of external date/time types.
-- `UsnEntry::time` is `Filetime` instead of `std::time::SystemTime`.
-- `RawMftIterOptions` renamed to `RawMftScanOptions`, with structured
-  `RawMftReadBuffers`, `RawMftRecordRange`, and `RawMftEntryOptions` groups.
-- `RawMftWorkPlanOptions` renamed to `RawMftChunkPlanOptions`.
-- `RawMft` now uses the same fallible iterator naming as the journal and
-  FSCTL-based MFT APIs: `try_iter` / `try_iter_with_options`.
-- `RawMft::get_record` renamed to `RawMft::read_record`.
-- `journal::EnumOptions` renamed to `JournalIterOptions`;
-  `mft::EnumOptions` renamed to `MftIterOptions`.
-- `UsnJournal` and `Mft` fallible iteration entry points are now `try_iter` /
-  `try_iter_with_options`.
-- `PathResolvableEntry::fid()` and `parent_fid()` now return `Fid`.
-- `Volume` keeps the originating drive letter or mount point internally; use `Volume::drive_letter()` and `Volume::mount_point()` to inspect it.
-- Entry structs now derive `Clone`, `PartialEq`, `Eq`, and `Hash` where their
-  field types permit it.
-- `Fid` now represents both standard 64-bit NTFS file references and
-  128-bit ReFS file IDs. Use `is_standard()`, `is_extended()`, `as_u64()`,
-  `as_u128()`, and `as_bytes()` to inspect the underlying representation.
-- `src/journal.rs` split into the `src/journal/` module directory
-  (`mod.rs`, `journal.rs`, `iter.rs`, `entry.rs`, `reason.rs`, `options.rs`,
-  `data.rs`, `defaults.rs`).
-- `src/record.rs` renamed to `src/usn_record.rs`.
-- Raw `$MFT` on-disk parser modules live under `src/raw_mft/layout/`, and entry
-  construction was split into focused attribute dispatch, capture, and file-name
-  selection modules under `src/raw_mft/entry_build/`.
-- Cargo profile cleanup: removed bogus `[profile.test]` flags; added
-  `[profile.bench] lto = "thin"`.
-- `UsnJournal::query` no longer takes a `create_if_not_active: bool`. It now
-  queries only and returns `UsnError::JournalNotActive` when the volume has no
-  journal; use the new `UsnJournal::query_or_create()` to create on demand.
-- `PathResolver::resolve_path` now takes `&self` instead of `&mut self`
-  (directory cache and scratch buffer use interior mutability), matching
-  `RawMftPathResolver::resolve_path`. A single resolver can be shared across an
-  iteration loop without a `mut` binding.
-- `UsnReason`, `FileAttributes`, and `UsnSourceInfo` now share one `Display`
-  implementation. An empty `UsnReason` renders as `NONE` (previously `UNKNOWN`),
-  and a value with only unknown bits renders as hex (e.g. `0x8`), consistent
-  with the other two bitflag types.
-- `UsnError::InvalidMountPointError` renamed to `UsnError::InvalidMountPoint`
-  (the redundant `Error` suffix is dropped).
-- `Mft::try_iter_with_options` no longer seeds the enumeration's start file
-  reference number from `low_usn`; enumeration always begins at record 0 and
-  `low_usn`/`high_usn` filter purely by USN, as the Win32 API intends.
-- `JournalIterOptionsBuilder::timeout` now takes a `std::time::Duration`
-  (truncated to whole seconds, matching the Win32 read API) instead of a raw
-  `u64`. The default is `Duration::ZERO` (block indefinitely while waiting).
+- Fallible iteration uses `try_iter()` and `try_iter_with_options()`.
+- `query()` only queries and returns `UsnError::JournalNotActive` when absent.
+  Iterator creation retains create-on-demand behavior.
+- `PathResolver::new()` enables a directory cache; `.with_directory_cache(0)`
+  disables it. `resolve_path()` accepts `&self`.
+- Volume fields are private; use `drive_letter()` and `mount_point()`.
+  `Volume::clone()` and iterators share ownership of the Windows handle.
+- Entry timestamps use `Filetime`; identifiers and flag fields use strong types.
+- `JournalIterOptionsBuilder::timeout()` accepts `Duration` in whole seconds.
+- Error variants use descriptive names and structured parser diagnostics.
+- Journal, MFT, and path implementations live in module directories.
 
-### Removed
+### Migration from 0.4.1
 
-- `pub type Usn = i64` alias (replaced by the `Usn(i64)` newtype).
-- `UsnEntry::pretty_format` and `MftEntry::pretty_format` — use the `Display`
-  impl; a multi-line formatter is available in `examples/journal_pretty_print.rs`.
-- `UsnEntry::get_reason_string()` — use the `UsnReason` `Display` impl directly,
-  e.g. `entry.reason.to_string()` or `format!("{}", entry.reason)`.
-- `UsnError::OtherError(String)` catch-all variant.
-- `PathResolver::new_with_cache` — use
-  `PathResolver::new(v).with_directory_cache(n)`.
-- `Fid::from_u64`; use `Fid::new` or `Fid::from(u64)` instead.
-- External date/time crate integration from the public API.
-- Crate-root re-exports of `DEFAULT_JOURNAL_MAX_SIZE`,
-  `DEFAULT_JOURNAL_ALLOCATION_DELTA`, `USN_REASON_MASK_ALL`, and
-  `DEFAULT_BUFFER_SIZE` (moved into the `journal` module).
+| 0.4.1 API | 0.5.0 API |
+| --- | --- |
+| `journal.iter()` | `journal.try_iter()` |
+| `mft.iter()` | `mft.try_iter()`; `IntoIterator` remains supported |
+| `iter_with_options(options)` | `try_iter_with_options(options)` |
+| `journal::EnumOptions` | `journal::JournalIterOptions::builder()` |
+| `mft::EnumOptions` | `mft::MftIterOptions::builder()` |
+| `journal.query(false)` | `journal.query()` |
+| `journal.query(true)` | `journal.query_or_create()` |
+| `PathResolver::new_with_cache(&volume)` | `PathResolver::new(&volume)` |
+| `PathResolver::new(&volume)` without cache | `PathResolver::new(&volume).with_directory_cache(0)` |
+| `volume.drive_letter` / `volume.mount_point` | `volume.drive_letter()` / `volume.mount_point()` |
+| Integer USNs and file IDs | `Usn::new(value)` and `Fid::new(value)` |
+| `UsnError::PermissionError` | `UsnError::NotElevated` |
+| `UsnError::WinApiError` | `UsnError::WinApi` |
+| `UsnError::IoError` | `UsnError::Io` |
+| `UsnError::InvalidMountPointError` | `UsnError::InvalidMountPoint` |
+| `UsnError::OtherError` | Specific structured error variants |
 
-### Internal
+Use `use usn_journal_rs::Filetime;` for timestamps. `to_system_time()` returns
+`Option<SystemTime>`; `from_system_time()` returns `UsnResult<Filetime>`.
+Use `Display` for entries and flags instead of the removed `pretty_format()`
+and `get_reason_string()` helpers. Journal defaults live in `journal`.
 
-- `src/record.rs` renamed to `src/usn_record.rs`.
-- Unified the `FileAttributes` / `UsnReason` / `UsnSourceInfo` `Display` logic
-  into a single `crate::display::write_flag_names` helper.
-- Named `attr_header_flags` constants replace magic-number attribute-flag checks
-  in raw-`$MFT` entry construction; a shared `parse_record_at` helper removes the
-  duplicated look-up/borrow/validate/fix-up sequence in the raw-`$MFT` readers.
+## [0.4.1] - 2026-05-27
 
----
+### Fixed
+- Enforce Clippy lints for better code quality and improve LRU cache initialization
+- Overflow checks in USN record header parsing with tests for truncated regions
+- Handle root self-entry in cached path resolution
+- Use backup semantics for `OpenFileById`
+- Remove unaligned runtime buffer casts
+- Fix mutable output pointers in journal query
+- Fix MFT enumeration start file ID
+- Close privilege token handles and path lookup handles on all paths
 
-## Migrating from 0.4.x
+### Changed
+- Redesign volume ownership API with safe handle management
+- Simplify shared handle ownership model
+- Simplify safe USN record parsing
+- Add function to handle volume-relative path resolution
+- Update `windows` crate to version 0.62.2
 
-### Volume construction
+## [0.4.0] - 2025-08-02
 
-```diff
-- let volume = Volume::new(Some('C'), None)?;
-+ let volume = Volume::from_drive_letter('C')?;
-```
+### Added
+- Enable test runs in CI workflows
+- `IntoIterator` implementation for `Mft` and `&Mft`
 
-Or via mount point:
+### Fixed
+- Fix a GitHub publish workflow bug
+- Improve MFT iterator error handling
+- Improve USN journal iterator error handling
+- Make `filetime_to_systemtime` return `Result` and handle errors properly
 
-```diff
-- let volume = Volume::new(None, Some(r"C:\"))?;
-+ let volume = Volume::from_mount_point(r"C:\")?;
-```
+### Changed
+- Update `lru` crate to version 0.16
+- Refactor test imports and mock volume handle
+- Clarify iterator error handling in docs and examples
+- Remove redundant and trivial unit tests
 
-### Iterating the USN journal
+## [0.3.0] - 2025-06-04
 
-```diff
-- for entry in journal.iter()? {
-+ for entry in journal.try_iter()? {
-```
+### Added
+- Pretty formatting for MFT and USN entries
 
-### Iterating the MFT
+### Changed
+- Major refactoring of path resolution APIs for clarity and correctness
+- Fix directory file-ID path caching
+- Update examples
 
-```diff
-- for entry in mft.iter()? {
-+ for entry in mft.try_iter()? {
-```
+## [0.2.2] - 2025-05-16
 
-### Iterator options
+### Changed
+- Minor refactoring for the path module
 
-```diff
-- use usn_journal_rs::journal::EnumOptions;
-- let opts = EnumOptions { start_usn: 0, ..Default::default() };
-+ use usn_journal_rs::journal::JournalIterOptions;
-+ use std::num::NonZeroUsize;
-+ use usn_journal_rs::{Usn, UsnReason};
-+ let opts = JournalIterOptions::builder()
-+     .start_usn(Usn::new(0))
-+     .reason_mask(UsnReason::ALL)
-+     .buffer_bytes(NonZeroUsize::new(64 * 1024).unwrap())
-+     .build();
-```
+## [0.2.1] - 2025-05-15
 
-### Timestamps
+### Added
+- Thin wrapper around the `USN_JOURNAL_DATA_V0` structure
 
-```diff
-- let dt = entry.created;
-+ use usn_journal_rs::time::Filetime;
-+ let ft: Filetime = entry.time;
-+ let st: Option<std::time::SystemTime> = ft.to_system_time();
-+ let ft2 = Filetime::from_system_time(std::time::SystemTime::now());
-+ let unix: i64 = ft.to_unix_seconds();
-```
+### Fixed
+- Fix doc test failures
 
-### Error matching
+### Changed
+- Refactoring and test improvements
 
-```diff
-- match err {
--     UsnError::OtherError(msg) => eprintln!("error: {msg}"),
--     _ => {}
-- }
-+ match err {
-+     UsnError::Io(e)                     => eprintln!("I/O error: {e}"),
-+     UsnError::WinApi(e)                 => eprintln!("Win32 error: {e}"),
-+     UsnError::NotElevated               => eprintln!("must be Administrator"),
-+     UsnError::UnsupportedFilesystem(fs) => eprintln!("not supported on {fs}"),
-+     UsnError::BufferTooSmall { needed, got } => eprintln!("buffer too small: need {needed}, got {got}"),
-+     UsnError::InvalidRecord { offset, reason } => eprintln!("bad record at {offset}: {reason}"),
-+     _ => {}
-+ }
-```
+## [0.2.0] - 2025-05-15
 
-### Path resolver
+### Changed
+- Major refactoring to improve code readability and public API ergonomics
+- Remove `FILE_FLAGS_AND_ATTRIBUTES` type from public APIs
+- Update docs
 
-```diff
-- let resolver = PathResolver::new_with_cache(&volume, 8192);
-+ // Plain integer capacity; pass 0 to disable the cache.
-+ let resolver = PathResolver::new(&volume).with_directory_cache(8192);
-```
+## [0.1.1] - 2025-05-09
 
-For maximum performance on full-volume scans, use the raw-`$MFT` snapshot
-resolver, which walks an in-memory directory tree with no per-lookup syscalls:
+### Added
+- Metadata for docs.rs targets in `Cargo.toml`
 
-```rust
-use usn_journal_rs::raw_mft::RawMft;
+### Changed
+- Documentation improvements
 
-let raw_mft = RawMft::new(&volume)?;
-let resolver = raw_mft.path_resolver()?;
-```
+## [0.1.0] - 2025-05-09
 
----
+### Added
+- Initial release
+- USN change journal iterator API
+- MFT (Master File Table) enumeration iterator API
+- Path resolution for MFT entries with LRU caching
+- USN reason bitfield to human-readable string conversion
+- Support for Windows NTFS and ReFS volumes
+- CI workflow
 
-## Earlier versions
-
-See git history for 0.4.x and prior.
+[Unreleased]: https://github.com/wangfu91/usn-journal-rs/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/wangfu91/usn-journal-rs/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/wangfu91/usn-journal-rs/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/wangfu91/usn-journal-rs/compare/v0.2.2...v0.3.0
+[0.2.2]: https://github.com/wangfu91/usn-journal-rs/compare/v0.2.1...v0.2.2
+[0.2.1]: https://github.com/wangfu91/usn-journal-rs/compare/v0.2.0...v0.2.1
+[0.2.0]: https://github.com/wangfu91/usn-journal-rs/compare/v0.1.1...v0.2.0
+[0.1.1]: https://github.com/wangfu91/usn-journal-rs/compare/v0.1.0...v0.1.1
+[0.1.0]: https://github.com/wangfu91/usn-journal-rs/releases/tag/v0.1.0

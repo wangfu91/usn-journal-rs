@@ -10,7 +10,10 @@ const REASON_FLAG_NAMES: &[(u32, &str)] = &[
     (UsnReason::DATA_OVERWRITE.bits(), "DATA_OVERWRITE"),
     (UsnReason::DATA_EXTEND.bits(), "DATA_EXTEND"),
     (UsnReason::DATA_TRUNCATION.bits(), "DATA_TRUNCATION"),
-    (UsnReason::NAMED_DATA_OVERWRITE.bits(), "NAMED_DATA_OVERWRITE"),
+    (
+        UsnReason::NAMED_DATA_OVERWRITE.bits(),
+        "NAMED_DATA_OVERWRITE",
+    ),
     (UsnReason::NAMED_DATA_EXTEND.bits(), "NAMED_DATA_EXTEND"),
     (
         UsnReason::NAMED_DATA_TRUNCATION.bits(),
@@ -28,7 +31,10 @@ const REASON_FLAG_NAMES: &[(u32, &str)] = &[
     (UsnReason::COMPRESSION_CHANGE.bits(), "COMPRESSION_CHANGE"),
     (UsnReason::ENCRYPTION_CHANGE.bits(), "ENCRYPTION_CHANGE"),
     (UsnReason::OBJECT_ID_CHANGE.bits(), "OBJECT_ID_CHANGE"),
-    (UsnReason::REPARSE_POINT_CHANGE.bits(), "REPARSE_POINT_CHANGE"),
+    (
+        UsnReason::REPARSE_POINT_CHANGE.bits(),
+        "REPARSE_POINT_CHANGE",
+    ),
     (UsnReason::STREAM_CHANGE.bits(), "STREAM_CHANGE"),
     (UsnReason::TRANSACTED_CHANGE.bits(), "TRANSACTED_CHANGE"),
     (UsnReason::INTEGRITY_CHANGE.bits(), "INTEGRITY_CHANGE"),

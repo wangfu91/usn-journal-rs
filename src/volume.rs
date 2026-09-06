@@ -1,23 +1,24 @@
-//! Read-only volume access for NTFS/ReFS on Windows and raw NTFS on Linux.
+//! Shared volume handles for Windows NTFS/ReFS journal and enumeration APIs.
 
 use crate::errors::UsnError;
 #[cfg(windows)]
 use crate::privilege;
 #[cfg(windows)]
 use log::{debug, warn};
-#[cfg(target_os = "linux")]
-use std::{fs::{File, OpenOptions}, io::{BufRead, BufReader}};
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    rc::Rc,
+};
 #[cfg(windows)]
 use windows::{
     Win32::{
-        Foundation::{CloseHandle, ERROR_ACCESS_DENIED, HANDLE},
+        Foundation::{ERROR_ACCESS_DENIED, HANDLE},
         Storage::FileSystem::{
             CreateFileW, FILE_FLAGS_AND_ATTRIBUTES, FILE_GENERIC_READ, FILE_SHARE_READ,
             FILE_SHARE_WRITE, GetVolumeNameForVolumeMountPointW, OPEN_EXISTING,
         },
     },
-    core::HSTRING,
+    core::{HSTRING, Owned},
 };
 
 /// Source used to open a [`Volume`].
@@ -28,24 +29,13 @@ pub(crate) enum VolumeSource {
     DriveLetter(char),
     /// Volume was opened via a mount point path.
     MountPoint(PathBuf),
-    /// Volume was opened directly through a Linux block-device path.
-    #[cfg(target_os = "linux")]
-    DevicePath(PathBuf),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 /// Represents a read-only filesystem volume and its reopenable source.
 pub struct Volume {
-    /// Raw volume handle returned by `CreateFileW`.
-    ///
-    /// This crate owns the handle and closes it exactly once in [`Drop`].
-    /// Internal users may borrow it for Win32 calls but must never close,
-    /// duplicate, or transfer ownership of it.
-    #[cfg(windows)]
-    pub(crate) handle: HANDLE,
-    /// Read-only Linux device file.
-    #[cfg(target_os = "linux")]
-    pub(crate) file: File,
+    /// Shared ownership keeps the handle open while any clone or iterator uses it.
+    pub(crate) handle: Rc<Owned<HANDLE>>,
     /// Source path used to open the volume.
     source: VolumeSource,
 }
@@ -69,13 +59,13 @@ impl Volume {
     /// # Errors
     ///
     /// Returns [`UsnError::NotElevated`] if the process does not have the
-    /// Administrator privileges required to open raw volume handles. Returns
+    /// Administrator privileges required to open volume handles. Returns
     /// [`UsnError::WinApi`] if Windows rejects the volume path.
     #[cfg(windows)]
     pub fn from_drive_letter(drive_letter: char) -> Result<Self, UsnError> {
         let handle = get_volume_handle_from_drive_letter(drive_letter)?;
         Ok(Volume {
-            handle,
+            handle: share_handle(handle),
             source: VolumeSource::DriveLetter(drive_letter),
         })
     }
@@ -85,7 +75,7 @@ impl Volume {
     /// # Errors
     ///
     /// Returns [`UsnError::NotElevated`] if the process does not have the
-    /// Administrator privileges required to open raw volume handles. Returns
+    /// Administrator privileges required to open volume handles. Returns
     /// [`UsnError::WinApi`] or [`UsnError::InvalidMountPoint`] if the
     /// mount point cannot be resolved to a volume handle.
     #[cfg(windows)]
@@ -93,26 +83,9 @@ impl Volume {
         let path = mount_point.as_ref();
         let handle = get_volume_handle_from_mount_point(path)?;
         Ok(Volume {
-            handle,
+            handle: share_handle(handle),
             source: VolumeSource::MountPoint(path.to_path_buf()),
         })
-    }
-
-    /// Opens the block device backing a Linux NTFS mount, read-only.
-    #[cfg(target_os = "linux")]
-    pub fn from_mount_point<P: AsRef<Path>>(mount_point: P) -> Result<Self, UsnError> {
-        let mount_point = mount_point.as_ref().canonicalize()?;
-        let device = device_for_mount_point(&mount_point)?;
-        let file = open_read_only(&device)?;
-        Ok(Self { file, source: VolumeSource::MountPoint(mount_point) })
-    }
-
-    /// Opens a Linux NTFS block device read-only.
-    #[cfg(target_os = "linux")]
-    pub fn from_device_path<P: AsRef<Path>>(device_path: P) -> Result<Self, UsnError> {
-        let path = device_path.as_ref().to_path_buf();
-        let file = open_read_only(&path)?;
-        Ok(Self { file, source: VolumeSource::DevicePath(path) })
     }
 
     /// Returns the drive letter if this volume was opened via a drive letter.
@@ -136,38 +109,27 @@ impl Volume {
         }
     }
 
-    /// Returns the Linux block-device path when opened directly.
-    #[cfg(target_os = "linux")]
-    #[must_use]
-    pub fn device_path(&self) -> Option<&Path> {
-        match &self.source {
-            VolumeSource::DevicePath(path) => Some(path),
-            _ => None,
-        }
-    }
-
     /// Creates a mock `Volume` for testing (invalid handle, no real device).
     #[cfg(all(test, windows))]
     pub(crate) fn mock(handle: HANDLE, source: VolumeSource) -> Self {
-        Volume { handle, source }
+        Volume {
+            handle: share_handle(handle),
+            source,
+        }
     }
 }
 
-#[cfg(windows)]
-impl Drop for Volume {
-    fn drop(&mut self) {
-        if self.handle.is_invalid() {
-            return;
-        }
+fn share_handle(handle: HANDLE) -> Rc<Owned<HANDLE>> {
+    // SAFETY: the caller transfers sole ownership of this newly opened handle.
+    Rc::new(unsafe { Owned::new(handle) })
+}
 
-        // SAFETY: `self.handle` was returned by a successful `CreateFileW`
-        // call (see `from_drive_letter` / `from_mount_point`) and has not
-        // been closed elsewhere. `Drop` runs at most once per `Volume`,
-        // so this is the unique close. `CloseHandle` is safe to call on
-        // a valid handle that the caller owns.
-        if let Err(err) = unsafe { CloseHandle(self.handle) } {
-            warn!("Failed to close volume handle: {err}");
-        }
+impl Volume {
+    pub(crate) fn shared_handle(&self) -> Rc<Owned<HANDLE>> {
+        Rc::clone(&self.handle)
+    }
+    pub(crate) fn handle(&self) -> HANDLE {
+        **self.handle
     }
 }
 
@@ -261,94 +223,6 @@ fn get_volume_handle_from_mount_point(mount_point: &Path) -> Result<HANDLE, UsnE
     };
 
     Ok(volume_handle)
-}
-
-#[cfg(target_os = "linux")]
-fn open_read_only(path: &Path) -> Result<File, UsnError> {
-    OpenOptions::new().read(true).open(path).map_err(UsnError::Io)
-}
-
-#[cfg(target_os = "linux")]
-fn device_for_mount_point(mount_point: &Path) -> Result<PathBuf, UsnError> {
-    let file = File::open("/proc/self/mountinfo")?;
-    for line in BufReader::new(file).lines() {
-        let line = line?;
-        let Some((before, after)) = line.split_once(" - ") else { continue };
-        let fields: Vec<&str> = before.split_whitespace().collect();
-        let after_fields: Vec<&str> = after.split_whitespace().collect();
-        if fields.len() < 5 || after_fields.len() < 2 { continue; }
-        let candidate = PathBuf::from(unescape_mountinfo(fields[4])?);
-        if candidate != mount_point { continue; }
-        if !matches!(after_fields[0], "ntfs" | "ntfs3" | "fuseblk") {
-            return Err(UsnError::UnsupportedFilesystem(
-                "Linux mount point is not backed by NTFS",
-            ));
-        }
-        let source = unescape_mountinfo(after_fields[1])?;
-        if !source.starts_with('/') {
-            return Err(UsnError::InvalidMountPoint(
-                "mount source is not a device path".into(),
-            ));
-        }
-        return Ok(PathBuf::from(source));
-    }
-    Err(UsnError::InvalidMountPoint(format!(
-        "mount point not found in /proc/self/mountinfo: {}",
-        mount_point.display()
-    )))
-}
-
-#[cfg(target_os = "linux")]
-fn unescape_mountinfo(value: &str) -> Result<String, UsnError> {
-    let bytes = value.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] == b'\\' {
-            let digits = bytes.get(index + 1..index + 4).ok_or_else(|| {
-                UsnError::InvalidMountPoint("truncated mountinfo escape".into())
-            })?;
-            if !digits.iter().all(u8::is_ascii_digit) {
-                return Err(UsnError::InvalidMountPoint("invalid mountinfo escape".into()));
-            }
-            let text = std::str::from_utf8(digits)
-                .map_err(|_| UsnError::InvalidMountPoint("invalid mountinfo escape".into()))?;
-            let decoded = u8::from_str_radix(text, 8)
-                .map_err(|_| UsnError::InvalidMountPoint("invalid mountinfo escape".into()))?;
-            out.push(decoded);
-            index += 4;
-        } else {
-            out.push(bytes[index]);
-            index += 1;
-        }
-    }
-    String::from_utf8(out)
-        .map_err(|_| UsnError::InvalidMountPoint("mountinfo path is not UTF-8".into()))
-}
-
-#[cfg(all(test, target_os = "linux"))]
-mod linux_tests {
-    use super::*;
-    use std::io::Read;
-
-    #[test]
-    fn mountinfo_escapes_are_decoded() {
-        assert_eq!(unescape_mountinfo(r"/media/a\040b").unwrap(), "/media/a b");
-        assert!(unescape_mountinfo(r"/media/bad\0").is_err());
-    }
-
-    #[test]
-    fn device_source_is_opened_read_only() {
-        let volume = Volume::from_device_path("/dev/zero").unwrap();
-        let fd = std::os::fd::AsRawFd::as_raw_fd(&volume.file);
-        let mut fdinfo = String::new();
-        File::open(format!("/proc/self/fdinfo/{fd}"))
-            .unwrap().read_to_string(&mut fdinfo).unwrap();
-        let flags = fdinfo.lines().find_map(|line| line.strip_prefix("flags:\t")).unwrap();
-        let flags = u32::from_str_radix(flags, 8).unwrap();
-        assert_eq!(flags & 0b11, 0, "descriptor must be O_RDONLY");
-        assert_eq!(volume.device_path(), Some(Path::new("/dev/zero")));
-    }
 }
 
 #[cfg(all(test, windows))]

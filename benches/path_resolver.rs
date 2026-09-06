@@ -17,12 +17,7 @@
 use std::env;
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use usn_journal_rs::{
-    errors::UsnError,
-    mft::MftEntry,
-    path::PathResolver,
-    volume::Volume,
-};
+use usn_journal_rs::{errors::UsnError, mft::MftEntry, path::PathResolver, volume::Volume};
 
 /// Number of random entries to collect and resolve.
 const NUM_TEST_ENTRIES: usize = 1000;

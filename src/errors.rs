@@ -92,49 +92,6 @@ pub enum UsnError {
     #[cfg(windows)]
     WinApi(#[from] windows::core::Error),
 
-    /// The NTFS boot sector failed validation.
-    #[error("Invalid NTFS boot sector: {0}")]
-    InvalidBootSector(&'static str),
-
-    /// An MFT record was invalid, but its volume offset is unknown.
-    #[error("Invalid MFT record {number}: {reason}")]
-    InvalidMftRecord {
-        /// Record number in the `$MFT`.
-        number: u64,
-        /// Human-readable reason the record was rejected.
-        reason: &'static str,
-    },
-
-    /// An MFT record was invalid and its volume offset is known.
-    #[error("Invalid MFT record {number} at volume offset 0x{volume_offset:x}: {reason}")]
-    InvalidMftRecordAt {
-        /// Record number in the `$MFT`.
-        number: u64,
-        /// Byte offset of the record on disk.
-        volume_offset: u64,
-        /// Human-readable reason the record was rejected.
-        reason: &'static str,
-    },
-
-    /// The update sequence array verification failed for an MFT record.
-    #[error("Update sequence array mismatch in MFT record {number}")]
-    FixupMismatch {
-        /// Record number whose USA fixup failed validation.
-        number: u64,
-    },
-
-    /// A runlist in a non-resident NTFS attribute was malformed.
-    #[error("Invalid NTFS data run: {0}")]
-    InvalidDataRun(&'static str),
-
-    /// A required MFT attribute was missing from a record.
-    #[error("MFT attribute missing: {0}")]
-    MftAttributeMissing(&'static str),
-
-    /// The target filesystem does not support the requested operation.
-    #[error("Unsupported filesystem: {0}")]
-    UnsupportedFilesystem(&'static str),
-
     /// A provided buffer was too small for the requested work.
     #[error("Buffer too small: needed {needed} bytes, got {got}")]
     BufferTooSmall {
@@ -177,32 +134,9 @@ impl UsnError {
                 | Self::InvalidRecordLength { .. }
                 | Self::UnsupportedRecordVersion { .. }
                 | Self::MisalignedRecord { .. }
-                | Self::InvalidBootSector(_)
-                | Self::InvalidMftRecord { .. }
-                | Self::InvalidMftRecordAt { .. }
-                | Self::FixupMismatch { .. }
-                | Self::InvalidDataRun(_)
-                | Self::MftAttributeMissing(_)
                 | Self::BufferTooSmall { .. }
                 | Self::InvalidRecord { .. }
         )
-    }
-
-    /// Build the appropriate invalid-record variant based on whether a disk offset is known.
-    #[cfg(test)]
-    pub(crate) fn invalid_mft_record(
-        number: u64,
-        volume_offset: Option<u64>,
-        reason: &'static str,
-    ) -> Self {
-        match volume_offset {
-            Some(volume_offset) => Self::InvalidMftRecordAt {
-                number,
-                volume_offset,
-                reason,
-            },
-            None => Self::InvalidMftRecord { number, reason },
-        }
     }
 }
 
@@ -312,22 +246,11 @@ mod tests {
         }
 
         #[test]
-        fn test_invalid_mft_record_at_display() {
-            let error = UsnError::invalid_mft_record(42, Some(0x1234), "bad header");
-            assert_eq!(
-                error.to_string(),
-                "Invalid MFT record 42 at volume offset 0x1234: bad header"
-            );
-        }
-
-        #[test]
         fn test_error_classification_helpers() {
             assert!(UsnError::Io(IoError::other("disk")).is_io_error());
             assert!(UsnError::WinApi(ERROR_ACCESS_DENIED.into()).is_io_error());
             assert!(!UsnError::NotElevated.is_io_error());
 
-            assert!(UsnError::InvalidDataRun("bad run").is_parse_error());
-            assert!(UsnError::FixupMismatch { number: 7 }.is_parse_error());
             assert!(!UsnError::InvalidOptions("bad option").is_parse_error());
         }
 
