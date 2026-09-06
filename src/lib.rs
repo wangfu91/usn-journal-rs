@@ -45,7 +45,7 @@
 //! ```
 //!
 //! ## Platform
-//! - Raw NTFS `$MFT` reading is supported on Windows and Linux.
+//! - Raw NTFS `$MFT` scanning is provided by the separate `ntfs-mft` crate.
 //! - USN journal, FSCTL MFT enumeration, and live file-ID lookup are Windows-only.
 //! - Raw devices are always opened read-only; appropriate OS permissions are required.
 //!
@@ -65,7 +65,6 @@ pub mod mft;
 pub mod path;
 #[cfg(windows)]
 pub mod privilege;
-pub mod raw_mft;
 pub mod types;
 #[cfg(windows)]
 mod usn_record;
@@ -81,7 +80,7 @@ pub type UsnResult<T> = std::result::Result<T, UsnError>;
 pub mod prelude {
     pub use crate::{
         Fid, FileAttributes, Filetime, Usn, UsnError, UsnReason, UsnResult, UsnSourceInfo,
-        raw_mft::{RawMft, RawMftEntry, RawMftPathResolver, RawMftScanOptions}, volume::Volume,
+        volume::Volume,
     };
     #[cfg(windows)]
     pub use crate::{
@@ -111,8 +110,6 @@ mod tests {
         accepts::<prelude::Volume>();
         accepts::<prelude::UsnJournal>();
         accepts::<prelude::Mft>();
-        accepts::<prelude::RawMft<'_>>();
-        accepts::<prelude::RawMftPathResolver<'_>>();
         accepts::<prelude::PathResolver<'_>>();
         accepts::<prelude::UsnError>();
         accepts::<prelude::Usn>();
@@ -123,10 +120,8 @@ mod tests {
         accepts::<prelude::UsnSourceInfo>();
         accepts::<prelude::UsnEntry>();
         accepts::<prelude::MftEntry>();
-        accepts::<prelude::RawMftEntry>();
         accepts::<prelude::JournalIterOptions>();
         accepts::<prelude::MftIterOptions>();
-        accepts::<prelude::RawMftScanOptions>();
         accepts::<prelude::UsnRecordVersion>();
 
         let result: prelude::UsnResult<()> = Ok(());

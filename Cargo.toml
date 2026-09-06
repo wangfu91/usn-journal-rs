@@ -29,9 +29,7 @@ unreachable = "deny"
 bitflags = "2"
 log = "0.4"
 lru = "0.18"
-rustc-hash = "2"
 thiserror = "2"
-zerocopy = { version = "0.8.48", features = ["derive"] }
 
 [target.'cfg(windows)'.dependencies.windows]
 version = "0.62"
@@ -54,10 +52,6 @@ injectorpp = "0.5"
 windows-examples = []
 
 [[example]]
-name = "raw_mft_read"
-path = "examples/raw_mft_read.rs"
-
-[[example]]
 name = "read_journal"
 required-features = ["windows-examples"]
 [[example]]
@@ -69,24 +63,6 @@ required-features = ["windows-examples"]
 [[example]]
 name = "change_monitor"
 required-features = ["windows-examples"]
-[[example]]
-name = "raw_mft_serial_read"
-[[example]]
-name = "raw_mft_serial_read_profile"
-[[example]]
-name = "raw_mft_parallel_chunks"
-[[example]]
-name = "raw_mft_parallel_ingest_profile"
-[[example]]
-name = "deletion_forensic"
-
-[[bench]]
-name = "raw_mft"
-harness = false
-
-[[bench]]
-name = "raw_mft_ingest"
-harness = false
 
 [[bench]]
 name = "journal"

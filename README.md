@@ -5,30 +5,23 @@
 
 # usn-journal-rs
 
-Safe, ergonomic Rust APIs for the Windows NTFS/ReFS USN change journal and MFT,
-plus cross-platform raw NTFS `$MFT` parsing on Windows and Linux.
+Safe, ergonomic Rust APIs for the Windows NTFS/ReFS USN change journal and FSCTL MFT enumeration.
+
+Raw NTFS `$MFT` reading now lives in the independent
+[ntfs-mft](https://github.com/wangfu91/ntfs-mft) repository.
 
 ## Overview
 
-**usn-journal-rs** lets you read the USN change journal, enumerate the MFT via
-the Windows FSCTL APIs, and parse the raw `$MFT` file directly for rich
-per-record metadata. It exposes idiomatic Rust iterators and builder-pattern
-option structs over the underlying `DeviceIoControl` calls.
-
-The USN journal and FSCTL APIs are Windows-only and require Administrator
-privileges. Raw NTFS `$MFT` parsing also works on Linux, where the caller needs
-read permission for the backing block device. Linux device opens are strictly
-read-only; the crate never remounts or modifies the filesystem.
+**usn-journal-rs** reads the USN change journal and enumerates MFT entries via
+Windows FSCTL APIs. It exposes Rust iterators and builder options over
+`DeviceIoControl`, plus live path resolution. These operations require Windows
+and Administrator privileges.
 
 ## Features
 
 - Read and iterate `USN_RECORD_V2` / `USN_RECORD_V3` journal records with a configurable reason mask and start USN
 - Enumerate MFT entries via the `FSCTL_ENUM_USN_DATA` API, including ReFS 128-bit file IDs
-- Parse raw `$MFT` records (NTFS only) for full timestamps, real/allocated sizes, hard-link
-  counts, alternate data streams, and sparse/compressed/encrypted flags
-- Open Linux NTFS sources by mount point or block-device path using read-only descriptors
-- Resolve file IDs to full paths with three strategies: syscall-only, LRU-cached,
-  or an in-memory directory tree for O(1) resolution on large scans
+- Resolve current file IDs to full paths with optional LRU directory caching
 - Lightweight `Filetime(u64)` newtype with standard-library conversions
 - Strong `Usn`, `Fid`, `UsnReason`, and `FileAttributes` types throughout (`Fid` supports both 64-bit NTFS and 128-bit ReFS file IDs)
 - `usn_journal_rs::prelude` for the common high-level types and bitflags
@@ -40,19 +33,6 @@ Add to `Cargo.toml`:
 ```toml
 [dependencies]
 usn-journal-rs = "0.5"
-```
-
-Read a Linux-mounted NTFS volume:
-
-```rust,no_run
-use usn_journal_rs::{raw_mft::RawMft, volume::Volume};
-
-let volume = Volume::from_mount_point("/media/user/windows")?;
-let mft = RawMft::new(&volume)?;
-for entry in mft.try_iter()?.take(20) {
-    println!("{}", entry?.file_name.to_string_lossy());
-}
-# Ok::<(), usn_journal_rs::UsnError>(())
 ```
 
 Iterate the USN change journal on drive `C:`:
@@ -85,7 +65,7 @@ fn main() -> Result<(), UsnError> {
 
 ### Watch for live changes
 
-`Volume` exposes convenience accessors — `journal()`, `mft()`, `raw_mft()`, and
+`Volume` exposes convenience accessors — `journal()`, `mft()`, and
 `path_resolver()` — so you rarely need to import the reader types directly. To
 follow the journal tail and resolve each change to a full path:
 
@@ -133,119 +113,26 @@ fn main() -> Result<(), UsnError> {
 | ------------------------- | ---------------------------------------------------------------- | ---------------------------------------------- |
 | `read_journal`            | Iterate all USN journal records on a volume                      | `cargo run --features windows-examples --example read_journal` |
 | `enum_mft`                | Enumerate every MFT entry via FSCTL                              | `cargo run --features windows-examples --example enum_mft` |
-| `raw_mft_serial_read`     | Parse raw `$MFT` records with full metadata                      | `cargo run --example raw_mft_serial_read -- <drive-or-mount>` |
-| `raw_mft_parallel_chunks` | Measure parallel chunk parsing on the raw `$MFT`                 | `cargo run --example raw_mft_parallel_chunks -- <drive-or-mount>` |
-| `deletion_forensic`       | List unused raw `$MFT` records with best-effort historical paths | `cargo run --example deletion_forensic -- <drive-or-mount>` |
 | `change_monitor`          | Watch for live filesystem changes via USN                        | `cargo run --features windows-examples --example change_monitor` |
 | `journal_pretty_print`    | Multi-line formatted output for USN entries                      | `cargo run --features windows-examples --example journal_pretty_print` |
 
-The journal, FSCTL, and live-path examples are Windows-only and require
-Administrator privileges. Raw `$MFT` examples run on Windows or Linux; Linux
-requires read permission for the backing device and always opens it read-only.
+The examples require Windows and Administrator privileges.
 
-## Performance notes
-
-Benchmarks use [Criterion](https://github.com/bheisler/criterion.rs) on a 200 k-record NTFS volume.
-
-- **Raw `$MFT` iteration** — ~6× faster than 0.4.x (262 ms vs 1.64 s). Achieved via
-  zero-copy fixup parsing (`VolumeReader::borrow_at`) and elimination of per-record memcpy.
-- **Default syscall path resolution** — `PathResolver::new(&volume)` now includes an
-  LRU directory cache out of the box, so USN/MFT scans avoid the old uncached-by-default
-  behavior unless you explicitly opt out with `.with_directory_cache(0)`.
-- **Raw-`$MFT` snapshot path resolution** — ~40× faster than the syscall-based resolver
-  for full-volume scans (<500 ms vs ~21 s). Use `raw_mft.path_resolver()?`.
-- **Buffer size** — tune with `RawMftScanOptions::builder().buffer_bytes(NonZeroUsize::new(256 * 1024).unwrap()).build()`.
-
-For the newer raw-`$MFT` ingest throughput work, use the Criterion harness in
-`benches/raw_mft_ingest.rs` instead of the ad-hoc profiling example when you
-need statistically useful worker-count or scheduling comparisons.
-
-Run benchmarks:
+## Benchmarks
 
 ```text
-cargo bench --bench raw_mft
 cargo bench --features windows-examples --bench journal
 cargo bench --features windows-examples --bench path_resolver
-cargo bench --bench raw_mft_ingest
 ```
 
-On Windows, set `USN_TEST_DRIVE=D` to target a different volume (default: `C`).
-On Linux, set `USN_TEST_VOLUME` to an NTFS mount or device path:
+Raw-reader examples, benchmarks and performance reports moved to `ntfs-mft`.
 
-```bash
-USN_TEST_VOLUME=/media/user/windows cargo bench --bench raw_mft
-USN_TEST_VOLUME=/media/user/windows cargo bench --bench raw_mft_ingest
-```
+## Privileges and filesystem support
 
-The `journal` and live `path_resolver` benchmarks are Windows-only.
-
-The raw-`$MFT` ingest harness also understands a few environment variables:
-
-- `USN_RAW_MFT_BENCH_DRIVE=C` — choose the target volume
-- `USN_RAW_MFT_BENCH_WORKERS=10` — set one fixed worker count
-- `USN_RAW_MFT_BENCH_WORKERS_LIST=1,2,4,8,11` — sweep worker counts in one run
-- `USN_RAW_MFT_BENCH_SCHEDULING=dynamic` — choose the executor policy for the baseline run
-- `USN_RAW_MFT_BENCH_SCHEDULING_LIST=dynamic,contiguous` — compare both policies side by side
-- `USN_RAW_MFT_BENCH_CHUNK_RECORDS=2048` — override the logical records-per-chunk default
-- `USN_RAW_MFT_BENCH_BUFFER_BYTES=262144` — override the main read buffer size
-- `USN_RAW_MFT_BENCH_ATTR_BUFFER_BYTES=16384` — override the attribute-list read buffer size
-- `USN_RAW_MFT_BENCH_PRINT_SUMMARY=1` — print an extra one-shot summary table before Criterion runs
-- `USN_RAW_MFT_BENCH_SUMMARY_RUNS=3` — use a median of 3 one-shot runs per summary row
-
-### Raw `$MFT` ingest benchmark notes
-
-Recent Criterion runs on a large `C:` NTFS volume used the current benchmark
-shape, where both chunk planning and scanning exclude unused records
-(`include_unused_records(false)`), but chunk planning still uses dense logical bands and only drops fully unused
-bands:
-
-- ~3,059,968 addressable records
-- 2,048 records per chunk (~1,329 planned chunks on the measured live volume)
-- 256 KiB main buffer / 16 KiB attribute buffer
-
-Observed results from the current tuning passes:
-
-- **Dynamic scheduling** clearly beat **contiguous scheduling**
-- The worker-count sweet spot stayed in the **10..=11 worker** range
-- Among tested main-buffer sizes (`64 KiB` through `2 MiB`), **256 KiB** was fastest
-- Among tested attribute-buffer sizes (`4 KiB` through `64 KiB`), **16 KiB** stayed effectively best and was retained as the default
-- The best measured point so far is **11 workers + dynamic scheduling + 2,048-record chunks + 256 KiB / 16 KiB buffers**
-
-Representative medians from the latest sweeps:
-
-| Config                                                        | Median time |
-| ------------------------------------------------------------- | ----------: |
-| Dynamic, 11 workers, 2048 chunks, 256 KiB / 16 KiB buffers    |     ~2.35 s |
-| Dynamic, 11 workers, 2048 chunks, 512 KiB / 16 KiB buffers    |     ~2.38 s |
-| Dynamic, 11 workers, 2048 chunks, 256 KiB / 64 KiB buffers    |     ~2.64 s |
-| Contiguous, 11 workers, 2048 chunks, 512 KiB / 16 KiB buffers |     ~3.67 s |
-
-That is why the ingest benchmark defaults now cap the automatic worker count at
-10 instead of following all available logical CPUs, use `2048` logical records
-per chunk by default, and default the main read buffer to `256 KiB`. Always
-re-measure on the actual target volume before treating a result as universal:
-filesystem churn and different used-record fragmentation can shift both the
-planned chunk count and the optimum worker count.
-
-For the longer write-up, including the `C:`-drive sweep data and a code-based
-explanation of why `dynamic` scheduling wins, see
-[`docs/raw_mft_parallel_ingest_findings.md`](docs/raw_mft_parallel_ingest_findings.md).
-
-## Privileges
-
-- Windows raw-volume, journal, FSCTL, and live-path operations require an
-  **Administrator** process and return `UsnError::NotElevated` otherwise.
-- Linux raw `$MFT` operations accept `Volume::from_mount_point` or
-  `Volume::from_device_path` and require read permission for the backing block
-  device. They use read-only descriptors and never remount or modify the volume.
-
-## Filesystem support
-
-| Feature                 | Windows NTFS | Windows ReFS | Linux NTFS |
-| ----------------------- | ------------ | ------------ | ---------- |
-| USN journal             | ✅           | ✅           | ❌         |
-| MFT enumeration (`Mft`) | ✅           | ✅           | ❌         |
-| Raw `$MFT` (`RawMft`)   | ✅           | ❌           | ✅         |
+Journal, FSCTL enumeration, and live path operations require Windows and an
+Administrator process. Journal and enumeration APIs support NTFS/ReFS; ReFS
+entries may use extended file IDs. Raw NTFS scanning on Windows/Linux belongs
+to `ntfs-mft`.
 
 On ReFS, journal and `Mft` entries may expose 128-bit file IDs via
 `Fid::is_extended()`, `Fid::as_u128()`, and `Fid::as_bytes()`.

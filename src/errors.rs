@@ -189,6 +189,7 @@ impl UsnError {
     }
 
     /// Build the appropriate invalid-record variant based on whether a disk offset is known.
+    #[cfg(test)]
     pub(crate) fn invalid_mft_record(
         number: u64,
         volume_offset: Option<u64>,

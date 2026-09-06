@@ -1,58 +1,16 @@
-//! Integration tests for `Filetime` conversions.
-//!
-//! NOTE: `Filetime` is re-exported from the crate root. These tests still use
-//! the `RawMftEntry::si_created` field as a convenient source value, but rely
-//! on the public accessor methods instead of the raw tuple field.
-//!
-//! All tests are admin-gated: they print "skipping" and return when the OS
-//! denies access to the volume.
-
+//! Device-independent Filetime conversion tests.
 use std::time::{SystemTime, UNIX_EPOCH};
-use usn_journal_rs::{
-    Filetime,
-    errors::UsnError,
-    raw_mft::{RawMft, RawMftEntry},
-    volume::Volume,
-};
+use usn_journal_rs::Filetime;
 
 /// 100-nanosecond intervals from the Windows epoch (1601-01-01) to the Unix
 /// epoch (1970-01-01).  Mirrors the private `WINDOWS_TO_UNIX_OFFSET_100NS`
 /// constant inside `usn_journal_rs::time`.
 const WIN_EPOCH_OFFSET: u64 = 116_444_736_000_000_000;
 
-/// Return the first `RawMftEntry` that has a non-zero `si_created` timestamp,
-/// or `None` if the volume isn't accessible (e.g. non-elevated).
-fn get_seed_entry() -> Option<usn_journal_rs::raw_mft::RawMftEntry> {
-    #[cfg(windows)]
-    let volume = Volume::from_drive_letter('C').ok()?;
-    #[cfg(target_os = "linux")]
-    let volume = {
-        let source = std::env::var_os("USN_TEST_VOLUME")?;
-        let source = std::path::Path::new(&source);
-        if source.starts_with("/dev") {
-            Volume::from_device_path(source).ok()?
-        } else {
-            Volume::from_mount_point(source).ok()?
-        }
-    };
-    let raw_mft = RawMft::new(&volume).ok()?;
-    raw_mft
-        .try_iter()
-        .ok()?
-        .filter_map(|r: Result<RawMftEntry, UsnError>| r.ok())
-        .take(2_000)
-        .find(|e| e.si_created.raw() != 0)
-}
-
 // ─── raw round-trip ──────────────────────────────────────────────────────
 
 #[test]
 fn test_raw_roundtrip_many_values() {
-    let Some(_) = get_seed_entry() else {
-        eprintln!("filetime_roundtrip: skipping (requires admin or no usable entries found)");
-        return;
-    };
-
     let test_values: &[u64] = &[
         0,
         1,
@@ -76,11 +34,6 @@ fn test_raw_roundtrip_many_values() {
 
 #[test]
 fn test_to_system_time_known_values() {
-    let Some(_) = get_seed_entry() else {
-        eprintln!("filetime_roundtrip: skipping (requires admin)");
-        return;
-    };
-
     // Windows epoch (0) should be representable as a pre-Unix SystemTime on Windows.
     let ft = Filetime::new(0);
     assert!(
@@ -103,11 +56,6 @@ fn test_to_system_time_known_values() {
 
 #[test]
 fn test_to_system_time_current_roundtrip() {
-    let Some(_) = get_seed_entry() else {
-        eprintln!("filetime_roundtrip: skipping (requires admin)");
-        return;
-    };
-
     let now = SystemTime::now();
     let ft = Filetime::from_system_time(now).expect("current SystemTime must convert");
 
@@ -129,11 +77,6 @@ fn test_to_system_time_current_roundtrip() {
 
 #[test]
 fn test_system_time_try_from_filetime_roundtrip() {
-    let Some(_) = get_seed_entry() else {
-        eprintln!("filetime_roundtrip: skipping (requires admin)");
-        return;
-    };
-
     let ft = Filetime::new(WIN_EPOCH_OFFSET + 10_000_000);
     let st = SystemTime::try_from(ft).expect("filetime should convert");
     assert_eq!(st, UNIX_EPOCH + std::time::Duration::from_secs(1));
@@ -146,11 +89,6 @@ fn test_system_time_try_from_filetime_roundtrip() {
 
 #[test]
 fn test_to_unix_seconds_known_values() {
-    let Some(_) = get_seed_entry() else {
-        eprintln!("filetime_roundtrip: skipping (requires admin)");
-        return;
-    };
-
     // Exactly at Unix epoch: should be 0.
     let ft = Filetime::new(WIN_EPOCH_OFFSET);
     assert_eq!(
@@ -170,11 +108,6 @@ fn test_to_unix_seconds_known_values() {
 
 #[test]
 fn test_to_unix_seconds_matches_system_time_now() {
-    let Some(_) = get_seed_entry() else {
-        eprintln!("filetime_roundtrip: skipping (requires admin)");
-        return;
-    };
-
     let now = SystemTime::now();
     let dur = now.duration_since(UNIX_EPOCH).unwrap();
     let now_filetime_val = WIN_EPOCH_OFFSET + (dur.as_nanos() / 100) as u64;
@@ -193,11 +126,6 @@ fn test_to_unix_seconds_matches_system_time_now() {
 
 #[test]
 fn test_to_unix_nanos_known_values() {
-    let Some(_) = get_seed_entry() else {
-        eprintln!("filetime_roundtrip: skipping (requires admin)");
-        return;
-    };
-
     // Exactly at Unix epoch: should be 0.
     let ft = Filetime::new(WIN_EPOCH_OFFSET);
     assert_eq!(ft.to_unix_nanos(), 0);

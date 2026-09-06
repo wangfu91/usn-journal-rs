@@ -36,7 +36,7 @@ const DEFAULT_DIRECTORY_CACHE_CAPACITY: NonZeroUsize = unsafe {
 /// ```
 ///
 /// For raw-`$MFT` snapshot resolution, use
-/// [`crate::raw_mft::RawMft::path_resolver`] instead.
+/// `ntfs_mft::RawMft::path_resolver` instead.
 ///
 /// [`resolve_path`](Self::resolve_path) takes `&self`: the directory cache and
 /// scratch buffer are held behind interior mutability, so a single resolver can
@@ -59,7 +59,7 @@ impl<'a> PathResolver<'a> {
     ///
     /// This resolver is intended for live/current path resolution against the
     /// mounted volume. For raw-`$MFT` snapshot scans, prefer
-    /// [`crate::raw_mft::RawMft::path_resolver`].
+    /// `ntfs_mft::RawMft::path_resolver`.
     #[must_use]
     pub fn new(volume: &'a Volume) -> Self {
         Self {
@@ -123,7 +123,7 @@ impl Volume {
     ///
     /// Convenience for [`PathResolver::new`] (includes the default directory
     /// cache). For raw-`$MFT` snapshot resolution, use
-    /// [`RawMft::path_resolver`](crate::raw_mft::RawMft::path_resolver) instead.
+    /// `ntfs_mft::RawMft::path_resolver` instead.
     #[must_use]
     pub fn path_resolver(&self) -> PathResolver<'_> {
         PathResolver::new(self)

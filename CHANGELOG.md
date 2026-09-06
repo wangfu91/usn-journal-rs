@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased: raw MFT extraction
+
+Raw MFT reading, snapshot/historical paths and their examples, tests and
+benchmarks moved to the independent `ntfs-mft` repository. The journal, FSCTL
+enumeration, live-path and shared-type refinements remain here. Raw-MFT entries
+below describe pre-extraction branch history; use `ntfs_mft` imports and
+`MftError`/`MftResult` for the extracted APIs.
+
+
 All notable changes to this project will be documented in this file.
 
 The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/).

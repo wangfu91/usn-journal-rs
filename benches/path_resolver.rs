@@ -1,14 +1,13 @@
 //! Criterion benchmarks for PathResolver performance across different strategies.
 //!
-//! This benchmark compares three path resolution approaches:
+//! This benchmark compares two live path resolution approaches:
 //! 1. Pure syscall (no caching)
 //! 2. Default syscall resolver with a directory cache
-//! 3. Raw-MFT-optimized resolver (one-time scan)
 //!
 //! Run on an elevated shell with:
 //!
 //! ```text
-//! cargo bench --bench path_resolver
+//! cargo bench --features windows-examples --bench path_resolver
 //! ```
 //!
 //! Set `USN_TEST_DRIVE` to choose the drive letter (default `C`).
@@ -22,7 +21,6 @@ use usn_journal_rs::{
     errors::UsnError,
     mft::MftEntry,
     path::PathResolver,
-    raw_mft::{RawMft, RawMftEntry},
     volume::Volume,
 };
 
@@ -53,56 +51,15 @@ fn open_volume() -> Option<Volume> {
     }
 }
 
-/// Collect a list of MftEntry values from the $MFT up to NUM_TEST_ENTRIES.
+/// Collect entries from the Windows FSCTL enumerator.
 fn collect_test_entries(volume: &Volume) -> Vec<MftEntry> {
-    let mft = match RawMft::new(volume) {
-        Ok(m) => m,
-        Err(e) => {
-            eprintln!("skipping: {e}");
-            return Vec::new();
-        }
-    };
-
-    let mut entries = Vec::new();
-    if let Ok(it) = mft.try_iter() {
-        for entry in it.flatten() {
-            // Convert RawMftEntry to MftEntry for use with PathResolver
-            let mft_entry = MftEntry {
-                usn: usn_journal_rs::Usn::new(0),
-                fid: entry.file_reference,
-                parent_fid: entry.parent_reference,
-                file_name: entry.file_name.clone(),
-                file_attributes: usn_journal_rs::FileAttributes::empty(),
-            };
-            entries.push(mft_entry);
-            if entries.len() >= NUM_TEST_ENTRIES {
-                break;
-            }
+    match volume.mft().try_iter() {
+        Ok(iter) => iter.flatten().take(NUM_TEST_ENTRIES).collect(),
+        Err(error) => {
+            eprintln!("skipping: {error}");
+            Vec::new()
         }
     }
-    entries
-}
-
-/// Collect a list of raw `$MFT` entries up to NUM_TEST_ENTRIES.
-fn collect_raw_test_entries(volume: &Volume) -> Vec<RawMftEntry> {
-    let mft = match RawMft::new(volume) {
-        Ok(m) => m,
-        Err(e) => {
-            eprintln!("skipping: {e}");
-            return Vec::new();
-        }
-    };
-
-    let mut entries = Vec::new();
-    if let Ok(it) = mft.try_iter() {
-        for entry in it.flatten() {
-            entries.push(entry);
-            if entries.len() >= NUM_TEST_ENTRIES {
-                break;
-            }
-        }
-    }
-    entries
 }
 
 /// Resolve paths with direct syscalls, no caching.
@@ -161,50 +118,9 @@ fn resolver_syscall_directory_cache(c: &mut Criterion) {
     });
 }
 
-/// Resolve paths using the RawMft-optimized resolver (one-time full $MFT scan).
-fn resolver_raw_mft_optimized(c: &mut Criterion) {
-    let Some(volume) = open_volume() else { return };
-
-    let mft = match RawMft::new(&volume) {
-        Ok(m) => m,
-        Err(e) => {
-            eprintln!("skipping: {e}");
-            return;
-        }
-    };
-
-    let entries = collect_raw_test_entries(&volume);
-
-    if entries.is_empty() {
-        eprintln!("skipping: no entries collected");
-        return;
-    }
-
-    c.bench_function("resolver_raw_mft_optimized", |b| {
-        b.iter(|| {
-            let resolver = match mft.path_resolver() {
-                Ok(r) => r,
-                Err(e) => {
-                    eprintln!("skipping: {e}");
-                    return 0u64;
-                }
-            };
-
-            let mut count = 0u64;
-            for entry in &entries {
-                let _ = resolver.resolve_path(entry);
-                count += 1;
-            }
-
-            count
-        })
-    });
-}
-
 criterion_group!(
     path_resolver_benches,
     resolver_syscall_no_cache,
-    resolver_syscall_directory_cache,
-    resolver_raw_mft_optimized
+    resolver_syscall_directory_cache
 );
 criterion_main!(path_resolver_benches);
