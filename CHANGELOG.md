@@ -48,7 +48,7 @@ handle ownership are retained.
 - Entry timestamps, identifiers, and flag fields use domain types; the USN
   fields in `UsnJournalData` also use `Usn` instead of `i64`.
 - Structured parser errors replace generic `OtherError` diagnostics.
-  `UsnError` is non-exhaustive; external matches need a fallback arm.
+  `UsnError` remains non-exhaustive; external matches still need a fallback arm.
 - Journal, MFT, and path implementations live in module directories.
 - Replace the `chrono` dependency with FILETIME-based conversion and formatting;
   update `lru` from 0.16 to 0.18.
