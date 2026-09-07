@@ -47,31 +47,22 @@ features = [
 criterion = "0.8.2"
 injectorpp = "0.5"
 
-[features]
-windows-examples = []
-
 [[example]]
 name = "read_journal"
-required-features = ["windows-examples"]
 [[example]]
 name = "enum_mft"
-required-features = ["windows-examples"]
 [[example]]
 name = "journal_pretty_print"
-required-features = ["windows-examples"]
 [[example]]
 name = "change_monitor"
-required-features = ["windows-examples"]
 
 [[bench]]
 name = "journal"
 harness = false
-required-features = ["windows-examples"]
 
 [[bench]]
 name = "path_resolver"
 harness = false
-required-features = ["windows-examples"]
 
 [profile.test]
 opt-level = 0

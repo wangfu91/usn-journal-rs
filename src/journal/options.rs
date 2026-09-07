@@ -21,7 +21,7 @@ pub struct JournalIterOptions {
     pub(crate) only_on_close: bool,
     /// Kernel timeout, in whole seconds, for blocking reads (`wait_for_more`).
     /// `0` means block indefinitely until data is available.
-    pub(crate) timeout_secs: u64,
+    pub(crate) timeout: u64,
     /// Whether the iterator should wait for more records.
     pub(crate) wait_for_more: bool,
     /// Size of the kernel output buffer.
@@ -34,7 +34,7 @@ impl Default for JournalIterOptions {
             start_usn: Usn::new(0),
             reason_mask: UsnReason::ALL,
             only_on_close: false,
-            timeout_secs: 0,
+            timeout: 0,
             wait_for_more: false,
             buffer_bytes: DEFAULT_BUFFER_BYTES_NONZERO,
         }
@@ -42,6 +42,47 @@ impl Default for JournalIterOptions {
 }
 
 impl JournalIterOptions {
+    /// Return the USN from which enumeration begins.
+    pub fn start_usn(&self) -> Usn {
+        self.start_usn
+    }
+
+    /// Return the reason-mask filter applied by the kernel.
+    pub fn reason_mask(&self) -> UsnReason {
+        self.reason_mask
+    }
+
+    /// Return whether only close events are requested.
+    pub fn only_on_close(&self) -> bool {
+        self.only_on_close
+    }
+
+    /// Return the effective kernel timeout, rounded up to whole seconds.
+    ///
+    /// Only meaningful when [`Self::wait_for_more`] is true. [`Duration::ZERO`]
+    /// means an indefinite wait until records are available. This is a kernel
+    /// wait parameter, not a deadline for `Iterator::next`.
+    pub fn timeout(&self) -> Duration {
+        Duration::from_secs(self.timeout)
+    }
+
+    /// Return whether the iterator waits for more records.
+    pub fn wait_for_more(&self) -> bool {
+        self.wait_for_more
+    }
+
+    /// Return the kernel output buffer size in bytes.
+    pub fn buffer_bytes(&self) -> NonZeroUsize {
+        self.buffer_bytes
+    }
+
+    /// Consume these options to configure a builder with the same settings.
+    ///
+    /// Call [`JournalIterOptionsBuilder::build`] to validate the updated options.
+    /// Clone the options first if the original value is still needed.
+    pub fn into_builder(self) -> JournalIterOptionsBuilder {
+        JournalIterOptionsBuilder { inner: self }
+    }
     /// Returns a fluent builder for [`JournalIterOptions`].
     pub fn builder() -> JournalIterOptionsBuilder {
         JournalIterOptionsBuilder::default()
@@ -83,7 +124,7 @@ impl JournalIterOptionsBuilder {
     /// [`Duration::ZERO`] — blocks indefinitely until records are available.
     /// This is a kernel wait parameter, not a deadline for Iterator::next.
     pub fn timeout(mut self, v: Duration) -> Self {
-        self.inner.timeout_secs = v.as_secs().saturating_add(u64::from(v.subsec_nanos() != 0));
+        self.inner.timeout = v.as_secs().saturating_add(u64::from(v.subsec_nanos() != 0));
         self
     }
 
@@ -118,7 +159,7 @@ mod tests {
 
     #[test]
     fn default_timeout_is_zero() {
-        assert_eq!(JournalIterOptions::default().timeout_secs, 0);
+        assert_eq!(JournalIterOptions::default().timeout, 0);
     }
 
     #[test]
@@ -127,7 +168,7 @@ mod tests {
             .timeout(Duration::from_millis(2_500))
             .build()
             .expect("valid iterator options");
-        assert_eq!(opts.timeout_secs, 3);
+        assert_eq!(opts.timeout(), Duration::from_secs(3));
     }
 
     #[test]
@@ -142,12 +183,32 @@ mod tests {
             .build()
             .expect("valid iterator options");
 
-        assert_eq!(opts.start_usn, Usn::new(42));
-        assert_eq!(opts.reason_mask, UsnReason::FILE_CREATE);
-        assert!(opts.only_on_close);
-        assert!(opts.wait_for_more);
-        assert_eq!(opts.timeout_secs, 7);
-        assert_eq!(opts.buffer_bytes.get(), 8 * 1024);
+        assert_eq!(opts.start_usn(), Usn::new(42));
+        assert_eq!(opts.reason_mask(), UsnReason::FILE_CREATE);
+        assert!(opts.only_on_close());
+        assert!(opts.wait_for_more());
+        assert_eq!(opts.timeout(), Duration::from_secs(7));
+        assert_eq!(opts.buffer_bytes().get(), 8 * 1024);
+
+        let updated = opts
+            .clone()
+            .into_builder()
+            .reason_mask(UsnReason::FILE_DELETE)
+            .build()
+            .expect("valid rebuilt options");
+        assert_eq!(updated.reason_mask(), UsnReason::FILE_DELETE);
+        assert_eq!(updated.start_usn(), opts.start_usn());
+        assert_eq!(updated.only_on_close(), opts.only_on_close());
+        assert_eq!(updated.wait_for_more(), opts.wait_for_more());
+        assert_eq!(updated.timeout(), opts.timeout());
+        assert_eq!(updated.buffer_bytes(), opts.buffer_bytes());
+        assert!(
+            updated
+                .into_builder()
+                .buffer_bytes(NonZeroUsize::new(7).unwrap())
+                .build()
+                .is_err()
+        );
     }
 }
 
@@ -167,7 +228,7 @@ mod validation_tests {
                 .timeout(duration)
                 .build()
                 .unwrap();
-            assert_eq!(options.timeout_secs, expected);
+            assert_eq!(options.timeout(), Duration::from_secs(expected));
         }
     }
     #[test]

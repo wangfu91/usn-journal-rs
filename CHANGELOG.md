@@ -13,6 +13,11 @@ handle ownership are retained.
 - `Filetime` at the crate root, with checked `SystemTime` conversions.
 - Validated `JournalIterOptions` and `MftIterOptions` builders, typed
   `UsnRecordVersion`, and a common `prelude`.
+- Read-only getters for every journal and MFT iterator option, plus
+  `into_builder()` to update existing settings and validate them again.
+  The journal timeout getter returns the effective rounded `Duration`.
+- Public `journal::DEFAULT_BUFFER_BYTES` and `DEFAULT_BUFFER_BYTES_NONZERO`
+  constants for the default 64 KiB output buffer.
 - `UsnJournal::query_or_create()` for explicit create-on-demand queries.
 - `PathResolver::try_resolve_path()` preserves OS lookup errors;
   `resolve_path()` remains an optional-result convenience method.
@@ -24,10 +29,14 @@ handle ownership are retained.
 
 ### Changed
 
-- Journal `iter()` and `try_iter()` use the same non-waiting default options.
+- Journal `iter()` no longer waits for new records at the end of available data
+  as it did in 0.4.1. It and the new `try_iter()` use non-waiting default options.
   Enable `wait_for_more(true)` explicitly for monitoring.
 - `query()` only queries and returns `UsnError::JournalNotActive` when absent.
   Iterator construction retains create-on-demand behavior.
+- The public `journal::EnumOptions` and `mft::EnumOptions` structs are replaced
+  by `JournalIterOptions` and `MftIterOptions`, with crate-only fields.
+  Use builders for configuration and getters for inspection.
 - Options builders return `UsnResult<Options>`: buffer lengths must fit the
   8-byte cursor and Win32 u32 length; MFT lower bounds must not exceed upper bounds.
 - `timeout(Duration)` rounds positive fractional seconds up. Zero remains an
@@ -36,9 +45,20 @@ handle ownership are retained.
   caching for stable trees. `resolve_path()` accepts `&self`.
 - Volume metadata is private and exposed through accessors; mount points use
   `Path` rather than lossy string metadata.
-- Entry timestamps, identifiers, and flag fields use domain types.
+- Entry timestamps, identifiers, and flag fields use domain types; the USN
+  fields in `UsnJournalData` also use `Usn` instead of `i64`.
 - Structured parser errors replace generic `OtherError` diagnostics.
+  `UsnError` is non-exhaustive; external matches need a fallback arm.
 - Journal, MFT, and path implementations live in module directories.
+- Replace the `chrono` dependency with FILETIME-based conversion and formatting;
+  update `lru` from 0.16 to 0.18.
+
+### Removed
+
+- The `journal::EnumOptions` and `mft::EnumOptions` names; no compatibility
+  aliases are provided.
+- The raw `USN_REASON_MASK_ALL` constant. Use `UsnReason::ALL`, or
+  `UsnReason::ALL.bits()` when a raw integer mask is needed.
 
 ### Migration from 0.4.1
 
@@ -46,6 +66,11 @@ handle ownership are retained.
 | --- | --- |
 | `journal::EnumOptions { ... }` | `JournalIterOptions::builder()...build()?` |
 | `mft::EnumOptions { ... }` | `MftIterOptions::builder()...build()?` |
+| Direct option field reads / assignments | Getter methods / `options.into_builder()...build()?`; clone first to retain the original. |
+| `buffer_size: usize` | `.buffer_bytes(NonZeroUsize::new(bytes).unwrap())`; `build()?` validates the supported size. |
+| `timeout: u64` (seconds) | `.timeout(Duration::from_secs(seconds))`; `timeout()` returns `Duration`. |
+| `USN_REASON_MASK_ALL` | `UsnReason::ALL` (typed) or `UsnReason::ALL.bits()` (raw). |
+| `journal.iter()` used for continuous monitoring | `journal.iter_with_options(JournalIterOptions::builder().wait_for_more(true).build()?)?` |
 | `journal.query(false)` | `journal.query()` |
 | `journal.query(true)` | `journal.query_or_create()` |
 | `volume.drive_letter` / `volume.mount_point` | `drive_letter() -> Option<char>` / `mount_point() -> Option<&Path>` |
@@ -60,6 +85,10 @@ conversions return `UsnResult`. Conversion from `SystemTime` discards sub-100ns
 precision toward the Unix epoch. Unix seconds/milliseconds truncate toward zero.
 Detailed formatting uses local time, falling back to raw FILETIME for unformattable
 values. Directory caching remains opt-in and must be rebuilt after topology changes.
+
+MFT iteration remains infallible to construct after options have been validated:
+`mft.iter_with_options(options)` still returns `MftIter`, whose items are
+`UsnResult<MftEntry>`. Journal construction still returns `UsnResult<UsnJournalIter>`.
 
 ## [0.4.1] - 2026-05-27
 

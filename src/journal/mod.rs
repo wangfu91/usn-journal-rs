@@ -16,7 +16,7 @@ mod reason;
 pub use data::UsnJournalData;
 pub use defaults::{
     DEFAULT_BUFFER_BYTES, DEFAULT_BUFFER_BYTES_NONZERO, DEFAULT_JOURNAL_ALLOCATION_DELTA,
-    DEFAULT_JOURNAL_MAX_SIZE, USN_REASON_MASK_ALL,
+    DEFAULT_JOURNAL_MAX_SIZE,
 };
 pub use entry::UsnEntry;
 pub use iter::UsnJournalIter;
@@ -25,6 +25,3 @@ pub use options::{JournalIterOptions, JournalIterOptionsBuilder};
 
 #[cfg(test)]
 mod tests;
-
-/// Historical options type name. Construct options using the validated builder.
-pub type EnumOptions = JournalIterOptions;

@@ -17,9 +17,3 @@ pub const DEFAULT_JOURNAL_MAX_SIZE: u64 = 32 * 1024 * 1024; // 32MB
 
 /// Default allocation delta, in bytes, used when creating a USN journal.
 pub const DEFAULT_JOURNAL_ALLOCATION_DELTA: u64 = 8 * 1024 * 1024; // 8MB
-
-/// Reason mask that matches every USN reason flag.
-///
-/// Kept as a raw `u32` for direct use in the low-level Win32 read structures;
-/// prefer the strongly-typed [`crate::UsnReason::ALL`] in public option builders.
-pub const USN_REASON_MASK_ALL: u32 = crate::UsnReason::ALL.bits();

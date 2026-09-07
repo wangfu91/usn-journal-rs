@@ -52,6 +52,33 @@ impl Default for MftIterOptions {
 }
 
 impl MftIterOptions {
+    /// Return the inclusive lower USN bound for returned records.
+    pub fn low_usn(&self) -> Usn {
+        self.low_usn
+    }
+
+    /// Return the inclusive upper USN bound for returned records.
+    pub fn high_usn(&self) -> Usn {
+        self.high_usn
+    }
+
+    /// Return the kernel output buffer size in bytes.
+    pub fn buffer_bytes(&self) -> NonZeroUsize {
+        self.buffer_bytes
+    }
+
+    /// Return the highest `USN_RECORD` major version the kernel may return.
+    pub fn max_usn_record_version(&self) -> UsnRecordVersion {
+        self.max_usn_record_version
+    }
+
+    /// Consume these options to configure a builder with the same settings.
+    ///
+    /// Call [`MftIterOptionsBuilder::build`] to validate the updated options.
+    /// Clone the options first if the original value is still needed.
+    pub fn into_builder(self) -> MftIterOptionsBuilder {
+        MftIterOptionsBuilder { inner: self }
+    }
     /// Returns a fluent builder for [`MftIterOptions`].
     pub fn builder() -> MftIterOptionsBuilder {
         MftIterOptionsBuilder::default()
@@ -114,9 +141,9 @@ mod tests {
     #[test]
     fn default_spans_full_usn_range_and_allows_v3() {
         let opts = MftIterOptions::default();
-        assert_eq!(opts.low_usn, Usn::new(0));
-        assert_eq!(opts.high_usn, Usn::new(i64::MAX));
-        assert_eq!(opts.max_usn_record_version, UsnRecordVersion::V3);
+        assert_eq!(opts.low_usn(), Usn::new(0));
+        assert_eq!(opts.high_usn(), Usn::new(i64::MAX));
+        assert_eq!(opts.max_usn_record_version(), UsnRecordVersion::V3);
     }
 
     #[test]
@@ -135,10 +162,39 @@ mod tests {
             .build()
             .expect("valid iterator options");
 
-        assert_eq!(opts.low_usn, Usn::new(10));
-        assert_eq!(opts.high_usn, Usn::new(20));
-        assert_eq!(opts.max_usn_record_version, UsnRecordVersion::V2);
-        assert_eq!(opts.buffer_bytes.get(), 4 * 1024);
+        assert_eq!(opts.low_usn(), Usn::new(10));
+        assert_eq!(opts.high_usn(), Usn::new(20));
+        assert_eq!(opts.max_usn_record_version(), UsnRecordVersion::V2);
+        assert_eq!(opts.buffer_bytes().get(), 4 * 1024);
+
+        let updated = opts
+            .clone()
+            .into_builder()
+            .high_usn(Usn::new(30))
+            .build()
+            .expect("valid rebuilt options");
+        assert_eq!(updated.high_usn(), Usn::new(30));
+        assert_eq!(updated.low_usn(), opts.low_usn());
+        assert_eq!(updated.buffer_bytes(), opts.buffer_bytes());
+        assert_eq!(
+            updated.max_usn_record_version(),
+            opts.max_usn_record_version()
+        );
+        assert!(
+            updated
+                .clone()
+                .into_builder()
+                .low_usn(Usn::new(31))
+                .build()
+                .is_err()
+        );
+        assert!(
+            updated
+                .into_builder()
+                .buffer_bytes(NonZeroUsize::new(7).unwrap())
+                .build()
+                .is_err()
+        );
     }
 }
 

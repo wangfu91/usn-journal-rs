@@ -3,7 +3,7 @@
 //! Run on an elevated shell with:
 //!
 //! ```text
-//! cargo bench --features windows-examples --bench journal
+//! cargo bench --bench journal
 //! ```
 //!
 //! Set `USN_TEST_DRIVE` to choose the drive letter (default `C`). Set

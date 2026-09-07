@@ -73,7 +73,7 @@ pub use errors::UsnError;
 pub use types::{Fid, FileAttributes, Usn, UsnReason, UsnSourceInfo};
 
 /// A convenient type alias for Results with UsnError.
-pub type UsnResult<T> = std::result::Result<T, UsnError>;
+pub type UsnResult<T> = Result<T, UsnError>;
 
 /// Common imports for applications using the crate.
 pub mod prelude {
@@ -131,9 +131,7 @@ mod tests {
 
 /// Journal defaults, retained at the crate root for compatibility.
 #[cfg(windows)]
-pub use journal::{
-    DEFAULT_JOURNAL_ALLOCATION_DELTA, DEFAULT_JOURNAL_MAX_SIZE, USN_REASON_MASK_ALL,
-};
+pub use journal::{DEFAULT_JOURNAL_ALLOCATION_DELTA, DEFAULT_JOURNAL_MAX_SIZE};
 
 /// Validate a Windows output-buffer length before allocation or FFI conversion.
 fn validate_buffer_bytes(bytes: usize) -> UsnResult<()> {

@@ -17,6 +17,3 @@ pub use options::{MftIterOptions, MftIterOptionsBuilder, UsnRecordVersion};
 
 #[cfg(test)]
 mod tests;
-
-/// Historical options type name. Construct options using the validated builder.
-pub type EnumOptions = MftIterOptions;

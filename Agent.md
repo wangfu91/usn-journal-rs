@@ -10,9 +10,9 @@ See README.md and CHANGELOG.md for the current API and migration guide.
 
 Run `cargo build`, `cargo test`, `cargo clippy --all-targets --all-features -- -D warnings`,
 and `cargo package`. Windows device tests require Administrator privileges and
-must skip unsuitable environments. Examples use `--features windows-examples`:
+must skip unsuitable environments. Examples are:
 `read_journal`, `enum_mft`, `change_monitor`, `journal_pretty_print`.
-Benchmarks `journal` and `path_resolver` use the same feature. Use Criterion for
+Benchmarks are `journal` and `path_resolver`. Use Criterion for
 performance claims. `USN_TEST_DRIVE` selects the test volume, `USN_REFS_TEST_DRIVE`
 selects ReFS coverage, and `BENCH_RECORD_LIMIT` bounds journal benchmarks.
 

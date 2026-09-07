@@ -112,10 +112,10 @@ fn main() -> Result<(), UsnError> {
 
 | Example                   | Description                                                      | Run                                            |
 | ------------------------- | ---------------------------------------------------------------- | ---------------------------------------------- |
-| `read_journal`            | Iterate all USN journal records on a volume                      | `cargo run --features windows-examples --example read_journal` |
-| `enum_mft`                | Enumerate every MFT entry via FSCTL                              | `cargo run --features windows-examples --example enum_mft` |
-| `change_monitor`          | Watch for live filesystem changes via USN                        | `cargo run --features windows-examples --example change_monitor` |
-| `journal_pretty_print`    | Multi-line formatted output for USN entries                      | `cargo run --features windows-examples --example journal_pretty_print` |
+| `read_journal`            | Iterate all USN journal records on a volume                      | `cargo run --example read_journal` |
+| `enum_mft`                | Enumerate every MFT entry via FSCTL                              | `cargo run --example enum_mft` |
+| `change_monitor`          | Watch for live filesystem changes via USN                        | `cargo run --example change_monitor` |
+| `journal_pretty_print`    | Multi-line formatted output for USN entries                      | `cargo run --example journal_pretty_print` |
 
 The examples require Windows and Administrator privileges. `read_journal`,
 `enum_mft`, and `change_monitor` accept a drive letter such as `C` or `C:`
@@ -134,8 +134,8 @@ the volume value that created it.
 ## Benchmarks
 
 ```text
-cargo bench --features windows-examples --bench journal
-cargo bench --features windows-examples --bench path_resolver
+cargo bench --bench journal
+cargo bench --bench path_resolver
 ```
 
 ## Privileges and filesystem support

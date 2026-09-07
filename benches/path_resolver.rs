@@ -7,7 +7,7 @@
 //! Run on an elevated shell with:
 //!
 //! ```text
-//! cargo bench --features windows-examples --bench path_resolver
+//! cargo bench --bench path_resolver
 //! ```
 //!
 //! Set `USN_TEST_DRIVE` to choose the drive letter (default `C`).

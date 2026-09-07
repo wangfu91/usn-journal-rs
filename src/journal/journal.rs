@@ -44,7 +44,6 @@ impl<'a> UsnJournal<'a> {
     ///
     /// This is fallible because it queries (and may create) the journal up
     /// front; subsequent per-record errors are surfaced as iterator items.
-    #[must_use = "iterators are lazy and do nothing unless consumed"]
     pub fn try_iter(&self) -> UsnResult<UsnJournalIter> {
         self.try_iter_with_options(JournalIterOptions::default())
     }
@@ -63,7 +62,6 @@ impl<'a> UsnJournal<'a> {
     ///
     /// The iterator yields `Result<UsnEntry, UsnError>` items, allowing callers
     /// to handle individual entry errors gracefully without stopping iteration.
-    #[must_use = "iterators are lazy and do nothing unless consumed"]
     pub fn try_iter_with_options(&self, options: JournalIterOptions) -> UsnResult<UsnJournalIter> {
         self.try_iter_with_buffer(options, Vec::new())
     }
@@ -85,7 +83,7 @@ impl<'a> UsnJournal<'a> {
                 next_start_usn: options.start_usn.get(),
                 reason_mask: options.reason_mask.bits(),
                 return_only_on_close: options.only_on_close as u32,
-                timeout: options.timeout_secs,
+                timeout: options.timeout,
                 bytes_to_wait_for: options.wait_for_more as u64,
             },
         ))
