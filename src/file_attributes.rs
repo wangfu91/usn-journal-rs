@@ -2,25 +2,6 @@
 
 use std::fmt;
 
-/// Shared view over a raw Windows file-attribute bitmask.
-#[cfg(windows)]
-pub(crate) trait FileAttributeView {
-    /// Returns the underlying Windows file-attribute flags.
-    fn file_attributes(&self) -> crate::FileAttributes;
-
-    /// Returns true if the bitmask marks a directory.
-    #[inline]
-    fn has_directory_attribute(&self) -> bool {
-        self.file_attributes().is_directory()
-    }
-
-    /// Returns true if the bitmask marks a hidden item.
-    #[inline]
-    fn has_hidden_attribute(&self) -> bool {
-        self.file_attributes().is_hidden()
-    }
-}
-
 /// Display names for known `FILE_ATTRIBUTE_*` bits.
 const FILE_ATTRIBUTE_NAMES: &[(u32, &str)] = &[
     (crate::FileAttributes::READ_ONLY.bits(), "READ_ONLY"),

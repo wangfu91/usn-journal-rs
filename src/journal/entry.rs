@@ -3,7 +3,6 @@
 use std::fmt;
 use std::{ffi::OsString, os::windows::ffi::OsStringExt};
 
-use crate::file_attributes::FileAttributeView;
 use crate::usn_record::UsnRecordView;
 use crate::{Fid, FileAttributes, Filetime, Usn, UsnReason, UsnSourceInfo};
 
@@ -64,14 +63,14 @@ impl UsnEntry {
     #[must_use]
     #[inline]
     pub fn is_dir(&self) -> bool {
-        <Self as FileAttributeView>::has_directory_attribute(self)
+        self.file_attributes.is_directory()
     }
 
     /// Returns true if this entry represents a hidden file or directory.
     #[must_use]
     #[inline]
     pub fn is_hidden(&self) -> bool {
-        <Self as FileAttributeView>::has_hidden_attribute(self)
+        self.file_attributes.is_hidden()
     }
 
     /// Returns true if this entry is marked read-only.
@@ -121,12 +120,6 @@ impl UsnEntry {
     #[inline]
     pub fn is_sparse(&self) -> bool {
         self.file_attributes.is_sparse()
-    }
-}
-
-impl FileAttributeView for UsnEntry {
-    fn file_attributes(&self) -> FileAttributes {
-        self.file_attributes
     }
 }
 

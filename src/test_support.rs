@@ -9,8 +9,6 @@
 //! function signature at compile time and cannot be hidden behind a
 //! regular function call.
 
-#![allow(unused_imports, unused_macros, dead_code)]
-
 use windows::Win32::Foundation::HANDLE;
 
 use crate::volume::{Volume, VolumeSource};
