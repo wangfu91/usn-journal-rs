@@ -1,0 +1,253 @@
+//! Options for iterating over the USN journal.
+
+use crate::{Usn, UsnReason};
+use std::num::NonZeroUsize;
+use std::time::Duration;
+
+use super::defaults::DEFAULT_BUFFER_BYTES_NONZERO;
+
+#[derive(Debug, Clone)]
+/// Options for enumerating the USN journal.
+///
+/// Allows customization of the starting USN, reason mask, buffer size, and other parameters.
+///
+/// Use [`JournalIterOptions::builder`] for the fluent builder API.
+pub struct JournalIterOptions {
+    /// USN from which enumeration should begin.
+    pub(crate) start_usn: Usn,
+    /// Reason-mask filter applied by the kernel.
+    pub(crate) reason_mask: UsnReason,
+    /// Whether only close events should be returned.
+    pub(crate) only_on_close: bool,
+    /// Kernel timeout, in whole seconds, for blocking reads (`wait_for_more`).
+    /// `0` means block indefinitely until data is available.
+    pub(crate) timeout: u64,
+    /// Whether the iterator should wait for more records.
+    pub(crate) wait_for_more: bool,
+    /// Size of the kernel output buffer.
+    pub(crate) buffer_bytes: NonZeroUsize,
+}
+
+impl Default for JournalIterOptions {
+    fn default() -> Self {
+        JournalIterOptions {
+            start_usn: Usn::new(0),
+            reason_mask: UsnReason::ALL,
+            only_on_close: false,
+            timeout: 0,
+            wait_for_more: false,
+            buffer_bytes: DEFAULT_BUFFER_BYTES_NONZERO,
+        }
+    }
+}
+
+impl JournalIterOptions {
+    /// Return the USN from which enumeration begins.
+    pub fn start_usn(&self) -> Usn {
+        self.start_usn
+    }
+
+    /// Return the reason-mask filter applied by the kernel.
+    pub fn reason_mask(&self) -> UsnReason {
+        self.reason_mask
+    }
+
+    /// Return whether only close events are requested.
+    pub fn only_on_close(&self) -> bool {
+        self.only_on_close
+    }
+
+    /// Return the effective kernel timeout, rounded up to whole seconds.
+    ///
+    /// Only meaningful when [`Self::wait_for_more`] is true. [`Duration::ZERO`]
+    /// means an indefinite wait until records are available. This is a kernel
+    /// wait parameter, not a deadline for `Iterator::next`.
+    pub fn timeout(&self) -> Duration {
+        Duration::from_secs(self.timeout)
+    }
+
+    /// Return whether the iterator waits for more records.
+    pub fn wait_for_more(&self) -> bool {
+        self.wait_for_more
+    }
+
+    /// Return the kernel output buffer size in bytes.
+    pub fn buffer_bytes(&self) -> NonZeroUsize {
+        self.buffer_bytes
+    }
+
+    /// Consume these options to configure a builder with the same settings.
+    ///
+    /// Call [`JournalIterOptionsBuilder::build`] to validate the updated options.
+    /// Clone the options first if the original value is still needed.
+    pub fn into_builder(self) -> JournalIterOptionsBuilder {
+        JournalIterOptionsBuilder { inner: self }
+    }
+    /// Returns a fluent builder for [`JournalIterOptions`].
+    pub fn builder() -> JournalIterOptionsBuilder {
+        JournalIterOptionsBuilder::default()
+    }
+}
+
+/// Fluent builder for [`JournalIterOptions`].
+#[derive(Debug, Default, Clone)]
+#[must_use]
+pub struct JournalIterOptionsBuilder {
+    /// Mutable options value being configured by the builder.
+    inner: JournalIterOptions,
+}
+
+impl JournalIterOptionsBuilder {
+    /// Set the starting USN.
+    pub fn start_usn(mut self, v: Usn) -> Self {
+        self.inner.start_usn = v;
+        self
+    }
+
+    /// Set the reason mask filter.
+    pub fn reason_mask(mut self, v: UsnReason) -> Self {
+        self.inner.reason_mask = v;
+        self
+    }
+
+    /// Only return records when the file is closed.
+    pub fn only_on_close(mut self, v: bool) -> Self {
+        self.inner.only_on_close = v;
+        self
+    }
+
+    /// Set the blocking-read timeout.
+    ///
+    /// Only meaningful together with [`Self::wait_for_more`]. The Win32 USN read
+    /// API (`READ_USN_JOURNAL_DATA`) expresses this timeout in whole seconds, so
+    /// positive fractional seconds are rounded up to the next whole second. The default —
+    /// [`Duration::ZERO`] — blocks indefinitely until records are available.
+    /// This is a kernel wait parameter, not a deadline for Iterator::next.
+    pub fn timeout(mut self, v: Duration) -> Self {
+        self.inner.timeout = v.as_secs().saturating_add(u64::from(v.subsec_nanos() != 0));
+        self
+    }
+
+    /// Whether the iterator should block waiting for more records.
+    pub fn wait_for_more(mut self, v: bool) -> Self {
+        self.inner.wait_for_more = v;
+        self
+    }
+
+    /// Set the in-memory buffer size, in bytes.
+    /// Must fit the 8-byte cursor and the Win32 u32 length; build validates this.
+    pub fn buffer_bytes(mut self, v: NonZeroUsize) -> Self {
+        self.inner.buffer_bytes = v;
+        self
+    }
+
+    /// Validate the buffer size, then finalize the builder.
+    pub fn build(self) -> crate::UsnResult<JournalIterOptions> {
+        crate::validate_buffer_bytes(self.inner.buffer_bytes.get())?;
+        Ok(self.inner)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_uses_full_reason_mask() {
+        assert_eq!(JournalIterOptions::default().reason_mask, UsnReason::ALL);
+    }
+
+    #[test]
+    fn default_timeout_is_zero() {
+        assert_eq!(JournalIterOptions::default().timeout, 0);
+    }
+
+    #[test]
+    fn timeout_rounds_up_to_whole_seconds() {
+        let opts = JournalIterOptions::builder()
+            .timeout(Duration::from_millis(2_500))
+            .build()
+            .expect("valid iterator options");
+        assert_eq!(opts.timeout(), Duration::from_secs(3));
+    }
+
+    #[test]
+    fn builder_round_trips_values() {
+        let opts = JournalIterOptions::builder()
+            .start_usn(Usn::new(42))
+            .reason_mask(UsnReason::FILE_CREATE)
+            .only_on_close(true)
+            .wait_for_more(true)
+            .timeout(Duration::from_secs(7))
+            .buffer_bytes(NonZeroUsize::new(8 * 1024).unwrap())
+            .build()
+            .expect("valid iterator options");
+
+        assert_eq!(opts.start_usn(), Usn::new(42));
+        assert_eq!(opts.reason_mask(), UsnReason::FILE_CREATE);
+        assert!(opts.only_on_close());
+        assert!(opts.wait_for_more());
+        assert_eq!(opts.timeout(), Duration::from_secs(7));
+        assert_eq!(opts.buffer_bytes().get(), 8 * 1024);
+
+        let updated = opts
+            .clone()
+            .into_builder()
+            .reason_mask(UsnReason::FILE_DELETE)
+            .build()
+            .expect("valid rebuilt options");
+        assert_eq!(updated.reason_mask(), UsnReason::FILE_DELETE);
+        assert_eq!(updated.start_usn(), opts.start_usn());
+        assert_eq!(updated.only_on_close(), opts.only_on_close());
+        assert_eq!(updated.wait_for_more(), opts.wait_for_more());
+        assert_eq!(updated.timeout(), opts.timeout());
+        assert_eq!(updated.buffer_bytes(), opts.buffer_bytes());
+        assert!(
+            updated
+                .into_builder()
+                .buffer_bytes(NonZeroUsize::new(7).unwrap())
+                .build()
+                .is_err()
+        );
+    }
+}
+
+#[cfg(test)]
+mod validation_tests {
+    use super::*;
+    #[test]
+    fn positive_timeouts_never_become_infinite() {
+        for (duration, expected) in [
+            (Duration::from_nanos(1), 1),
+            (Duration::from_millis(500), 1),
+            (Duration::from_secs(2), 2),
+            (Duration::ZERO, 0),
+            (Duration::MAX, u64::MAX),
+        ] {
+            let options = JournalIterOptions::builder()
+                .timeout(duration)
+                .build()
+                .unwrap();
+            assert_eq!(options.timeout(), Duration::from_secs(expected));
+        }
+    }
+    #[test]
+    fn rejects_buffers_without_cursor_space() {
+        assert!(
+            JournalIterOptions::builder()
+                .buffer_bytes(NonZeroUsize::new(7).unwrap())
+                .build()
+                .is_err()
+        );
+    }
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn rejects_buffer_length_that_would_truncate_in_win32() {
+        assert!(
+            JournalIterOptions::builder()
+                .buffer_bytes(NonZeroUsize::new(u32::MAX as usize + 1).unwrap())
+                .build()
+                .is_err()
+        );
+    }
+}
