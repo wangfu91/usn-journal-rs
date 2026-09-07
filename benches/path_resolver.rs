@@ -2,7 +2,7 @@
 //!
 //! This benchmark compares two live path resolution approaches:
 //! 1. Pure syscall (no caching)
-//! 2. Default syscall resolver with a directory cache
+//! 2. Explicitly cached syscall resolver
 //!
 //! Run on an elevated shell with:
 //!
@@ -67,9 +67,9 @@ fn resolver_syscall_no_cache(c: &mut Criterion) {
         return;
     }
 
+    let resolver = PathResolver::new(&volume);
     c.bench_function("resolver_syscall_no_cache", |b| {
         b.iter(|| {
-            let resolver = PathResolver::new(&volume).with_directory_cache(0);
             let mut count = 0u64;
 
             for entry in &entries {
@@ -92,15 +92,13 @@ fn resolver_syscall_directory_cache(c: &mut Criterion) {
         return;
     }
 
+    let resolver = PathResolver::new(&volume).with_directory_cache(8192);
+    // Populate the cache before Criterion starts timing either pass.
+    for entry in &entries {
+        let _ = resolver.resolve_path(entry);
+    }
     c.bench_function("resolver_syscall_directory_cache", |b| {
         b.iter(|| {
-            let resolver = PathResolver::new(&volume).with_directory_cache(8192);
-
-            // Warm-up pass to populate cache
-            for entry in &entries {
-                let _ = resolver.resolve_path(entry);
-            }
-
             // Measured pass with warm cache
             let mut count = 0u64;
             for entry in &entries {

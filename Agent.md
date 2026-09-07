@@ -28,4 +28,4 @@ selects ReFS coverage, and `BENCH_RECORD_LIMIT` bounds journal benchmarks.
 - Use UsnResult and concrete UsnError variants; retain strong public domain types.
 - Iterators yield errors per entry instead of aborting the entire scan.
 - Fid::Standard stores NTFS references; Fid::Extended supports ReFS/v3 IDs.
-- PathResolver uses a directory cache by default; 0 disables it.
+- PathResolver is uncached by default; opt into caching only for stable trees.

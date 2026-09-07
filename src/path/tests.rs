@@ -259,10 +259,10 @@ fn resolve_path_failure() {
 }
 
 #[test]
-fn resolver_default_has_directory_cache_and_no_tree() {
+fn resolver_default_disables_directory_cache() {
     let volume = create_mock_volume();
     let resolver = PathResolver::new(&volume);
-    assert!(resolver.dir_fid_path_cache.borrow().is_some());
+    assert!(resolver.dir_fid_path_cache.borrow().is_none());
 }
 
 #[test]

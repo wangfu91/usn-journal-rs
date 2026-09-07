@@ -22,8 +22,8 @@ This release is not yet published. The 0.4.1 fixes below are retained.
 - Fallible iteration uses `try_iter()` and `try_iter_with_options()`.
 - `query()` only queries and returns `UsnError::JournalNotActive` when absent.
   Iterator creation retains create-on-demand behavior.
-- `PathResolver::new()` enables a directory cache; `.with_directory_cache(0)`
-  disables it. `resolve_path()` accepts `&self`.
+- `PathResolver::new()` keeps live resolution uncached; `.with_directory_cache(n)`
+  opts into caching for stable trees. `resolve_path()` accepts `&self`.
 - Volume fields are private; use `drive_letter()` and `mount_point()`.
   `Volume::clone()` and iterators share ownership of the Windows handle.
 - Entry timestamps use `Filetime`; identifiers and flag fields use strong types.
@@ -42,8 +42,8 @@ This release is not yet published. The 0.4.1 fixes below are retained.
 | `mft::EnumOptions` | `mft::MftIterOptions::builder()` |
 | `journal.query(false)` | `journal.query()` |
 | `journal.query(true)` | `journal.query_or_create()` |
-| `PathResolver::new_with_cache(&volume)` | `PathResolver::new(&volume)` |
-| `PathResolver::new(&volume)` without cache | `PathResolver::new(&volume).with_directory_cache(0)` |
+| `PathResolver::new_with_cache(&volume)` | `PathResolver::new(&volume).with_directory_cache(4096)` |
+| `PathResolver::new(&volume)` without cache | `PathResolver::new(&volume)` |
 | `volume.drive_letter` / `volume.mount_point` | `volume.drive_letter()` / `volume.mount_point()` |
 | Integer USNs and file IDs | `Usn::new(value)` and `Fid::new(value)` |
 | `UsnError::PermissionError` | `UsnError::NotElevated` |
@@ -53,7 +53,8 @@ This release is not yet published. The 0.4.1 fixes below are retained.
 | `UsnError::OtherError` | Specific structured error variants |
 
 Use `use usn_journal_rs::Filetime;` for timestamps. `to_system_time()` returns
-`Option<SystemTime>`; `from_system_time()` returns `UsnResult<Filetime>`.
+`Option<SystemTime>`; `from_system_time()` returns `Option<Filetime>`.
+Use `Filetime::try_from(system_time)` for `UsnResult<Filetime>`.
 Use `Display` for entries and flags instead of the removed `pretty_format()`
 and `get_reason_string()` helpers. Journal defaults live in `journal`.
 

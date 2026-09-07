@@ -3,7 +3,7 @@
 //! Run on an elevated shell with:
 //!
 //! ```text
-//! cargo bench --bench journal
+//! cargo bench --features windows-examples --bench journal
 //! ```
 //!
 //! Set `USN_TEST_DRIVE` to choose the drive letter (default `C`). Set
@@ -14,7 +14,11 @@
 use std::env;
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use usn_journal_rs::{errors::UsnError, journal::UsnJournal, volume::Volume};
+use usn_journal_rs::{
+    errors::UsnError,
+    journal::{JournalIterOptions, UsnJournal},
+    volume::Volume,
+};
 
 /// Bound iteration so each bench sample finishes in a reasonable time
 /// even on large journals.
@@ -58,7 +62,8 @@ fn journal_iter_full_mask(c: &mut Criterion) {
         b.iter(|| {
             let journal = UsnJournal::new(&volume);
             let mut count = 0u64;
-            if let Ok(it) = journal.try_iter() {
+            let opts = JournalIterOptions::builder().wait_for_more(false).build();
+            if let Ok(it) = journal.try_iter_with_options(opts) {
                 for r in it.take(limit) {
                     if r.is_ok() {
                         count += 1;

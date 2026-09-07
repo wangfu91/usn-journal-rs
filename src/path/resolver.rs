@@ -10,12 +10,6 @@ use super::{
     resolve::{DirLruCache, resolve_path, resolve_path_with_cache},
 };
 
-#[allow(clippy::useless_nonzero_new_unchecked)]
-const DEFAULT_DIRECTORY_CACHE_CAPACITY: NonZeroUsize = unsafe {
-    // SAFETY: `4096` is a non-zero constant.
-    NonZeroUsize::new_unchecked(4096)
-};
-
 /// Resolves current on-disk paths from file IDs on an NTFS/ReFS volume.
 ///
 /// Use [`PathResolver::new`] to configure and construct an instance:
@@ -25,10 +19,10 @@ const DEFAULT_DIRECTORY_CACHE_CAPACITY: NonZeroUsize = unsafe {
 ///
 /// let volume = Volume::from_drive_letter('C').unwrap();
 ///
-/// // Default resolver — syscall resolution with a directory cache:
+/// // Default resolver — live syscall resolution without caching:
 /// let resolver = PathResolver::new(&volume);
 ///
-/// // Tune the directory cache capacity (plain integer, no NonZeroUsize):
+/// // Opt into caching for a stable directory tree:
 /// let resolver = PathResolver::new(&volume).with_directory_cache(8_192);
 ///
 /// // Disable the directory cache entirely (pass 0):
@@ -50,9 +44,9 @@ pub struct PathResolver<'a> {
 }
 
 impl<'a> PathResolver<'a> {
-    /// Create a resolver with the given `volume` and the default directory cache.
+    /// Create an uncached resolver for the given `volume`.
     ///
-    /// Use [`Self::with_directory_cache`] to resize or disable the cache.
+    /// Use [`Self::with_directory_cache`] to opt into caching for stable trees.
     ///
     /// This resolver is intended for live/current path resolution against the
     /// mounted volume.
@@ -60,7 +54,7 @@ impl<'a> PathResolver<'a> {
     pub fn new(volume: &'a Volume) -> Self {
         Self {
             volume,
-            dir_fid_path_cache: RefCell::new(Some(LruCache::new(DEFAULT_DIRECTORY_CACHE_CAPACITY))),
+            dir_fid_path_cache: RefCell::new(None),
             buffer: RefCell::new(Vec::new()),
         }
     }
@@ -71,8 +65,9 @@ impl<'a> PathResolver<'a> {
     /// to disable it entirely.  When the cache is disabled, each directory
     /// lookup falls back to direct `OpenFileById` syscalls.
     ///
-    /// The default resolver created by [`Self::new`] already has a built-in
-    /// cache capacity.
+    /// Caching is disabled by default. Cached paths are not invalidated when
+    /// directories move or ancestors are renamed. Only enable caching while
+    /// the directory tree is stable; rebuild the cache after topology changes.
     #[must_use]
     pub fn with_directory_cache(mut self, capacity: usize) -> Self {
         self.dir_fid_path_cache = RefCell::new(NonZeroUsize::new(capacity).map(LruCache::new));
@@ -117,8 +112,7 @@ impl<'a> PathResolver<'a> {
 impl Volume {
     /// Create a live [`PathResolver`] for this volume.
     ///
-    /// Convenience for [`PathResolver::new`] (includes the default directory
-    /// cache).
+    /// Convenience for [`PathResolver::new`] (uncached live resolution).
     #[must_use]
     pub fn path_resolver(&self) -> PathResolver<'_> {
         PathResolver::new(self)
