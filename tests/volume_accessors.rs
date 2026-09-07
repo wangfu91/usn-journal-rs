@@ -133,39 +133,33 @@ fn path_resolver_accessor_matches_constructor() {
 }
 
 #[test]
-fn mft_high_usn_zero_yields_no_entries() {
-    let Some(volume) = open_test_volume("mft_high_usn_zero_yields_no_entries") else {
+fn mft_zero_usn_range_only_yields_zero_usns() {
+    let Some(volume) = open_test_volume("mft_zero_usn_range_only_yields_zero_usns") else {
         return;
     };
 
-    // A HighUsn of 0 means "only records whose USN is <= 0". Real files always
-    // have a positive USN, so this must yield an empty enumeration. This also
-    // guards the fix that no longer seeds the enumeration cursor from low_usn:
-    // enumeration still starts at record 0 and filters purely by USN.
+    // LowUsn and HighUsn are inclusive. A file's last-change USN may be zero,
+    // so [0, 0] can legitimately return entries. Check the filter contract,
+    // not a volume-dependent assumption about the number of matching files.
     let options = MftIterOptions::builder()
-        .low_usn(Usn::new(0))
-        .high_usn(Usn::new(0))
+        .low_usn(Usn::ZERO)
+        .high_usn(Usn::ZERO)
         .build();
 
-    let mut yielded = 0usize;
     for result in volume
         .mft()
         .try_iter_with_options(options)
-        .expect("try_iter")
+        .expect("create zero-USN-range iterator")
     {
-        match result {
-            Ok(_) => yielded += 1,
-            Err(e) => panic!("unexpected error during bounded MFT enumeration: {e}"),
-        }
-        if yielded > 0 {
-            break;
-        }
+        let entry = result.expect("enumerate zero-USN range");
+        assert_eq!(
+            entry.usn,
+            Usn::ZERO,
+            "record {} ({:?}) is outside the requested inclusive [0, 0] USN range",
+            entry.fid,
+            entry.file_name
+        );
     }
-
-    assert_eq!(
-        yielded, 0,
-        "HighUsn=0 should filter out every real record, but {yielded} were returned"
-    );
 }
 
 #[test]
