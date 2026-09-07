@@ -298,15 +298,13 @@ mod mocked {
         let volume = crate::test_support::mock_volume();
         let mft = Mft::new(&volume);
 
-        let mut iter = mft
-            .try_iter()
-            .expect("default MFT iterator should be created");
+        let mut iter = mft.iter();
         let result = iter.next();
 
         assert!(result.is_some());
         match result.expect("mocked iterator should yield one result") {
-            Err(UsnError::WinApi(_)) => {}
-            _ => panic!("Expected WinApi"),
+            Err(UsnError::WinApiError(_)) => {}
+            _ => panic!("Expected WinApiError"),
         }
     }
 
@@ -316,7 +314,8 @@ mod mocked {
             .low_usn(Usn::new(10))
             .high_usn(Usn::new(20))
             .max_usn_record_version(UsnRecordVersion::V2)
-            .build();
+            .build()
+            .expect("valid iterator options");
 
         assert_eq!(options.low_usn, Usn::new(10));
         assert_eq!(options.high_usn, Usn::new(20));

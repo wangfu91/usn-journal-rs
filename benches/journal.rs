@@ -42,7 +42,7 @@ fn pick_drive() -> char {
 fn open_volume() -> Option<Volume> {
     match Volume::from_drive_letter(pick_drive()) {
         Ok(v) => Some(v),
-        Err(UsnError::NotElevated) => {
+        Err(UsnError::PermissionError) => {
             eprintln!("skipping bench: requires admin privileges");
             None
         }
@@ -62,7 +62,9 @@ fn journal_iter_full_mask(c: &mut Criterion) {
         b.iter(|| {
             let journal = UsnJournal::new(&volume);
             let mut count = 0u64;
-            let opts = JournalIterOptions::builder().wait_for_more(false).build();
+            let Ok(opts) = JournalIterOptions::builder().wait_for_more(false).build() else {
+                return 0;
+            };
             if let Ok(it) = journal.try_iter_with_options(opts) {
                 for r in it.take(limit) {
                     if r.is_ok() {
@@ -87,11 +89,14 @@ fn journal_iter_filtered(c: &mut Criterion) {
     c.bench_function("journal_iter_filtered", |b| {
         b.iter(|| {
             let journal = UsnJournal::new(&volume);
-            let opts = usn_journal_rs::journal::JournalIterOptions::builder()
+            let Ok(opts) = usn_journal_rs::journal::JournalIterOptions::builder()
                 .reason_mask(UsnReason::from_bits_retain(
                     USN_REASON_FILE_CREATE | USN_REASON_FILE_DELETE,
                 ))
-                .build();
+                .build()
+            else {
+                return 0;
+            };
             let mut count = 0u64;
             if let Ok(it) = journal.try_iter_with_options(opts) {
                 for r in it.take(limit) {

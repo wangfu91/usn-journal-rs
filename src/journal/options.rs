@@ -79,10 +79,11 @@ impl JournalIterOptionsBuilder {
     ///
     /// Only meaningful together with [`Self::wait_for_more`]. The Win32 USN read
     /// API (`READ_USN_JOURNAL_DATA`) expresses this timeout in whole seconds, so
-    /// the supplied [`Duration`] is truncated to `as_secs()`. The default —
+    /// positive fractional seconds are rounded up to the next whole second. The default —
     /// [`Duration::ZERO`] — blocks indefinitely until records are available.
+    /// This is a kernel wait parameter, not a deadline for Iterator::next.
     pub fn timeout(mut self, v: Duration) -> Self {
-        self.inner.timeout_secs = v.as_secs();
+        self.inner.timeout_secs = v.as_secs().saturating_add(u64::from(v.subsec_nanos() != 0));
         self
     }
 
@@ -93,15 +94,16 @@ impl JournalIterOptionsBuilder {
     }
 
     /// Set the in-memory buffer size, in bytes.
+    /// Must fit the 8-byte cursor and the Win32 u32 length; build validates this.
     pub fn buffer_bytes(mut self, v: NonZeroUsize) -> Self {
         self.inner.buffer_bytes = v;
         self
     }
 
-    /// Finalize the builder.
-    #[must_use]
-    pub fn build(self) -> JournalIterOptions {
-        self.inner
+    /// Validate the buffer size, then finalize the builder.
+    pub fn build(self) -> crate::UsnResult<JournalIterOptions> {
+        crate::validate_buffer_bytes(self.inner.buffer_bytes.get())?;
+        Ok(self.inner)
     }
 }
 
@@ -120,11 +122,12 @@ mod tests {
     }
 
     #[test]
-    fn timeout_truncates_duration_to_whole_seconds() {
+    fn timeout_rounds_up_to_whole_seconds() {
         let opts = JournalIterOptions::builder()
             .timeout(Duration::from_millis(2_500))
-            .build();
-        assert_eq!(opts.timeout_secs, 2);
+            .build()
+            .expect("valid iterator options");
+        assert_eq!(opts.timeout_secs, 3);
     }
 
     #[test]
@@ -136,7 +139,8 @@ mod tests {
             .wait_for_more(true)
             .timeout(Duration::from_secs(7))
             .buffer_bytes(NonZeroUsize::new(8 * 1024).unwrap())
-            .build();
+            .build()
+            .expect("valid iterator options");
 
         assert_eq!(opts.start_usn, Usn::new(42));
         assert_eq!(opts.reason_mask, UsnReason::FILE_CREATE);
@@ -144,5 +148,45 @@ mod tests {
         assert!(opts.wait_for_more);
         assert_eq!(opts.timeout_secs, 7);
         assert_eq!(opts.buffer_bytes.get(), 8 * 1024);
+    }
+}
+
+#[cfg(test)]
+mod validation_tests {
+    use super::*;
+    #[test]
+    fn positive_timeouts_never_become_infinite() {
+        for (duration, expected) in [
+            (Duration::from_nanos(1), 1),
+            (Duration::from_millis(500), 1),
+            (Duration::from_secs(2), 2),
+            (Duration::ZERO, 0),
+            (Duration::MAX, u64::MAX),
+        ] {
+            let options = JournalIterOptions::builder()
+                .timeout(duration)
+                .build()
+                .unwrap();
+            assert_eq!(options.timeout_secs, expected);
+        }
+    }
+    #[test]
+    fn rejects_buffers_without_cursor_space() {
+        assert!(
+            JournalIterOptions::builder()
+                .buffer_bytes(NonZeroUsize::new(7).unwrap())
+                .build()
+                .is_err()
+        );
+    }
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn rejects_buffer_length_that_would_truncate_in_win32() {
+        assert!(
+            JournalIterOptions::builder()
+                .buffer_bytes(NonZeroUsize::new(u32::MAX as usize + 1).unwrap())
+                .build()
+                .is_err()
+        );
     }
 }

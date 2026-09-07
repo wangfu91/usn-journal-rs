@@ -80,6 +80,7 @@ impl MftIterOptionsBuilder {
     }
 
     /// Set the in-memory buffer size, in bytes.
+    /// Must fit the 8-byte cursor and the Win32 u32 length; build validates this.
     pub fn buffer_bytes(mut self, v: NonZeroUsize) -> Self {
         self.inner.buffer_bytes = v;
         self
@@ -94,10 +95,15 @@ impl MftIterOptionsBuilder {
         self
     }
 
-    /// Finalize the builder.
-    #[must_use]
-    pub fn build(self) -> MftIterOptions {
-        self.inner
+    /// Validate the buffer size and USN range, then finalize the builder.
+    pub fn build(self) -> crate::UsnResult<MftIterOptions> {
+        crate::validate_buffer_bytes(self.inner.buffer_bytes.get())?;
+        if self.inner.low_usn > self.inner.high_usn {
+            return Err(crate::UsnError::InvalidOptions(
+                "low_usn must not exceed high_usn",
+            ));
+        }
+        Ok(self.inner)
     }
 }
 
@@ -126,11 +132,40 @@ mod tests {
             .high_usn(Usn::new(20))
             .max_usn_record_version(UsnRecordVersion::V2)
             .buffer_bytes(NonZeroUsize::new(4 * 1024).unwrap())
-            .build();
+            .build()
+            .expect("valid iterator options");
 
         assert_eq!(opts.low_usn, Usn::new(10));
         assert_eq!(opts.high_usn, Usn::new(20));
         assert_eq!(opts.max_usn_record_version, UsnRecordVersion::V2);
         assert_eq!(opts.buffer_bytes.get(), 4 * 1024);
+    }
+}
+
+#[cfg(test)]
+mod validation_tests {
+    use super::*;
+    #[test]
+    fn validates_inclusive_ranges() {
+        assert!(
+            MftIterOptions::builder()
+                .low_usn(Usn::new(2))
+                .high_usn(Usn::new(1))
+                .build()
+                .is_err()
+        );
+        assert!(
+            MftIterOptions::builder()
+                .low_usn(Usn::ZERO)
+                .high_usn(Usn::ZERO)
+                .build()
+                .is_ok()
+        );
+        assert!(
+            MftIterOptions::builder()
+                .buffer_bytes(NonZeroUsize::new(1).unwrap())
+                .build()
+                .is_err()
+        );
     }
 }

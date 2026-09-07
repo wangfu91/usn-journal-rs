@@ -69,12 +69,14 @@ impl Filetime {
     ///
     /// Returns `None` when the input is before the Windows FILETIME epoch or
     /// when the 100-nanosecond interval count would overflow `u64`.
+    /// Sub-100ns precision is discarded toward the Unix epoch.
     #[must_use]
     pub fn from_system_time(value: SystemTime) -> Option<Self> {
         system_time_to_filetime_raw(value).map(Self)
     }
 
     /// Number of seconds since the Unix epoch (may be negative).
+    /// Fractional seconds are truncated toward zero.
     #[must_use]
     #[inline]
     pub fn to_unix_seconds(self) -> i64 {
@@ -84,6 +86,7 @@ impl Filetime {
     }
 
     /// Number of milliseconds since the Unix epoch (may be negative).
+    /// Fractional milliseconds are truncated toward zero.
     #[must_use]
     #[inline]
     pub fn to_unix_millis(self) -> i64 {

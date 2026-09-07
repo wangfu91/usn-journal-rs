@@ -125,7 +125,7 @@ impl UsnEntry {
 
 impl fmt::Display for UsnEntry {
     /// One-line, compact summary suitable for logging. For a multi-line
-    /// "pretty" rendering see `examples/journal_pretty_print.rs`.
+    /// "pretty" rendering use [Self::pretty_format].
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
@@ -137,5 +137,60 @@ impl fmt::Display for UsnEntry {
             self.file_attributes.bits(),
             self.file_name.to_string_lossy(),
         )
+    }
+}
+
+impl UsnEntry {
+    /// Render a detailed multi-line summary with an optional resolved path.
+    pub fn pretty_format<P>(&self, full_path_opt: Option<P>) -> String
+    where
+        P: AsRef<std::path::Path>,
+    {
+        let mut output = String::new();
+        output.push_str(&format!("{:<20}: 0x{:x}\n", "USN", self.usn.get()));
+        output.push_str(&format!(
+            "{:<20}: {}\n",
+            "Type",
+            if self.is_dir() { "Directory" } else { "File" }
+        ));
+        output.push_str(&format!("{:<20}: 0x{:x}\n", "File ID", self.fid.as_u128()));
+        output.push_str(&format!(
+            "{:<20}: 0x{:x}\n",
+            "Parent File ID",
+            self.parent_fid.as_u128()
+        ));
+        output.push_str(&format!(
+            "{:<20}: {}\n",
+            "Timestamp",
+            crate::display::format_local_filetime(self.time)
+        ));
+        output.push_str(&format!("{:<20}: {}\n", "Reason", self.get_reason_string()));
+        if let Some(full_path) = full_path_opt {
+            output.push_str(&format!(
+                "{:<20}: {}\n",
+                "Path",
+                full_path.as_ref().to_string_lossy()
+            ));
+        } else {
+            // Fallback to file name if full path is not available
+            output.push_str(&format!(
+                "{:<20}: {}\n",
+                "Path",
+                self.file_name.to_string_lossy()
+            ));
+        }
+        output
+    }
+}
+
+impl UsnEntry {
+    /// Format the full reason flag names, retained for compatibility.
+    #[must_use]
+    pub fn get_reason_string(&self) -> String {
+        if self.reason.is_empty() {
+            "UNKNOWN".to_owned()
+        } else {
+            self.reason.to_string()
+        }
     }
 }

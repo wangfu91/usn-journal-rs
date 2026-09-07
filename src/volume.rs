@@ -12,7 +12,7 @@ use std::{
 #[cfg(windows)]
 use windows::{
     Win32::{
-        Foundation::{ERROR_ACCESS_DENIED, HANDLE},
+        Foundation::HANDLE,
         Storage::FileSystem::{
             CreateFileW, FILE_FLAGS_AND_ATTRIBUTES, FILE_GENERIC_READ, FILE_SHARE_READ,
             FILE_SHARE_WRITE, GetVolumeNameForVolumeMountPointW, OPEN_EXISTING,
@@ -58,9 +58,9 @@ impl Volume {
     ///
     /// # Errors
     ///
-    /// Returns [`UsnError::NotElevated`] if the process does not have the
+    /// Returns [`UsnError::PermissionError`] if the process does not have the
     /// Administrator privileges required to open volume handles. Returns
-    /// [`UsnError::WinApi`] if Windows rejects the volume path.
+    /// [`UsnError::WinApiError`] if Windows rejects the volume path.
     #[cfg(windows)]
     pub fn from_drive_letter(drive_letter: char) -> Result<Self, UsnError> {
         let handle = get_volume_handle_from_drive_letter(drive_letter)?;
@@ -74,9 +74,9 @@ impl Volume {
     ///
     /// # Errors
     ///
-    /// Returns [`UsnError::NotElevated`] if the process does not have the
+    /// Returns [`UsnError::PermissionError`] if the process does not have the
     /// Administrator privileges required to open volume handles. Returns
-    /// [`UsnError::WinApi`] or [`UsnError::InvalidMountPoint`] if the
+    /// [`UsnError::WinApiError`] or [`UsnError::InvalidMountPointError`] if the
     /// mount point cannot be resolved to a volume handle.
     #[cfg(windows)]
     pub fn from_mount_point<P: AsRef<Path>>(mount_point: P) -> Result<Self, UsnError> {
@@ -137,7 +137,7 @@ impl Volume {
 #[cfg(windows)]
 fn get_volume_handle_from_drive_letter(drive_letter: char) -> Result<HANDLE, UsnError> {
     if !privilege::is_elevated()? {
-        return Err(UsnError::NotElevated);
+        return Err(UsnError::PermissionError);
     }
 
     // https://learn.microsoft.com/en-us/windows/win32/fileio/obtaining-a-volume-handle-for-change-journal-operations
@@ -162,8 +162,7 @@ fn get_volume_handle_from_drive_letter(drive_letter: char) -> Result<HANDLE, Usn
         )
     } {
         Ok(handle) => Ok(handle),
-        Err(err) if err == ERROR_ACCESS_DENIED.into() => Err(UsnError::NotElevated),
-        Err(err) => Err(UsnError::WinApi(err)),
+        Err(err) => Err(UsnError::WinApiError(err)),
     }
 }
 
@@ -171,7 +170,7 @@ fn get_volume_handle_from_drive_letter(drive_letter: char) -> Result<HANDLE, Usn
 #[cfg(windows)]
 fn get_volume_handle_from_mount_point(mount_point: &Path) -> Result<HANDLE, UsnError> {
     if !privilege::is_elevated()? {
-        return Err(UsnError::NotElevated);
+        return Err(UsnError::PermissionError);
     }
 
     // GetVolumeNameForVolumeMountPointW requires trailing backslash
@@ -197,7 +196,7 @@ fn get_volume_handle_from_mount_point(mount_point: &Path) -> Result<HANDLE, UsnE
         .unwrap_or(volume_name.len());
     let name_data = volume_name
         .get(..end)
-        .ok_or_else(|| UsnError::InvalidMountPoint("Failed to get volume name data".into()))?;
+        .ok_or_else(|| UsnError::InvalidMountPointError("Failed to get volume name data".into()))?;
     let volume_guid = String::from_utf16_lossy(name_data);
 
     debug!("Volume GUID: {volume_guid}");
@@ -264,7 +263,7 @@ mod tests {
                     assert!(volume.mount_point().is_none(), "Mount point should be None");
                     Ok(())
                 }
-                Err(UsnError::NotElevated) => {
+                Err(UsnError::PermissionError) => {
                     eprintln!("Skipping test - requires admin privileges");
                     Ok(())
                 }
@@ -285,10 +284,10 @@ mod tests {
 
             // Log the specific error for debugging purposes
             match result {
-                Err(UsnError::NotElevated) => {
+                Err(UsnError::PermissionError) => {
                     eprintln!("Got permission error - test requires admin privileges");
                 }
-                Err(UsnError::WinApi(err)) if err.code() == ERROR_FILE_NOT_FOUND.into() => {
+                Err(UsnError::WinApiError(err)) if err.code() == ERROR_FILE_NOT_FOUND.into() => {
                     eprintln!("Got expected file not found error");
                 }
                 Err(other_err) => {

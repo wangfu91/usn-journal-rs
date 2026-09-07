@@ -31,7 +31,7 @@ fn open_test_volume(test_name: &str) -> Option<Volume> {
     let drive = pick_drive();
     match Volume::from_drive_letter(drive) {
         Ok(volume) => Some(volume),
-        Err(UsnError::NotElevated) => {
+        Err(UsnError::PermissionError) => {
             eprintln!("{test_name}: skipping (requires admin privileges)");
             None
         }
@@ -80,12 +80,8 @@ fn mft_accessor_matches_constructor_first_entries() {
             .collect::<Vec<_>>()
     };
 
-    let via_accessor = collect_prefix(volume.mft().try_iter().expect("accessor mft try_iter"));
-    let via_constructor = collect_prefix(
-        Mft::new(&volume)
-            .try_iter()
-            .expect("constructor mft try_iter"),
-    );
+    let via_accessor = collect_prefix(volume.mft().iter());
+    let via_constructor = collect_prefix(Mft::new(&volume).iter());
 
     assert!(
         !via_accessor.is_empty(),
@@ -108,8 +104,7 @@ fn path_resolver_accessor_matches_constructor() {
 
     let mut compared = 0usize;
     for entry in Mft::new(&volume)
-        .try_iter()
-        .expect("mft try_iter")
+        .iter()
         .filter_map(Result::ok)
         .filter(|e| !e.file_name.is_empty())
         .take(200)
@@ -144,13 +139,10 @@ fn mft_zero_usn_range_only_yields_zero_usns() {
     let options = MftIterOptions::builder()
         .low_usn(Usn::ZERO)
         .high_usn(Usn::ZERO)
-        .build();
+        .build()
+        .expect("valid iterator options");
 
-    for result in volume
-        .mft()
-        .try_iter_with_options(options)
-        .expect("create zero-USN-range iterator")
-    {
+    for result in volume.mft().iter_with_options(options) {
         let entry = result.expect("enumerate zero-USN range");
         assert_eq!(
             entry.usn,
@@ -172,8 +164,7 @@ fn mft_full_range_yields_many_entries() {
     // record 0 must return a healthy number of records.
     let count = volume
         .mft()
-        .try_iter()
-        .expect("try_iter")
+        .iter()
         .filter_map(Result::ok)
         .take(1_000)
         .count();
@@ -182,4 +173,52 @@ fn mft_full_range_yields_many_entries() {
         count >= 100,
         "expected the full-range MFT scan to yield many records, got {count}"
     );
+}
+
+mod compatibility {
+    use std::ffi::{OsStr, OsString};
+    use usn_journal_rs::{
+        Fid, FileAttributes, Filetime, Usn, UsnReason, UsnSourceInfo, journal::UsnEntry,
+        path::PathResolvableEntry,
+    };
+
+    struct CustomEntry;
+    impl PathResolvableEntry for CustomEntry {
+        fn fid(&self) -> Fid {
+            Fid::new(1)
+        }
+        fn parent_fid(&self) -> Fid {
+            Fid::new(2)
+        }
+        fn file_name(&self) -> &OsStr {
+            OsStr::new("example")
+        }
+        fn is_dir(&self) -> bool {
+            false
+        }
+    }
+
+    #[test]
+    fn custom_entries_and_detailed_formatting_remain_supported() {
+        assert_eq!(CustomEntry.fid(), Fid::new(1));
+        let entry = UsnEntry {
+            usn: Usn::new(42),
+            time: Filetime::UNIX_EPOCH,
+            fid: Fid::from_u128(1u128 << 100),
+            parent_fid: Fid::new(2),
+            reason: UsnReason::FILE_CREATE,
+            source_info: UsnSourceInfo::empty(),
+            file_name: OsString::from("example"),
+            file_attributes: FileAttributes::empty(),
+        };
+        let pretty = entry.pretty_format(Some(std::path::Path::new("C:/example")));
+        assert!(pretty.contains("Timestamp"));
+        assert!(pretty.contains("C:/example"));
+        assert!(pretty.contains(&format!("{:x}", 1u128 << 100)));
+        assert!(entry.get_reason_string().contains("FILE_CREATE"));
+        assert_eq!(
+            usn_journal_rs::DEFAULT_JOURNAL_MAX_SIZE,
+            usn_journal_rs::journal::DEFAULT_JOURNAL_MAX_SIZE
+        );
+    }
 }

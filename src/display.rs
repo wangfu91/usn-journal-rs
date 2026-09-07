@@ -39,3 +39,33 @@ pub(crate) fn write_flag_names(
         write!(f, "0x{bits:x}")
     }
 }
+
+pub(crate) fn format_local_filetime(filetime: crate::Filetime) -> String {
+    try_format_local_filetime(filetime).unwrap_or_else(|| format!("FILETIME {}", filetime.raw()))
+}
+
+fn try_format_local_filetime(filetime: crate::Filetime) -> Option<String> {
+    use windows::Win32::{
+        Foundation::{FILETIME, SYSTEMTIME},
+        System::Time::{FileTimeToSystemTime, SystemTimeToTzSpecificLocalTime},
+    };
+    let utc_filetime: FILETIME = filetime.into();
+
+    let mut utc_system_time = SYSTEMTIME::default();
+    let mut local_system_time = SYSTEMTIME::default();
+
+    unsafe {
+        FileTimeToSystemTime(&utc_filetime, &mut utc_system_time).ok()?;
+        SystemTimeToTzSpecificLocalTime(None, &utc_system_time, &mut local_system_time).ok()?;
+    }
+
+    Some(format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+        local_system_time.wYear,
+        local_system_time.wMonth,
+        local_system_time.wDay,
+        local_system_time.wHour,
+        local_system_time.wMinute,
+        local_system_time.wSecond,
+    ))
+}

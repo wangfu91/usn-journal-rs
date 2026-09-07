@@ -3,60 +3,63 @@
 ## [Unreleased] — 0.5.0
 
 API refinements for Windows USN journals, FSCTL enumeration, and live paths.
-This release is not yet published. The 0.4.1 fixes below are retained.
+This release is not yet published. The 0.4.1 correctness fixes and shared
+handle ownership are retained.
 
 ### Added
 
-- Strong `Usn`, `Fid`, `FileAttributes`, `UsnReason`, and `UsnSourceInfo` types,
-  including 128-bit file IDs for V3/ReFS records.
+- Strong `Usn`, `Fid`, `FileAttributes`, `UsnReason`, and `UsnSourceInfo`
+  types, including 128-bit file IDs for V3/ReFS records.
 - `Filetime` at the crate root, with checked `SystemTime` conversions.
-- `JournalIterOptions` and `MftIterOptions` builders, typed `UsnRecordVersion`,
-  reusable iterator buffers, and a common `prelude`.
-- `Volume::journal()`, `Volume::mft()`, and `Volume::path_resolver()` accessors.
-- `UsnJournal::query_or_create()` for explicit create-on-demand behavior.
-- Entry formatting, flag predicates, journal/path benchmarks, and regression
-  tests for parsing, handle lifetimes, and path resolution.
+- Validated `JournalIterOptions` and `MftIterOptions` builders, typed
+  `UsnRecordVersion`, and a common `prelude`.
+- `UsnJournal::query_or_create()` for explicit create-on-demand queries.
+- `PathResolver::try_resolve_path()` preserves OS lookup errors;
+  `resolve_path()` remains an optional-result convenience method.
+- `Mft::iter_with_buffer()` and `UsnJournal::try_iter_with_buffer()` accept
+  reusable buffers during construction, without allocating a replacement first.
+- `UsnError::is_permission_denied()` recognizes the permission variant and
+  underlying I/O/Win32 permission failures while preserving OS error sources.
+- Compact `Display` formatting, flag predicates, benchmarks, and regression tests.
 
 ### Changed
 
-- Fallible iteration uses `try_iter()` and `try_iter_with_options()`.
+- Journal `iter()` and `try_iter()` use the same non-waiting default options.
+  Enable `wait_for_more(true)` explicitly for monitoring.
 - `query()` only queries and returns `UsnError::JournalNotActive` when absent.
-  Iterator creation retains create-on-demand behavior.
-- `PathResolver::new()` keeps live resolution uncached; `.with_directory_cache(n)`
-  opts into caching for stable trees. `resolve_path()` accepts `&self`.
-- Volume fields are private; use `drive_letter()` and `mount_point()`.
-  `Volume::clone()` and iterators share ownership of the Windows handle.
-- Entry timestamps use `Filetime`; identifiers and flag fields use strong types.
-- `JournalIterOptionsBuilder::timeout()` accepts `Duration` in whole seconds.
-- Error variants use descriptive names and structured parser diagnostics.
+  Iterator construction retains create-on-demand behavior.
+- Options builders return `UsnResult<Options>`: buffer lengths must fit the
+  8-byte cursor and Win32 u32 length; MFT lower bounds must not exceed upper bounds.
+- `timeout(Duration)` rounds positive fractional seconds up. Zero remains an
+  indefinite kernel wait when waiting is enabled; this is not a deadline for next().
+- `PathResolver::new()` remains uncached; `with_directory_cache(n)` configures
+  caching for stable trees. `resolve_path()` accepts `&self`.
+- Volume metadata is private and exposed through accessors; mount points use
+  `Path` rather than lossy string metadata.
+- Entry timestamps, identifiers, and flag fields use domain types.
+- Structured parser errors replace generic `OtherError` diagnostics.
 - Journal, MFT, and path implementations live in module directories.
 
 ### Migration from 0.4.1
 
 | 0.4.1 API | 0.5.0 API |
 | --- | --- |
-| `journal.iter()` | `journal.try_iter()` |
-| `mft.iter()` | `mft.try_iter()`; `IntoIterator` remains supported |
-| `iter_with_options(options)` | `try_iter_with_options(options)` |
-| `journal::EnumOptions` | `journal::JournalIterOptions::builder()` |
-| `mft::EnumOptions` | `mft::MftIterOptions::builder()` |
+| `journal::EnumOptions { ... }` | `JournalIterOptions::builder()...build()?` |
+| `mft::EnumOptions { ... }` | `MftIterOptions::builder()...build()?` |
 | `journal.query(false)` | `journal.query()` |
 | `journal.query(true)` | `journal.query_or_create()` |
-| `PathResolver::new_with_cache(&volume)` | `PathResolver::new(&volume).with_directory_cache(4096)` |
-| `PathResolver::new(&volume)` without cache | `PathResolver::new(&volume)` |
-| `volume.drive_letter` / `volume.mount_point` | `volume.drive_letter()` / `volume.mount_point()` |
-| Integer USNs and file IDs | `Usn::new(value)` and `Fid::new(value)` |
-| `UsnError::PermissionError` | `UsnError::NotElevated` |
-| `UsnError::WinApiError` | `UsnError::WinApi` |
-| `UsnError::IoError` | `UsnError::Io` |
-| `UsnError::InvalidMountPointError` | `UsnError::InvalidMountPoint` |
-| `UsnError::OtherError` | Specific structured error variants |
+| `volume.drive_letter` / `volume.mount_point` | `drive_letter() -> Option<char>` / `mount_point() -> Option<&Path>` |
+| Integer USNs and file IDs | `Usn::new(i64)`, `Fid::new(u64)`, or `Fid::from_u128(u128)` |
+| Raw integer flags | Typed flags; use `from_bits_retain()` and `bits()` at integer boundaries. |
+| `PathResolvableEntry` methods returning `u64` IDs and `&OsString` names | Return `Fid` IDs and `&OsStr` names. |
+| `UsnError::OtherError` | Specific structured error variants. |
 
-Use `use usn_journal_rs::Filetime;` for timestamps. `to_system_time()` returns
-`Option<SystemTime>`; `from_system_time()` returns `Option<Filetime>`.
-Use `Filetime::try_from(system_time)` for `UsnResult<Filetime>`.
-Use `Display` for entries and flags instead of the removed `pretty_format()`
-and `get_reason_string()` helpers. Journal defaults live in `journal`.
+Entry timestamps now use `usn_journal_rs::Filetime` instead of `SystemTime`.
+`to_system_time()` and `from_system_time()` return `Option`; `TryFrom`
+conversions return `UsnResult`. Conversion from `SystemTime` discards sub-100ns
+precision toward the Unix epoch. Unix seconds/milliseconds truncate toward zero.
+Detailed formatting uses local time, falling back to raw FILETIME for unformattable
+values. Directory caching remains opt-in and must be rebuilt after topology changes.
 
 ## [0.4.1] - 2026-05-27
 

@@ -54,7 +54,7 @@ fn main() -> Result<(), UsnError> {
         .reason_mask(UsnReason::ALL)
         .only_on_close(false)
         .buffer_bytes(NonZeroUsize::new(64 * 1024).unwrap())
-        .build();
+        .build()?;
 
     for result in journal.try_iter_with_options(opts)? {
         let entry: UsnEntry = result?;
@@ -85,7 +85,7 @@ fn main() -> Result<(), UsnError> {
     let opts = JournalIterOptions::builder()
         .start_usn(tail)
         .wait_for_more(true)
-        .build();
+        .build()?;
 
     for result in journal.try_iter_with_options(opts)? {
         let entry = result?;
@@ -146,6 +146,23 @@ entries may use extended file IDs.
 
 On ReFS, journal and `Mft` entries may expose 128-bit file IDs via
 `Fid::is_extended()`, `Fid::as_u128()`, and `Fid::as_bytes()`.
+
+## API behavior
+
+Journal `iter()?` (also available as `try_iter()?`) reads available records by
+default. Set `wait_for_more(true)` to wait for changes. A positive fractional
+timeout rounds up to whole seconds; zero means an indefinite kernel wait.
+Options builders validate their inputs and return `Result` from `build()`.
+MFT `iter()` constructs an iterator directly; each item is still a `Result`.
+
+Use `error.is_permission_denied()` to recognize permission failures, including
+underlying Win32 errors. Use `resolver.try_resolve_path(&entry)` when you need
+the lookup error; `resolve_path(&entry)` returns `None` on failure.
+
+`entry.pretty_format(resolved_path)` produces detailed output; `Display`
+produces a compact summary. Custom `PathResolvableEntry` implementations remain
+supported. `new_with_cache()` and `path_resolver_with_cache()` retain their
+4096-entry default; enable caching only for stable trees.
 
 ## Migrating from 0.4.x
 

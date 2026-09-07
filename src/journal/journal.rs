@@ -16,10 +16,7 @@ use crate::errors::UsnError;
 use crate::volume::Volume;
 
 use super::data::UsnJournalData;
-use super::defaults::{
-    DEFAULT_BUFFER_BYTES, DEFAULT_JOURNAL_ALLOCATION_DELTA, DEFAULT_JOURNAL_MAX_SIZE,
-    USN_REASON_MASK_ALL,
-};
+use super::defaults::{DEFAULT_JOURNAL_ALLOCATION_DELTA, DEFAULT_JOURNAL_MAX_SIZE};
 use super::iter::{UsnJournalIter, UsnJournalIterConfig};
 use super::options::JournalIterOptions;
 
@@ -49,19 +46,17 @@ impl<'a> UsnJournal<'a> {
     /// front; subsequent per-record errors are surfaced as iterator items.
     #[must_use = "iterators are lazy and do nothing unless consumed"]
     pub fn try_iter(&self) -> UsnResult<UsnJournalIter> {
-        let journal_data = self.query_or_create()?;
-        Ok(UsnJournalIter::new(
-            self.volume.shared_handle(),
-            journal_data.journal_id,
-            vec![0u8; DEFAULT_BUFFER_BYTES],
-            UsnJournalIterConfig {
-                next_start_usn: 0,
-                reason_mask: USN_REASON_MASK_ALL,
-                return_only_on_close: 0,
-                timeout: 0,
-                bytes_to_wait_for: 1,
-            },
-        ))
+        self.try_iter_with_options(JournalIterOptions::default())
+    }
+
+    /// Iterate over available records using default options.
+    pub fn iter(&self) -> UsnResult<UsnJournalIter> {
+        self.try_iter()
+    }
+
+    /// Iterate with validated options. Alias for [Self::try_iter_with_options].
+    pub fn iter_with_options(&self, options: JournalIterOptions) -> UsnResult<UsnJournalIter> {
+        self.try_iter_with_options(options)
     }
 
     /// Returns an iterator over the USN journal entries with custom options.
@@ -70,11 +65,22 @@ impl<'a> UsnJournal<'a> {
     /// to handle individual entry errors gracefully without stopping iteration.
     #[must_use = "iterators are lazy and do nothing unless consumed"]
     pub fn try_iter_with_options(&self, options: JournalIterOptions) -> UsnResult<UsnJournalIter> {
+        self.try_iter_with_buffer(options, Vec::new())
+    }
+
+    /// Construct an iterator using a caller-owned reusable buffer.
+    /// Resizes the buffer to the configured length before the first read.
+    pub fn try_iter_with_buffer(
+        &self,
+        options: JournalIterOptions,
+        mut buffer: Vec<u8>,
+    ) -> UsnResult<UsnJournalIter> {
         let journal_data = self.query_or_create()?;
+        buffer.resize(options.buffer_bytes.get(), 0);
         Ok(UsnJournalIter::new(
             self.volume.shared_handle(),
             journal_data.journal_id,
-            vec![0u8; options.buffer_bytes.get()],
+            buffer,
             UsnJournalIterConfig {
                 next_start_usn: options.start_usn.get(),
                 reason_mask: options.reason_mask.bits(),

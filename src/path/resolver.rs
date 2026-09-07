@@ -59,6 +59,13 @@ impl<'a> PathResolver<'a> {
         }
     }
 
+    /// Create a resolver with the historical 4096-entry directory cache.
+    /// Only use caching while the directory tree is stable.
+    #[must_use]
+    pub fn new_with_cache(volume: &'a Volume) -> Self {
+        Self::new(volume).with_directory_cache(4096)
+    }
+
     /// Set the directory path cache capacity.
     ///
     /// Pass a positive `capacity` to enable (or resize) the cache; pass `0`
@@ -85,9 +92,19 @@ impl<'a> PathResolver<'a> {
     /// `USN_RECORD_V3` entries) are both resolved via the live volume.
     #[must_use]
     pub fn resolve_path<E: PathResolvableEntry + ?Sized>(&self, entry: &E) -> Option<PathBuf> {
+        self.try_resolve_path(entry).ok()
+    }
+
+    /// Resolve a path while preserving the underlying OS failure.
+    /// Tries the parent first, then the entry itself. If both fail, returns the
+    /// entry lookup error. Successful parent lookup uses the supplied leaf name.
+    pub fn try_resolve_path<E: PathResolvableEntry + ?Sized>(
+        &self,
+        entry: &E,
+    ) -> crate::UsnResult<PathBuf> {
         let mut cache_guard = self.dir_fid_path_cache.borrow_mut();
         if let Some(cache) = cache_guard.as_mut() {
-            resolve_path_with_cache(
+            Ok(resolve_path_with_cache(
                 self.volume,
                 entry.fid(),
                 entry.parent_fid(),
@@ -95,16 +112,16 @@ impl<'a> PathResolver<'a> {
                 entry.is_dir(),
                 cache,
                 &self.buffer,
-            )
+            )?)
         } else {
             drop(cache_guard);
-            resolve_path(
+            Ok(resolve_path(
                 self.volume,
                 entry.fid(),
                 entry.parent_fid(),
                 entry.file_name(),
                 &self.buffer,
-            )
+            )?)
         }
     }
 }
@@ -116,5 +133,13 @@ impl Volume {
     #[must_use]
     pub fn path_resolver(&self) -> PathResolver<'_> {
         PathResolver::new(self)
+    }
+}
+
+impl Volume {
+    /// Create a resolver with a 4096-entry cache for a stable directory tree.
+    #[must_use]
+    pub fn path_resolver_with_cache(&self) -> PathResolver<'_> {
+        PathResolver::new_with_cache(self)
     }
 }

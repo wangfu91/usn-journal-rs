@@ -22,7 +22,7 @@ fn open_test_volume(test_name: &str) -> Option<Volume> {
     let drive = pick_drive();
     match Volume::from_drive_letter(drive) {
         Ok(volume) => Some(volume),
-        Err(UsnError::NotElevated) => {
+        Err(UsnError::PermissionError) => {
             eprintln!("{test_name}: skipping (requires admin privileges)");
             None
         }

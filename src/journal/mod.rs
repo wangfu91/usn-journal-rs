@@ -25,3 +25,6 @@ pub use options::{JournalIterOptions, JournalIterOptionsBuilder};
 
 #[cfg(test)]
 mod tests;
+
+/// Historical options type name. Construct options using the validated builder.
+pub type EnumOptions = JournalIterOptions;

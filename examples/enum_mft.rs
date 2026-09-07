@@ -18,7 +18,7 @@ fn run() -> Result<(), UsnError> {
     let mft = volume.mft();
     let path_resolver = volume.path_resolver();
 
-    for result in mft.try_iter()? {
+    for result in mft.iter() {
         match result {
             Ok(entry) => {
                 let full_path = path_resolver.resolve_path(&entry);

@@ -6,9 +6,9 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum UsnError {
-    /// The process lacks the Administrator privileges required to open a volume.
-    #[error("This operation requires Administrator privileges")]
-    NotElevated,
+    /// The operation requires permissions that the caller does not have.
+    #[error("Access denied: appropriate permissions or Administrator privileges required")]
+    PermissionError,
 
     /// The volume's USN change journal is not active.
     ///
@@ -77,7 +77,7 @@ pub enum UsnError {
 
     /// A mount point path could not be resolved to a volume.
     #[error("Invalid mount point: {0}")]
-    InvalidMountPoint(String),
+    InvalidMountPointError(String),
 
     /// A timestamp could not be represented in the target format.
     #[error("Invalid timestamp: {0}")]
@@ -85,12 +85,12 @@ pub enum UsnError {
 
     /// A standard Rust I/O error.
     #[error("I/O error: {0}")]
-    Io(#[from] std::io::Error),
+    IoError(#[from] std::io::Error),
 
     /// A Win32 API call failed.
     #[error("Win32 API error: {0}")]
     #[cfg(windows)]
-    WinApi(#[from] windows::core::Error),
+    WinApiError(#[from] windows::core::Error),
 
     /// A provided buffer was too small for the requested work.
     #[error("Buffer too small: needed {needed} bytes, got {got}")]
@@ -112,13 +112,29 @@ pub enum UsnError {
 }
 
 impl UsnError {
+    /// Whether this is a permission failure, including an underlying OS error.
+    #[must_use]
+    pub fn is_permission_denied(&self) -> bool {
+        match self {
+            Self::PermissionError => true,
+            Self::IoError(err) => err.kind() == std::io::ErrorKind::PermissionDenied,
+            #[cfg(windows)]
+            Self::WinApiError(err) => {
+                use windows::Win32::Foundation::{ERROR_ACCESS_DENIED, ERROR_PRIVILEGE_NOT_HELD};
+                err.code() == ERROR_ACCESS_DENIED.into()
+                    || err.code() == ERROR_PRIVILEGE_NOT_HELD.into()
+            }
+            _ => false,
+        }
+    }
+
     /// Return `true` if this error came from operating-system I/O.
     #[must_use]
     pub const fn is_io_error(&self) -> bool {
         match self {
-            Self::Io(_) => true,
+            Self::IoError(_) => true,
             #[cfg(windows)]
-            Self::WinApi(_) => true,
+            Self::WinApiError(_) => true,
             _ => false,
         }
     }
@@ -171,12 +187,12 @@ mod tests {
         }
 
         #[test]
-        fn test_not_elevated_display() {
-            let error = UsnError::NotElevated;
+        fn test_permission_error_display() {
+            let error = UsnError::PermissionError;
             let error_string = error.to_string();
             assert_eq!(
                 error_string,
-                "This operation requires Administrator privileges"
+                "Access denied: appropriate permissions or Administrator privileges required"
             );
         }
 
@@ -247,9 +263,9 @@ mod tests {
 
         #[test]
         fn test_error_classification_helpers() {
-            assert!(UsnError::Io(IoError::other("disk")).is_io_error());
-            assert!(UsnError::WinApi(ERROR_ACCESS_DENIED.into()).is_io_error());
-            assert!(!UsnError::NotElevated.is_io_error());
+            assert!(UsnError::IoError(IoError::other("disk")).is_io_error());
+            assert!(UsnError::WinApiError(ERROR_ACCESS_DENIED.into()).is_io_error());
+            assert!(!UsnError::PermissionError.is_io_error());
 
             assert!(!UsnError::InvalidOptions("bad option").is_parse_error());
         }
@@ -257,7 +273,7 @@ mod tests {
         #[test]
         fn test_invalid_mount_point_error_display() {
             let mount_point = "C:\\invalid\\path";
-            let error = UsnError::InvalidMountPoint(mount_point.to_string());
+            let error = UsnError::InvalidMountPointError(mount_point.to_string());
             let error_string = error.to_string();
             assert_eq!(error_string, "Invalid mount point: C:\\invalid\\path");
         }
@@ -268,11 +284,11 @@ mod tests {
             let usn_error = UsnError::from(io_error);
 
             match usn_error {
-                UsnError::Io(ref e) => {
+                UsnError::IoError(ref e) => {
                     assert_eq!(e.kind(), ErrorKind::NotFound);
                     assert_eq!(e.to_string(), "File not found");
                 }
-                _ => panic!("Expected Io variant"),
+                _ => panic!("Expected IoError variant"),
             }
         }
 
@@ -282,10 +298,10 @@ mod tests {
             let usn_error = UsnError::from(win_error);
 
             match usn_error {
-                UsnError::WinApi(ref e) => {
+                UsnError::WinApiError(ref e) => {
                     assert_eq!(e.code(), ERROR_ACCESS_DENIED.into());
                 }
-                _ => panic!("Expected WinApi variant"),
+                _ => panic!("Expected WinApiError variant"),
             }
         }
 
@@ -307,7 +323,7 @@ mod tests {
         fn test_result_type_integration() {
             // Test that UsnError works correctly with Result types
             fn returns_permission_error() -> Result<(), UsnError> {
-                Err(UsnError::NotElevated)
+                Err(UsnError::PermissionError)
             }
 
             fn returns_ok() -> Result<String, UsnError> {
@@ -328,7 +344,7 @@ mod tests {
 
             // Test that the source chain is preserved
             assert!(usn_error.source().is_some());
-            if let UsnError::Io(ref e) = usn_error {
+            if let UsnError::IoError(ref e) = usn_error {
                 assert_eq!(e.to_string(), "Original error");
             }
         }
@@ -341,7 +357,7 @@ mod tests {
         #[test]
         fn test_common_permission_scenarios() {
             // Test that permission errors have the expected message
-            let error = UsnError::NotElevated;
+            let error = UsnError::PermissionError;
             assert!(error.to_string().contains("Administrator privileges"));
         }
 
@@ -355,7 +371,7 @@ mod tests {
             ];
 
             for path in invalid_paths {
-                let error = UsnError::InvalidMountPoint(path.to_string());
+                let error = UsnError::InvalidMountPointError(path.to_string());
                 assert!(error.to_string().contains("Invalid mount point:"));
                 assert!(error.to_string().contains(path));
             }
@@ -375,12 +391,39 @@ mod tests {
                 let win_error = windows::core::Error::from(code);
                 let usn_error = UsnError::from(win_error);
 
-                if let UsnError::WinApi(ref e) = usn_error {
+                if let UsnError::WinApiError(ref e) = usn_error {
                     assert_eq!(e.code(), code.into());
                 } else {
-                    panic!("Expected WinApi variant");
+                    panic!("Expected WinApiError variant");
                 }
             }
         }
+    }
+}
+
+#[cfg(all(test, windows))]
+mod permission_tests {
+    use super::*;
+    #[test]
+    fn classifies_permissions_without_losing_os_source() {
+        use std::error::Error;
+        use windows::Win32::Foundation::{
+            ERROR_ACCESS_DENIED, ERROR_INVALID_HANDLE, ERROR_PRIVILEGE_NOT_HELD,
+        };
+        for code in [ERROR_ACCESS_DENIED, ERROR_PRIVILEGE_NOT_HELD] {
+            let error = UsnError::from(windows::core::Error::from(code));
+            assert!(error.is_permission_denied());
+            assert!(error.source().is_some());
+            assert!(matches!(error, UsnError::WinApiError(e) if e.code() == code.into()));
+        }
+        assert!(UsnError::PermissionError.is_permission_denied());
+        assert!(
+            UsnError::from(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+                .is_permission_denied()
+        );
+        assert!(
+            !UsnError::from(windows::core::Error::from(ERROR_INVALID_HANDLE))
+                .is_permission_denied()
+        );
     }
 }

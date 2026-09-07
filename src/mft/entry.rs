@@ -116,3 +116,39 @@ impl fmt::Display for MftEntry {
         )
     }
 }
+
+impl MftEntry {
+    /// Render a detailed multi-line summary with an optional resolved path.
+    pub fn pretty_format<P>(&self, full_path_opt: Option<P>) -> String
+    where
+        P: AsRef<std::path::Path>,
+    {
+        let mut output = String::new();
+        output.push_str(&format!("{:<20}: 0x{:x}\n", "File ID", self.fid.as_u128()));
+        output.push_str(&format!(
+            "{:<20}: 0x{:x}\n",
+            "Parent File ID",
+            self.parent_fid.as_u128()
+        ));
+        output.push_str(&format!(
+            "{:<20}: {}\n",
+            "Type",
+            if self.is_dir() { "Directory" } else { "File" }
+        ));
+        if let Some(full_path) = full_path_opt {
+            output.push_str(&format!(
+                "{:<20}: {}\n",
+                "Path",
+                full_path.as_ref().to_string_lossy()
+            ));
+        } else {
+            // Fallback to file name if full path is not available
+            output.push_str(&format!(
+                "{:<20}: {}\n",
+                "Path",
+                self.file_name.to_string_lossy()
+            ));
+        }
+        output
+    }
+}

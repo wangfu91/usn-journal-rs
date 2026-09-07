@@ -1,4 +1,3 @@
-use super::entry::sealed::Sealed;
 use super::*;
 
 use crate::{Fid, mft::MftEntry, volume::Volume};
@@ -20,8 +19,6 @@ struct MockEntry {
     file_name: OsString,
     is_dir: bool,
 }
-
-impl Sealed for MockEntry {}
 
 impl PathResolvableEntry for MockEntry {
     fn fid(&self) -> Fid {
@@ -297,4 +294,21 @@ fn builder_with_directory_cache_twice_keeps_last() {
     let cache = resolver.dir_fid_path_cache.borrow();
     let cache = cache.as_ref().unwrap();
     assert_eq!(cache.cap(), NonZeroUsize::new(128).unwrap());
+}
+
+#[test]
+fn fallible_resolution_preserves_lookup_error_with_and_without_cache() {
+    let volume = create_mock_volume();
+    let entry = MockEntry {
+        fid: Fid::new(1),
+        parent_fid: Fid::new(2),
+        file_name: OsString::from("missing"),
+        is_dir: false,
+    };
+    for capacity in [0, 4096] {
+        let resolver = PathResolver::new(&volume).with_directory_cache(capacity);
+        let error = resolver.try_resolve_path(&entry).unwrap_err();
+        assert!(matches!(error, crate::UsnError::WinApiError(_)));
+        assert!(resolver.resolve_path(&entry).is_none());
+    }
 }

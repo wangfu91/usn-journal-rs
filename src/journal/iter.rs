@@ -240,3 +240,31 @@ mod buffer_tests {
         let _ = iter.with_buffer(Vec::new());
     }
 }
+
+#[cfg(test)]
+mod construction_tests {
+    use crate::journal::JournalIterOptions;
+    use injectorpp::interface::injector::*;
+
+    #[test]
+    #[allow(clippy::too_many_arguments)] // The mock matches the eight-argument Win32 ABI.
+    fn shorthand_uses_default_wait_policy_and_reuses_supplied_buffer() {
+        let mut injector = InjectorPP::new();
+        crate::test_support::mock_device_io_control!(injector, Ok(()));
+        let volume = crate::test_support::mock_volume();
+        let journal = volume.journal();
+        let simple = journal.iter().unwrap();
+        let explicit = journal
+            .iter_with_options(JournalIterOptions::default())
+            .unwrap();
+        assert_eq!(simple.bytes_to_wait_for, 0);
+        assert_eq!(simple.bytes_to_wait_for, explicit.bytes_to_wait_for);
+        assert_eq!(simple.timeout, explicit.timeout);
+        let buffer = Vec::with_capacity(crate::journal::DEFAULT_BUFFER_BYTES);
+        let pointer = buffer.as_ptr();
+        let reused = journal
+            .try_iter_with_buffer(JournalIterOptions::default(), buffer)
+            .unwrap();
+        assert_eq!(reused.buffer.as_ptr(), pointer);
+    }
+}

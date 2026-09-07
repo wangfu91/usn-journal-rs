@@ -27,19 +27,17 @@ pub(crate) fn resolve_path(
     parent_fid: Fid,
     file_name: &OsStr,
     buffer: &RefCell<Vec<u8>>,
-) -> Option<PathBuf> {
+) -> windows::core::Result<PathBuf> {
     if let Ok(resolved_parent_path) = file_id_to_path(volume, parent_fid, buffer) {
-        return Some(join_resolved_path(
+        return Ok(join_resolved_path(
             &resolved_parent_path,
             fid,
             parent_fid,
             file_name,
         ));
-    } else if let Ok(resolved_path) = file_id_to_path(volume, fid, buffer) {
-        return Some(resolved_path);
     }
 
-    None
+    file_id_to_path(volume, fid, buffer)
 }
 
 /// Resolve a path using a shared parent-directory cache when possible.
@@ -51,11 +49,11 @@ pub(super) fn resolve_path_with_cache(
     is_dir: bool,
     cache: &mut DirLruCache,
     buffer: &RefCell<Vec<u8>>,
-) -> Option<PathBuf> {
+) -> windows::core::Result<PathBuf> {
     // 1. Check cache for the current FID.
     if let Some((cached_path, cached_file_name)) = cache.get(&fid) {
         if cached_file_name.as_os_str() == file_name {
-            return Some(cached_path.to_path_buf());
+            return Ok(cached_path.to_path_buf());
         } else {
             cache.pop(&fid);
         }
@@ -74,7 +72,7 @@ pub(super) fn resolve_path_with_cache(
         cache.put(parent_fid, (Arc::clone(&arc_path), parent_actual_name));
         parent_dir_path = arc_path;
     } else {
-        return None;
+        return file_id_to_path(volume, fid, buffer);
     }
 
     // 3. Construct the current item's path using the parent's path and the current file_name.
@@ -86,7 +84,7 @@ pub(super) fn resolve_path_with_cache(
         cache.put(fid, (arc_current, file_name.to_os_string()));
     }
 
-    Some(current_path)
+    Ok(current_path)
 }
 
 fn join_resolved_path(

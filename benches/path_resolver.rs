@@ -35,7 +35,7 @@ fn pick_drive() -> char {
 fn open_volume() -> Option<Volume> {
     match Volume::from_drive_letter(pick_drive()) {
         Ok(v) => Some(v),
-        Err(UsnError::NotElevated) => {
+        Err(UsnError::PermissionError) => {
             eprintln!("skipping bench: requires admin privileges");
             None
         }
@@ -48,13 +48,12 @@ fn open_volume() -> Option<Volume> {
 
 /// Collect entries from the Windows FSCTL enumerator.
 fn collect_test_entries(volume: &Volume) -> Vec<MftEntry> {
-    match volume.mft().try_iter() {
-        Ok(iter) => iter.flatten().take(NUM_TEST_ENTRIES).collect(),
-        Err(error) => {
-            eprintln!("skipping: {error}");
-            Vec::new()
-        }
-    }
+    volume
+        .mft()
+        .iter()
+        .flatten()
+        .take(NUM_TEST_ENTRIES)
+        .collect()
 }
 
 /// Resolve paths with direct syscalls, no caching.

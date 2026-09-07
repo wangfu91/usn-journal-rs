@@ -59,7 +59,7 @@ fn fixture() -> Result<Option<Fixture>, Box<dyn std::error::Error>> {
     }
     let volume = match Volume::from_drive_letter(drive) {
         Ok(volume) => volume,
-        Err(UsnError::NotElevated) => {
+        Err(UsnError::PermissionError) => {
             eprintln!("skipping ReFS test: requires Administrator privileges");
             return Ok(None);
         }
@@ -93,7 +93,8 @@ fn refs_journal_can_surface_extended_file_ids() {
     let options = JournalIterOptions::builder()
         .start_usn(fixture.start_usn)
         .wait_for_more(false)
-        .build();
+        .build()
+        .expect("valid iterator options");
     let entry = fixture
         .volume
         .journal()
@@ -114,8 +115,7 @@ fn refs_mft_can_surface_extended_file_ids() {
     let entry = fixture
         .volume
         .mft()
-        .try_iter()
-        .expect("create ReFS MFT iterator")
+        .iter()
         .map(|result| result.expect("decode ReFS MFT record"))
         .find(|entry| entry.file_name == fixture.name)
         .expect("MFT enumeration must contain the newly created fixture");

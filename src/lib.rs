@@ -35,7 +35,7 @@
 //!
 //! # #[cfg(windows)] {
 //! let volume = Volume::from_drive_letter('C').unwrap();
-//! for result in volume.mft().try_iter().unwrap().take(10) {
+//! for result in volume.mft().iter().take(10) {
 //!     match result {
 //!         Ok(entry) => println!("MFT entry: {entry}"),
 //!         Err(e) => eprintln!("Error reading MFT entry: {e}"),
@@ -127,4 +127,20 @@ mod tests {
         let result: prelude::UsnResult<()> = Ok(());
         assert!(result.is_ok());
     }
+}
+
+/// Journal defaults, retained at the crate root for compatibility.
+#[cfg(windows)]
+pub use journal::{
+    DEFAULT_JOURNAL_ALLOCATION_DELTA, DEFAULT_JOURNAL_MAX_SIZE, USN_REASON_MASK_ALL,
+};
+
+/// Validate a Windows output-buffer length before allocation or FFI conversion.
+fn validate_buffer_bytes(bytes: usize) -> UsnResult<()> {
+    if bytes < 8 || bytes > u32::MAX as usize {
+        return Err(UsnError::InvalidOptions(
+            "buffer_bytes must be between 8 and u32::MAX",
+        ));
+    }
+    Ok(())
 }

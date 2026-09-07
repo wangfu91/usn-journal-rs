@@ -23,7 +23,7 @@ fn run() -> Result<(), UsnError> {
         .start_usn(journal_data.next_usn)
         .only_on_close(false)
         .wait_for_more(true)
-        .build();
+        .build()?;
 
     let path_resolver = volume.path_resolver();
 

@@ -116,7 +116,7 @@ impl MftIter {
             if err.code() == ERROR_HANDLE_EOF.into() {
                 return Ok(false);
             }
-            return Err(UsnError::WinApi(err));
+            return Err(UsnError::WinApiError(err));
         }
         Ok(true)
     }
@@ -199,5 +199,20 @@ mod buffer_tests {
         // An exhausted or empty kernel response has no pending bytes to copy.
         iter.bytes_read = 0;
         let _ = iter.with_buffer(Vec::new());
+    }
+}
+
+#[cfg(test)]
+mod construction_tests {
+    #[test]
+    fn constructor_reuses_supplied_allocation() {
+        let volume = crate::test_support::mock_volume();
+        let buffer = Vec::with_capacity(crate::journal::DEFAULT_BUFFER_BYTES);
+        let pointer = buffer.as_ptr();
+        let iter = volume
+            .mft()
+            .iter_with_buffer(super::super::MftIterOptions::default(), buffer);
+        assert_eq!(iter.buffer.as_ptr(), pointer);
+        assert_eq!(iter.buffer.len(), crate::journal::DEFAULT_BUFFER_BYTES);
     }
 }
