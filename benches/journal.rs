@@ -8,8 +8,8 @@
 //!
 //! Set `USN_TEST_DRIVE` to choose the drive letter (default `C`). Set
 //! `BENCH_RECORD_LIMIT` to limit iterations per bench (default 100_000).
-//! All benches skip gracefully when the drive isn't NTFS/ReFS or the process
-//! is not elevated.
+//! All benches skip when the volume cannot be opened, including when the process
+//! is not elevated. Journal initialization or read errors abort the benchmark run.
 
 use std::env;
 
@@ -54,6 +54,7 @@ fn open_volume() -> Option<Volume> {
 }
 
 /// Iterate the full USN journal with all reason flags enabled.
+#[allow(clippy::expect_used, reason = "failed reads must abort benchmark samples")]
 fn journal_iter_full_mask(c: &mut Criterion) {
     let Some(volume) = open_volume() else { return };
     let limit = bench_record_limit();
@@ -62,15 +63,16 @@ fn journal_iter_full_mask(c: &mut Criterion) {
         b.iter(|| {
             let journal = UsnJournal::new(&volume);
             let mut count = 0u64;
-            let Ok(opts) = JournalIterOptions::builder().wait_for_more(false).build() else {
-                return 0;
-            };
-            if let Ok(it) = journal.try_iter_with_options(opts) {
-                for r in it.take(limit) {
-                    if r.is_ok() {
-                        count += 1;
-                    }
-                }
+            let opts = JournalIterOptions::builder()
+                .wait_for_more(false)
+                .build()
+                .expect("valid journal benchmark options");
+            let it = journal
+                .try_iter_with_options(opts)
+                .expect("initialize journal benchmark iterator");
+            for r in it.take(limit) {
+                r.expect("read journal benchmark record");
+                count += 1;
             }
             count
         })
@@ -79,6 +81,7 @@ fn journal_iter_full_mask(c: &mut Criterion) {
 
 /// Iterate the USN journal with a restricted reason mask
 /// (FILE_CREATE | FILE_DELETE).
+#[allow(clippy::expect_used, reason = "failed reads must abort benchmark samples")]
 fn journal_iter_filtered(c: &mut Criterion) {
     let Some(volume) = open_volume() else { return };
     let limit = bench_record_limit();
@@ -89,21 +92,19 @@ fn journal_iter_filtered(c: &mut Criterion) {
     c.bench_function("journal_iter_filtered", |b| {
         b.iter(|| {
             let journal = UsnJournal::new(&volume);
-            let Ok(opts) = usn_journal_rs::journal::JournalIterOptions::builder()
+            let opts = usn_journal_rs::journal::JournalIterOptions::builder()
                 .reason_mask(UsnReason::from_bits_retain(
                     USN_REASON_FILE_CREATE | USN_REASON_FILE_DELETE,
                 ))
                 .build()
-            else {
-                return 0;
-            };
+                .expect("valid journal benchmark options");
             let mut count = 0u64;
-            if let Ok(it) = journal.try_iter_with_options(opts) {
-                for r in it.take(limit) {
-                    if r.is_ok() {
-                        count += 1;
-                    }
-                }
+            let it = journal
+                .try_iter_with_options(opts)
+                .expect("initialize journal benchmark iterator");
+            for r in it.take(limit) {
+                r.expect("read journal benchmark record");
+                count += 1;
             }
             count
         })

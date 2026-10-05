@@ -47,11 +47,10 @@ fn open_volume() -> Option<Volume> {
 }
 
 /// Collect entries from the Windows FSCTL enumerator.
-fn collect_test_entries(volume: &Volume) -> Vec<MftEntry> {
+fn collect_test_entries(volume: &Volume) -> Result<Vec<MftEntry>, UsnError> {
     volume
         .mft()
         .iter()
-        .flatten()
         .take(NUM_TEST_ENTRIES)
         .collect()
 }
@@ -59,7 +58,13 @@ fn collect_test_entries(volume: &Volume) -> Vec<MftEntry> {
 /// Resolve paths with direct syscalls, no caching.
 fn resolver_syscall_no_cache(c: &mut Criterion) {
     let Some(volume) = open_volume() else { return };
-    let entries = collect_test_entries(&volume);
+    let entries = match collect_test_entries(&volume) {
+        Ok(entries) => entries,
+        Err(error) => {
+            eprintln!("skipping bench: MFT enumeration failed: {error}");
+            return;
+        }
+    };
 
     if entries.is_empty() {
         eprintln!("skipping: no entries collected");
@@ -84,7 +89,13 @@ fn resolver_syscall_no_cache(c: &mut Criterion) {
 /// Resolve paths with a directory cache (8192 capacity).
 fn resolver_syscall_directory_cache(c: &mut Criterion) {
     let Some(volume) = open_volume() else { return };
-    let entries = collect_test_entries(&volume);
+    let entries = match collect_test_entries(&volume) {
+        Ok(entries) => entries,
+        Err(error) => {
+            eprintln!("skipping bench: MFT enumeration failed: {error}");
+            return;
+        }
+    };
 
     if entries.is_empty() {
         eprintln!("skipping: no entries collected");
