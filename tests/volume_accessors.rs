@@ -74,7 +74,7 @@ fn mft_accessor_matches_constructor_first_entries() {
     const PREFIX: usize = 32;
 
     let collect_prefix = |iter: usn_journal_rs::mft::MftIter| -> Vec<_> {
-        iter.filter_map(Result::ok)
+        iter.map(|result| result.expect("enumerate MFT record"))
             .take(PREFIX)
             .map(|entry| entry.fid)
             .collect::<Vec<_>>()
@@ -105,7 +105,7 @@ fn path_resolver_accessor_matches_constructor() {
     let mut compared = 0usize;
     for entry in Mft::new(&volume)
         .iter()
-        .filter_map(Result::ok)
+        .map(|result| result.expect("enumerate MFT record"))
         .filter(|e| !e.file_name.is_empty())
         .take(200)
     {
@@ -165,7 +165,7 @@ fn mft_full_range_yields_many_entries() {
     let count = volume
         .mft()
         .iter()
-        .filter_map(Result::ok)
+        .map(|result| result.expect("enumerate MFT record"))
         .take(1_000)
         .count();
 
