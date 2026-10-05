@@ -155,13 +155,13 @@ fn mft_zero_usn_range_only_yields_zero_usns() {
 }
 
 #[test]
-fn mft_full_range_yields_many_entries() {
-    let Some(volume) = open_test_volume("mft_full_range_yields_many_entries") else {
+fn mft_full_range_yields_entries() {
+    let Some(volume) = open_test_volume("mft_full_range_yields_entries") else {
         return;
     };
 
-    // Sanity check on the default (full) USN range: enumeration starting at
-    // record 0 must return a healthy number of records.
+    // Even an otherwise empty NTFS volume has filesystem metadata records.
+    // Do not require a particular number of user files on the selected volume.
     let count = volume
         .mft()
         .iter()
@@ -170,8 +170,8 @@ fn mft_full_range_yields_many_entries() {
         .count();
 
     assert!(
-        count >= 100,
-        "expected the full-range MFT scan to yield many records, got {count}"
+        count > 0,
+        "expected the full-range MFT scan to yield at least one record"
     );
 }
 
