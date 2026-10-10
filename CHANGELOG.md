@@ -1,11 +1,94 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
+## [Unreleased] — 0.5.0
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+API refinements for Windows USN journals, FSCTL enumeration, and live paths.
+This release is not yet published. The 0.4.1 correctness fixes and shared
+handle ownership are retained.
 
-## [Unreleased]
+### Added
+
+- Strong `Usn`, `Fid`, `FileAttributes`, `UsnReason`, and `UsnSourceInfo`
+  types, including 128-bit file IDs for V3/ReFS records.
+- `Filetime` at the crate root, with checked `SystemTime` conversions.
+- Validated `JournalIterOptions` and `MftIterOptions` builders, typed
+  `UsnRecordVersion`, and a common `prelude`.
+- Read-only getters for every journal and MFT iterator option, plus
+  `into_builder()` to update existing settings and validate them again.
+  The journal timeout getter returns the effective rounded `Duration`.
+- Public `journal::DEFAULT_BUFFER_BYTES` and `DEFAULT_BUFFER_BYTES_NONZERO`
+  constants for the default 64 KiB output buffer.
+- `UsnJournal::query_or_create()` for explicit create-on-demand queries.
+- `PathResolver::try_resolve_path()` preserves OS lookup errors;
+  `resolve_path()` remains an optional-result convenience method.
+- `Mft::iter_with_buffer()` and `UsnJournal::try_iter_with_buffer()` accept
+  reusable buffers during construction, without allocating a replacement first.
+- `UsnError::is_permission_denied()` recognizes the permission variant and
+  underlying I/O/Win32 permission failures while preserving OS error sources.
+- Compact `Display` formatting, flag predicates, benchmarks, and regression tests.
+
+### Changed
+
+- Journal `iter()` no longer waits for new records at the end of available data
+  as it did in 0.4.1. It and the new `try_iter()` use non-waiting default options.
+  Enable `wait_for_more(true)` explicitly for monitoring.
+- `query()` only queries and returns `UsnError::JournalNotActive` when absent.
+  Iterator construction retains create-on-demand behavior.
+- The public `journal::EnumOptions` and `mft::EnumOptions` structs are replaced
+  by `JournalIterOptions` and `MftIterOptions`, with crate-only fields.
+  Use builders for configuration and getters for inspection.
+- Options builders return `UsnResult<Options>`: buffer lengths must fit the
+  8-byte cursor and Win32 u32 length; MFT lower bounds must not exceed upper bounds.
+- `timeout(Duration)` rounds positive fractional seconds up. Zero remains an
+  indefinite kernel wait when waiting is enabled; this is not a deadline for next().
+- `PathResolver::new()` remains uncached; `with_directory_cache(n)` configures
+  caching for stable trees. `resolve_path()` accepts `&self`.
+- Volume metadata is private and exposed through accessors; mount points use
+  `Path` rather than lossy string metadata.
+- Entry timestamps, identifiers, and flag fields use domain types; the USN
+  fields in `UsnJournalData` also use `Usn` instead of `i64`.
+- Structured parser errors replace generic `OtherError` diagnostics.
+  `UsnError` remains non-exhaustive; external matches still need a fallback arm.
+- Journal, MFT, and path implementations live in module directories.
+- Replace the `chrono` dependency with FILETIME-based conversion and formatting;
+  update `lru` from 0.16 to 0.18.
+
+### Removed
+
+- The `journal::EnumOptions` and `mft::EnumOptions` names; no compatibility
+  aliases are provided.
+- The raw `USN_REASON_MASK_ALL` constant. Use `UsnReason::ALL`, or
+  `UsnReason::ALL.bits()` when a raw integer mask is needed.
+
+### Migration from 0.4.1
+
+| 0.4.1 API | 0.5.0 API |
+| --- | --- |
+| `journal::EnumOptions { ... }` | `JournalIterOptions::builder()...build()?` |
+| `mft::EnumOptions { ... }` | `MftIterOptions::builder()...build()?` |
+| Direct option field reads / assignments | Getter methods / `options.into_builder()...build()?`; clone first to retain the original. |
+| `buffer_size: usize` | `.buffer_bytes(NonZeroUsize::new(bytes).unwrap())`; `build()?` validates the supported size. |
+| `timeout: u64` (seconds) | `.timeout(Duration::from_secs(seconds))`; `timeout()` returns `Duration`. |
+| `USN_REASON_MASK_ALL` | `UsnReason::ALL` (typed) or `UsnReason::ALL.bits()` (raw). |
+| `journal.iter()` used for continuous monitoring | `journal.iter_with_options(JournalIterOptions::builder().wait_for_more(true).build()?)?` |
+| `journal.query(false)` | `journal.query()` |
+| `journal.query(true)` | `journal.query_or_create()` |
+| `volume.drive_letter` / `volume.mount_point` | `drive_letter() -> Option<char>` / `mount_point() -> Option<&Path>` |
+| Integer USNs and file IDs | `Usn::new(i64)`, `Fid::new(u64)`, or `Fid::from_u128(u128)` |
+| Raw integer flags | Typed flags; use `from_bits_retain()` and `bits()` at integer boundaries. |
+| `PathResolvableEntry` methods returning `u64` IDs and `&OsString` names | Return `Fid` IDs and `&OsStr` names. |
+| `UsnError::OtherError` | Specific structured error variants. |
+
+Entry timestamps now use `usn_journal_rs::Filetime` instead of `SystemTime`.
+`to_system_time()` and `from_system_time()` return `Option`; `TryFrom`
+conversions return `UsnResult`. Conversion from `SystemTime` discards sub-100ns
+precision toward the Unix epoch. Unix seconds/milliseconds truncate toward zero.
+Detailed formatting uses local time, falling back to raw FILETIME for unformattable
+values. Directory caching remains opt-in and must be rebuilt after topology changes.
+
+MFT iteration remains infallible to construct after options have been validated:
+`mft.iter_with_options(options)` still returns `MftIter`, whose items are
+`UsnResult<MftEntry>`. Journal construction still returns `UsnResult<UsnJournalIter>`.
 
 ## [0.4.1] - 2026-05-27
 

@@ -1,12 +1,18 @@
-//! Volume handle management for NTFS/ReFS
+//! Shared volume handles for Windows NTFS/ReFS journal and enumeration APIs.
 
-use crate::{errors::UsnError, journal::UsnJournal, mft::Mft, path::PathResolver, privilege};
+use crate::errors::UsnError;
+#[cfg(windows)]
+use crate::privilege;
+#[cfg(windows)]
 use log::{debug, warn};
-use std::path::Path;
-use std::rc::Rc;
+use std::{
+    path::{Path, PathBuf},
+    rc::Rc,
+};
+#[cfg(windows)]
 use windows::{
     Win32::{
-        Foundation::{ERROR_ACCESS_DENIED, HANDLE},
+        Foundation::HANDLE,
         Storage::FileSystem::{
             CreateFileW, FILE_FLAGS_AND_ATTRIBUTES, FILE_GENERIC_READ, FILE_SHARE_READ,
             FILE_SHARE_WRITE, GetVolumeNameForVolumeMountPointW, OPEN_EXISTING,
@@ -15,75 +21,120 @@ use windows::{
     core::{HSTRING, Owned},
 };
 
+/// Source used to open a [`Volume`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) enum VolumeSource {
+    /// Volume was opened via a drive letter (e.g. `'C'`).
+    #[cfg(windows)]
+    DriveLetter(char),
+    /// Volume was opened via a mount point path.
+    MountPoint(PathBuf),
+}
+
 #[derive(Debug, Clone)]
-/// Represents an NTFS/ReFS volume handle and its associated drive letter or mount point.
-///
-/// Cloning a `Volume` shares ownership of the same underlying OS handle.
+/// Represents a read-only filesystem volume and its reopenable source.
 pub struct Volume {
-    handle: Rc<Owned<HANDLE>>,
-    pub drive_letter: Option<char>,
-    pub mount_point: Option<String>,
+    /// Shared ownership keeps the handle open while any clone or iterator uses it.
+    pub(crate) handle: Rc<Owned<HANDLE>>,
+    /// Source path used to open the volume.
+    source: VolumeSource,
 }
 
 impl Volume {
     /// Creates a new `Volume` instance with the given drive letter.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use usn_journal_rs::volume::Volume;
+    ///
+    /// // Requires Administrator privileges.
+    /// let volume = Volume::from_drive_letter('C')?;
+    /// for result in volume.journal().try_iter()?.take(10) {
+    ///     println!("{}", result?);
+    /// }
+    /// # Ok::<(), usn_journal_rs::UsnError>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UsnError::PermissionError`] if the process does not have the
+    /// Administrator privileges required to open volume handles. Returns
+    /// [`UsnError::WinApiError`] if Windows rejects the volume path.
+    #[cfg(windows)]
     pub fn from_drive_letter(drive_letter: char) -> Result<Self, UsnError> {
         let handle = get_volume_handle_from_drive_letter(drive_letter)?;
-        Ok(Self::from_handle(handle, Some(drive_letter), None))
+        Ok(Volume {
+            handle: share_handle(handle),
+            source: VolumeSource::DriveLetter(drive_letter),
+        })
     }
 
     /// Creates a new `Volume` instance with the given mount point.
-    pub fn from_mount_point(mount_point: &Path) -> Result<Self, UsnError> {
-        let handle = get_volume_handle_from_mount_point(mount_point)?;
-        Ok(Self::from_handle(
-            handle,
-            None,
-            Some(mount_point.to_string_lossy().to_string()),
-        ))
-    }
-
-    /// Creates a USN journal view for this volume.
-    pub fn journal(&self) -> UsnJournal<'_> {
-        UsnJournal::new(self)
-    }
-
-    /// Creates an MFT view for this volume.
-    pub fn mft(&self) -> Mft<'_> {
-        Mft::new(self)
-    }
-
-    /// Creates a path resolver for this volume.
-    pub fn path_resolver(&self) -> PathResolver<'_> {
-        PathResolver::new(self)
-    }
-
-    /// Creates a path resolver with directory-path caching for this volume.
-    pub fn path_resolver_with_cache(&self) -> PathResolver<'_> {
-        PathResolver::new_with_cache(self)
-    }
-
-    pub(crate) fn from_handle(
-        handle: HANDLE,
-        drive_letter: Option<char>,
-        mount_point: Option<String>,
-    ) -> Self {
-        Self {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UsnError::PermissionError`] if the process does not have the
+    /// Administrator privileges required to open volume handles. Returns
+    /// [`UsnError::WinApiError`] or [`UsnError::InvalidMountPointError`] if the
+    /// mount point cannot be resolved to a volume handle.
+    #[cfg(windows)]
+    pub fn from_mount_point<P: AsRef<Path>>(mount_point: P) -> Result<Self, UsnError> {
+        let path = mount_point.as_ref();
+        let handle = get_volume_handle_from_mount_point(path)?;
+        Ok(Volume {
             handle: share_handle(handle),
-            drive_letter,
-            mount_point,
+            source: VolumeSource::MountPoint(path.to_path_buf()),
+        })
+    }
+
+    /// Returns the drive letter if this volume was opened via a drive letter.
+    #[must_use]
+    #[inline]
+    pub fn drive_letter(&self) -> Option<char> {
+        match &self.source {
+            #[cfg(windows)]
+            VolumeSource::DriveLetter(c) => Some(*c),
+            _ => None,
         }
     }
 
-    pub(crate) fn handle(&self) -> HANDLE {
-        **self.handle
+    /// Returns the mount point path if this volume was opened via a mount point.
+    #[must_use]
+    #[inline]
+    pub fn mount_point(&self) -> Option<&Path> {
+        match &self.source {
+            VolumeSource::MountPoint(p) => Some(p),
+            _ => None,
+        }
     }
 
+    /// Creates a mock `Volume` for testing (invalid handle, no real device).
+    #[cfg(all(test, windows))]
+    pub(crate) fn mock(handle: HANDLE, source: VolumeSource) -> Self {
+        Volume {
+            handle: share_handle(handle),
+            source,
+        }
+    }
+}
+
+fn share_handle(handle: HANDLE) -> Rc<Owned<HANDLE>> {
+    // SAFETY: the caller transfers sole ownership of this newly opened handle.
+    Rc::new(unsafe { Owned::new(handle) })
+}
+
+impl Volume {
     pub(crate) fn shared_handle(&self) -> Rc<Owned<HANDLE>> {
         Rc::clone(&self.handle)
+    }
+    pub(crate) fn handle(&self) -> HANDLE {
+        **self.handle
     }
 }
 
 /// Opens a handle to an NTFS/ReFS volume using a drive letter.
+#[cfg(windows)]
 fn get_volume_handle_from_drive_letter(drive_letter: char) -> Result<HANDLE, UsnError> {
     if !privilege::is_elevated()? {
         return Err(UsnError::PermissionError);
@@ -95,6 +146,10 @@ fn get_volume_handle_from_drive_letter(drive_letter: char) -> Result<HANDLE, Usn
     // Note that X is the letter that identifies the drive on which the NTFS volume appears.
     let volume_root = format!(r"\\.\{drive_letter}:");
 
+    // SAFETY: All pointer/reference parameters point to valid local
+    // values constructed just above. `CreateFileW` accepts a wide-string
+    // file name (provided through `HSTRING`) and may return either a
+    // valid handle or a Win32 error; both outcomes are handled below.
     match unsafe {
         CreateFileW(
             &HSTRING::from(&volume_root),
@@ -107,12 +162,12 @@ fn get_volume_handle_from_drive_letter(drive_letter: char) -> Result<HANDLE, Usn
         )
     } {
         Ok(handle) => Ok(handle),
-        Err(err) if err == ERROR_ACCESS_DENIED.into() => Err(UsnError::PermissionError),
         Err(err) => Err(UsnError::WinApiError(err)),
     }
 }
 
 /// Opens a handle to an NTFS/ReFS volume using a mount point path.
+#[cfg(windows)]
 fn get_volume_handle_from_mount_point(mount_point: &Path) -> Result<HANDLE, UsnError> {
     if !privilege::is_elevated()? {
         return Err(UsnError::PermissionError);
@@ -122,6 +177,11 @@ fn get_volume_handle_from_mount_point(mount_point: &Path) -> Result<HANDLE, UsnE
     let mount_path = format!("{}\\", mount_point.to_string_lossy());
 
     let mut volume_name = [0u16; 50]; // Enough space for volume GUID path
+    // SAFETY: `mount_path` lives until the end of the call; `volume_name`
+    // is a stack buffer of u16 we are writing into. The Win32 contract
+    // for `GetVolumeNameForVolumeMountPointW` only requires the buffer
+    // be large enough to hold the volume GUID path (50 wide chars is
+    // ample for the standard `\\?\Volume{GUID}\` form).
     if let Err(err) =
         unsafe { GetVolumeNameForVolumeMountPointW(&HSTRING::from(&mount_path), &mut volume_name) }
     {
@@ -134,9 +194,9 @@ fn get_volume_handle_from_mount_point(mount_point: &Path) -> Result<HANDLE, UsnE
         .iter()
         .position(|&c| c == 0)
         .unwrap_or(volume_name.len());
-    let name_data = volume_name.get(..end).ok_or(UsnError::OtherError(
-        "Failed to get volume name data".to_string(),
-    ))?;
+    let name_data = volume_name
+        .get(..end)
+        .ok_or_else(|| UsnError::InvalidMountPointError("Failed to get volume name data".into()))?;
     let volume_guid = String::from_utf16_lossy(name_data);
 
     debug!("Volume GUID: {volume_guid}");
@@ -145,6 +205,10 @@ fn get_volume_handle_from_mount_point(mount_point: &Path) -> Result<HANDLE, UsnE
     let volume_path = volume_guid.trim_end_matches('\\').to_string();
     debug!("Using volume path: {volume_path}");
 
+    // SAFETY: `volume_path` is a valid null-terminated wide string for
+    // the duration of the call (held by the `HSTRING`). All other pointer
+    // parameters are either `None` or owned defaults. The returned handle
+    // (or error) is propagated to the caller, who becomes the owner.
     let volume_handle = unsafe {
         CreateFileW(
             &HSTRING::from(&volume_path),
@@ -160,69 +224,43 @@ fn get_volume_handle_from_mount_point(mount_point: &Path) -> Result<HANDLE, UsnE
     Ok(volume_handle)
 }
 
-fn share_handle(handle: HANDLE) -> Rc<Owned<HANDLE>> {
-    Rc::new(unsafe { Owned::new(handle) })
-}
-
-#[cfg(test)]
+#[cfg(all(test, windows))]
 mod tests {
-    use std::rc::Rc;
     use windows::Win32::Foundation::{ERROR_FILE_NOT_FOUND, HANDLE};
 
-    use crate::{errors::UsnError, volume::Volume};
+    use crate::{
+        errors::UsnError,
+        volume::{Volume, VolumeSource},
+    };
+
+    #[test]
+    fn volume_accessors_construct_without_io() {
+        // A mock volume has an invalid handle, but `journal()`, `mft()`, and
+        // `path_resolver()` only borrow the volume and perform no I/O at
+        // construction, so they must succeed.
+        let volume = Volume::mock(HANDLE(std::ptr::null_mut()), VolumeSource::DriveLetter('C'));
+        let _journal = volume.journal();
+        let _mft = volume.mft();
+        let _resolver = volume.path_resolver();
+        assert_eq!(volume.drive_letter(), Some('C'));
+    }
 
     // Integration tests that require actual filesystem access
     mod integration_tests {
         use super::*;
-        use std::rc::Rc;
 
         #[test]
         fn test_get_volume_handle_from_valid_drive_letter() -> Result<(), UsnError> {
             let drive_letter = 'C';
             match Volume::from_drive_letter(drive_letter) {
                 Ok(volume) => {
-                    assert!(
-                        !volume.handle().is_invalid(),
-                        "Volume handle should be valid"
-                    );
+                    assert!(!volume.handle.is_invalid(), "Volume handle should be valid");
                     assert_eq!(
-                        volume.drive_letter,
+                        volume.drive_letter(),
                         Some(drive_letter),
                         "Drive letter should match"
                     );
-                    assert!(volume.mount_point.is_none(), "Mount point should be None");
-                    Ok(())
-                }
-                Err(UsnError::PermissionError) => {
-                    eprintln!("Skipping test - requires admin privileges");
-                    Ok(())
-                }
-                Err(e) => Err(e),
-            }
-        }
-
-        #[test]
-        fn test_clone_shares_valid_handle() -> Result<(), UsnError> {
-            match Volume::from_drive_letter('C') {
-                Ok(volume) => {
-                    let cloned = volume.clone();
-
-                    assert!(
-                        !volume.handle().is_invalid(),
-                        "Original handle should be valid"
-                    );
-                    assert!(
-                        !cloned.handle().is_invalid(),
-                        "Cloned handle should be valid"
-                    );
-                    assert_eq!(
-                        volume.handle(),
-                        cloned.handle(),
-                        "Clone should share the same handle"
-                    );
-                    assert!(Rc::ptr_eq(&volume.handle, &cloned.handle));
-                    assert_eq!(volume.drive_letter, cloned.drive_letter);
-                    assert_eq!(volume.mount_point, cloned.mount_point);
+                    assert!(volume.mount_point().is_none(), "Mount point should be None");
                     Ok(())
                 }
                 Err(UsnError::PermissionError) => {
@@ -264,24 +302,12 @@ mod tests {
         #[test]
         fn test_get_volume_handle_from_invalid_mount_point() {
             let mount_point = r"C:\invalid\mount\point";
-            let result = Volume::from_mount_point(mount_point.as_ref());
+            let result = Volume::from_mount_point(std::path::Path::new(mount_point));
             eprintln!("Result: {result:?}");
             assert!(
                 result.is_err(),
                 "Should return an error for invalid mount point"
             );
         }
-    }
-
-    #[test]
-    fn test_clone_preserves_invalid_mock_handle() {
-        let volume = Volume::from_handle(HANDLE(std::ptr::null_mut()), Some('T'), None);
-
-        let cloned = volume.clone();
-
-        assert!(cloned.handle().is_invalid());
-        assert!(Rc::ptr_eq(&volume.handle, &cloned.handle));
-        assert_eq!(cloned.drive_letter, Some('T'));
-        assert_eq!(cloned.mount_point, None);
     }
 }

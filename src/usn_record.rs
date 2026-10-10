@@ -1,161 +1,746 @@
-use crate::errors::UsnError;
-use std::{
-    ffi::OsString,
-    mem::{MaybeUninit, offset_of, size_of},
-    os::windows::ffi::OsStringExt,
-};
-use windows::Win32::System::Ioctl::USN_RECORD_V2;
+//! Low-level parsing helpers for raw USN journal and MFT buffers.
+//!
+//! This module validates the raw Windows FSCTL output, exposes a borrowed
+//! view with copied `USN_RECORD_V2` / `USN_RECORD_V3` headers, and converts the records into
+//! the smaller owned types used by the rest of the crate.
 
-const USN_RECORD_V2_HEADER_LEN: usize = offset_of!(USN_RECORD_V2, FileName);
+use crate::{Fid, Usn, UsnError, UsnResult};
+use std::{mem::size_of, ptr};
+use windows::Win32::Storage::FileSystem::FILE_ID_128;
+use windows::Win32::System::Ioctl::{USN_RECORD_COMMON_HEADER, USN_RECORD_V2, USN_RECORD_V3};
 
-#[repr(C)]
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct UsnRecordV2Header {
-    pub(crate) record_length: u32,
-    pub(crate) major_version: u16,
-    pub(crate) _minor_version: u16,
-    pub(crate) file_reference_number: u64,
-    pub(crate) parent_file_reference_number: u64,
-    pub(crate) usn: i64,
-    pub(crate) timestamp: i64,
-    pub(crate) reason: u32,
-    pub(crate) source_info: u32,
-    pub(crate) _security_id: u32,
-    pub(crate) file_attributes: u32,
-    pub(crate) file_name_length: u16,
-    pub(crate) file_name_offset: u16,
+/// Borrowed view over a raw USN record.
+///
+/// The enum hides the version-specific Windows layouts so callers can read
+/// common fields without duplicating the parser logic.
+#[derive(Copy, Clone, Debug)]
+pub(crate) enum UsnRecordView<'a> {
+    /// Copied V2 header and validated filename bytes.
+    V2(USN_RECORD_V2, &'a [u8]),
+    /// Copied V3 header and validated filename bytes.
+    V3(USN_RECORD_V3, &'a [u8]),
 }
 
-pub(crate) fn read_unaligned_from<T: Copy>(buffer: &[u8], offset: usize) -> Option<T> {
-    let bytes = buffer.get(offset..offset.checked_add(size_of::<T>())?)?;
-    Some(unsafe { (bytes.as_ptr() as *const T).read_unaligned() })
+impl<'a> UsnRecordView<'a> {
+    /// Raw Update Sequence Number from the record.
+    #[inline]
+    pub(crate) const fn usn(self) -> i64 {
+        match self {
+            Self::V2(record, _) => record.Usn,
+            Self::V3(record, _) => record.Usn,
+        }
+    }
+
+    /// Raw FILETIME timestamp from the record.
+    #[inline]
+    pub(crate) const fn timestamp(self) -> i64 {
+        match self {
+            Self::V2(record, _) => record.TimeStamp,
+            Self::V3(record, _) => record.TimeStamp,
+        }
+    }
+
+    /// Raw USN reason bitmask from the record.
+    #[inline]
+    pub(crate) const fn reason(self) -> u32 {
+        match self {
+            Self::V2(record, _) => record.Reason,
+            Self::V3(record, _) => record.Reason,
+        }
+    }
+
+    /// Raw source-info bitmask from the record.
+    #[inline]
+    pub(crate) const fn source_info(self) -> u32 {
+        match self {
+            Self::V2(record, _) => record.SourceInfo,
+            Self::V3(record, _) => record.SourceInfo,
+        }
+    }
+
+    /// Raw file-attribute bitmask from the record.
+    #[inline]
+    pub(crate) const fn file_attributes(self) -> u32 {
+        match self {
+            Self::V2(record, _) => record.FileAttributes,
+            Self::V3(record, _) => record.FileAttributes,
+        }
+    }
+
+    /// File identifier stored in the record.
+    #[inline]
+    pub(crate) fn fid(self) -> Fid {
+        match self {
+            Self::V2(record, _) => Fid::new(record.FileReferenceNumber),
+            Self::V3(record, _) => Fid::from(file_id_128_to_u128(record.FileReferenceNumber)),
+        }
+    }
+
+    /// Parent file identifier stored in the record.
+    #[inline]
+    pub(crate) fn parent_fid(self) -> Fid {
+        match self {
+            Self::V2(record, _) => Fid::new(record.ParentFileReferenceNumber),
+            Self::V3(record, _) => Fid::from(file_id_128_to_u128(record.ParentFileReferenceNumber)),
+        }
+    }
+
+    /// File-name length in bytes.
+    #[inline]
+    pub(crate) const fn file_name_length(self) -> u16 {
+        match self {
+            Self::V2(record, _) => record.FileNameLength,
+            Self::V3(record, _) => record.FileNameLength,
+        }
+    }
+
+    /// File-name offset in bytes from the start of the record.
+    #[inline]
+    pub(crate) const fn file_name_offset(self) -> u16 {
+        match self {
+            Self::V2(record, _) => record.FileNameOffset,
+            Self::V3(record, _) => record.FileNameOffset,
+        }
+    }
+
+    /// Decode the validated UTF-16LE filename without borrowing aligned words.
+    pub(crate) fn file_name_slice(self) -> Vec<u16> {
+        let (Self::V2(_, bytes) | Self::V3(_, bytes)) = self;
+        bytes
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|b| u16::from_le_bytes(*b))
+            .collect()
+    }
 }
 
-pub(crate) fn parse_usn_record_v2_header(
-    buffer: &[u8],
-    offset: u32,
+/// Convert a Windows `FILE_ID_128` to a native `u128`.
+#[inline]
+pub(crate) const fn file_id_128_to_u128(file_id: FILE_ID_128) -> u128 {
+    u128::from_le_bytes(file_id.Identifier)
+}
+
+/// Read a `Copy` value from `buffer[offset..]` without requiring alignment.
+///
+/// The FSCTL output buffers parsed in this module are byte-oriented and may
+/// not be naturally aligned for Rust references, so unaligned loads are the
+/// correct primitive here after the bounds check succeeds.
+#[inline]
+fn read_unaligned_at<T: Copy>(buffer: &[u8], offset: usize) -> Option<T> {
+    let end = offset.checked_add(size_of::<T>())?;
+    if end > buffer.len() {
+        return None;
+    }
+
+    // SAFETY: The checked range above guarantees the full `T` lies within
+    // `buffer`. `read_unaligned` handles any pointer alignment.
+    Some(unsafe { ptr::read_unaligned(buffer.as_ptr().add(offset) as *const T) })
+}
+
+/// Validate `bytes_read` against `buffer` and convert it to `usize`.
+fn checked_bytes_read(buffer: &[u8], bytes_read: u32) -> UsnResult<usize> {
+    let bytes_read = bytes_read as usize;
+    if bytes_read > buffer.len() {
+        return Err(UsnError::InvalidBytesRead {
+            bytes_read,
+            buffer_len: buffer.len(),
+        });
+    }
+    Ok(bytes_read)
+}
+
+/// Read the next USN cursor from the start of an enumeration buffer.
+pub(crate) fn read_next_start_usn(buffer: &[u8], bytes_read: u32) -> UsnResult<Usn> {
+    let bytes_read = checked_bytes_read(buffer, bytes_read)?;
+    let cursor_len = size_of::<Usn>();
+    if bytes_read < cursor_len {
+        return Err(UsnError::TruncatedRecord {
+            offset: 0,
+            needed: cursor_len,
+            got: bytes_read,
+        });
+    }
+
+    let Some(raw_value) = read_unaligned_at::<i64>(buffer, 0) else {
+        return Err(UsnError::TruncatedRecord {
+            offset: 0,
+            needed: cursor_len,
+            got: bytes_read,
+        });
+    };
+    Ok(Usn::new(i64::from_le(raw_value)))
+}
+
+/// Read the next file-ID cursor from the start of an MFT enumeration buffer.
+pub(crate) fn read_next_start_fid(buffer: &[u8], bytes_read: u32) -> UsnResult<u64> {
+    let bytes_read = checked_bytes_read(buffer, bytes_read)?;
+    let cursor_len = size_of::<u64>();
+    if bytes_read < cursor_len {
+        return Err(UsnError::TruncatedRecord {
+            offset: 0,
+            needed: cursor_len,
+            got: bytes_read,
+        });
+    }
+
+    let Some(raw_value) = read_unaligned_at::<u64>(buffer, 0) else {
+        return Err(UsnError::TruncatedRecord {
+            offset: 0,
+            needed: cursor_len,
+            got: bytes_read,
+        });
+    };
+    Ok(u64::from_le(raw_value))
+}
+
+/// Parse the next USN record and advance `offset` past it.
+pub(crate) fn find_next_record<'a>(
+    buffer: &'a [u8],
     bytes_read: u32,
-    context: &str,
-) -> Result<(UsnRecordV2Header, u32), UsnError> {
-    let base = offset as usize;
-    let read_end = bytes_read as usize;
-    let header_end = base
-        .checked_add(USN_RECORD_V2_HEADER_LEN)
-        .ok_or_else(|| UsnError::OtherError(format!("{context} header length overflow")))?;
-    if header_end > read_end {
-        return Err(UsnError::OtherError(format!(
-            "{context} missing fixed header"
-        )));
-    }
-    let header_bytes = buffer
-        .get(base..header_end)
-        .ok_or_else(|| UsnError::OtherError(format!("{context} missing fixed header")))?;
-    let mut header = MaybeUninit::<UsnRecordV2Header>::zeroed();
-    unsafe {
-        std::ptr::copy_nonoverlapping(
-            header_bytes.as_ptr(),
-            header.as_mut_ptr().cast::<u8>(),
-            USN_RECORD_V2_HEADER_LEN,
-        );
-    }
-    let header = unsafe { header.assume_init() };
+    offset: &mut u32,
+) -> UsnResult<Option<UsnRecordView<'a>>> {
+    let bytes_read = checked_bytes_read(buffer, bytes_read)?;
+    let offset_usize = *offset as usize;
 
-    if header.record_length == 0 {
-        return Err(UsnError::OtherError(format!(
-            "{context} contains invalid zero RecordLength"
-        )));
+    if offset_usize >= bytes_read {
+        return Ok(None);
     }
 
-    let record_end = base
-        .checked_add(header.record_length as usize)
-        .ok_or_else(|| UsnError::OtherError(format!("{context} length overflow")))?;
-    if record_end > read_end {
-        return Err(UsnError::OtherError(format!(
-            "{context} extends past buffer bounds"
-        )));
+    let min_record_len = size_of::<USN_RECORD_COMMON_HEADER>();
+    if bytes_read - offset_usize < min_record_len {
+        // The remaining bytes cannot contain a record boundary that we can
+        // trust. Consume this kernel buffer so the iterator does not return
+        // the same error forever on subsequent calls to `next()`.
+        *offset = bytes_read as u32;
+        return Err(UsnError::TruncatedRecord {
+            offset: offset_usize as u64,
+            needed: min_record_len,
+            got: bytes_read - offset_usize,
+        });
     }
 
-    if header.major_version != 2 {
-        return Err(UsnError::OtherError(format!(
-            "Unsupported {context} version: {}",
-            header.major_version
-        )));
+    let Some(header) = read_unaligned_at::<USN_RECORD_COMMON_HEADER>(buffer, offset_usize) else {
+        return Err(UsnError::TruncatedRecord {
+            offset: offset_usize as u64,
+            needed: min_record_len,
+            got: bytes_read - offset_usize,
+        });
+    };
+
+    let record_len = header.RecordLength as usize;
+    if record_len < min_record_len {
+        *offset = bytes_read as u32;
+        return Err(UsnError::InvalidRecordLength {
+            offset: offset_usize as u64,
+            length: header.RecordLength,
+            reason: "record length is smaller than header",
+        });
+    }
+    if record_len > bytes_read - offset_usize {
+        *offset = bytes_read as u32;
+        return Err(UsnError::TruncatedRecord {
+            offset: offset_usize as u64,
+            needed: record_len,
+            got: bytes_read - offset_usize,
+        });
     }
 
-    Ok((header, header.record_length))
-}
+    // From this point on the record boundary is trustworthy. Advance before
+    // performing version-specific validation so a malformed item is yielded
+    // once instead of trapping Journal/MFT iterators on the same offset.
+    let next_offset = offset_usize
+        .checked_add(record_len)
+        .ok_or(UsnError::InvalidRecord {
+            offset: offset_usize as u64,
+            reason: "next record offset overflowed",
+        })?;
+    *offset = next_offset as u32;
 
-pub(crate) fn parse_usn_record_v2_name(
-    buffer: &[u8],
-    base: usize,
-    header: &UsnRecordV2Header,
-    context: &str,
-) -> Result<OsString, UsnError> {
-    let file_name_len = header.file_name_length as usize;
-    if !file_name_len.is_multiple_of(size_of::<u16>()) {
-        return Err(UsnError::OtherError(format!(
-            "{context} file name length is not UTF-16 aligned"
-        )));
+    let record = match header.MajorVersion {
+        2 => {
+            let fixed_len = std::mem::offset_of!(USN_RECORD_V2, FileName);
+            if record_len < fixed_len {
+                return Err(UsnError::InvalidRecordLength {
+                    offset: offset_usize as u64,
+                    length: header.RecordLength,
+                    reason: "record length is smaller than USN_RECORD_V2",
+                });
+            }
+            let mut record = USN_RECORD_V2::default();
+            // SAFETY: only the checked fixed header is copied into an aligned,
+            // initialized value. All copied fields are integer representations.
+            unsafe {
+                ptr::copy_nonoverlapping(
+                    buffer.as_ptr().add(offset_usize),
+                    (&mut record as *mut USN_RECORD_V2).cast::<u8>(),
+                    fixed_len,
+                );
+            }
+            UsnRecordView::V2(record, &[])
+        }
+        3 => {
+            let fixed_len = std::mem::offset_of!(USN_RECORD_V3, FileName);
+            if record_len < fixed_len {
+                return Err(UsnError::InvalidRecordLength {
+                    offset: offset_usize as u64,
+                    length: header.RecordLength,
+                    reason: "record length is smaller than USN_RECORD_V3",
+                });
+            }
+            let mut record = USN_RECORD_V3::default();
+            // SAFETY: only the checked fixed header is copied into an aligned,
+            // initialized value. All copied fields are integer representations.
+            unsafe {
+                ptr::copy_nonoverlapping(
+                    buffer.as_ptr().add(offset_usize),
+                    (&mut record as *mut USN_RECORD_V3).cast::<u8>(),
+                    fixed_len,
+                );
+            }
+            UsnRecordView::V3(record, &[])
+        }
+        _ => {
+            return Err(UsnError::UnsupportedRecordVersion {
+                offset: offset_usize as u64,
+                major_version: header.MajorVersion,
+            });
+        }
+    };
+
+    let file_name_offset = record.file_name_offset() as usize;
+    let file_name_length = record.file_name_length() as usize;
+    if !file_name_length.is_multiple_of(size_of::<u16>()) {
+        return Err(UsnError::MisalignedRecord {
+            offset: offset_usize as u64,
+            reason: "file name length is not aligned to UTF-16 units",
+        });
+    }
+    let file_name_end =
+        file_name_offset
+            .checked_add(file_name_length)
+            .ok_or(UsnError::InvalidRecord {
+                offset: offset_usize as u64,
+                reason: "file name range overflowed",
+            })?;
+    let fixed_len = match record {
+        UsnRecordView::V2(..) => std::mem::offset_of!(USN_RECORD_V2, FileName),
+        UsnRecordView::V3(..) => std::mem::offset_of!(USN_RECORD_V3, FileName),
+    };
+    if file_name_offset < fixed_len || file_name_end > record_len {
+        return Err(UsnError::InvalidRecord {
+            offset: offset_usize as u64,
+            reason: "file name range exceeds record length",
+        });
     }
 
-    let file_name_offset = header.file_name_offset as usize;
-    if file_name_offset < USN_RECORD_V2_HEADER_LEN
-        || file_name_offset
-            .checked_add(file_name_len)
-            .filter(|end| *end <= header.record_length as usize)
-            .is_none()
-    {
-        return Err(UsnError::OtherError(format!(
-            "{context} file name range is out of bounds"
-        )));
-    }
-
-    let name_start = base
-        .checked_add(file_name_offset)
-        .ok_or_else(|| UsnError::OtherError(format!("{context} file name offset overflow")))?;
-    let name_end = name_start
-        .checked_add(file_name_len)
-        .ok_or_else(|| UsnError::OtherError(format!("{context} file name length overflow")))?;
-    let name_bytes = buffer.get(name_start..name_end).ok_or_else(|| {
-        UsnError::OtherError(format!("{context} file name range is out of bounds"))
-    })?;
-    let name_units = name_bytes
-        .chunks_exact(size_of::<u16>())
-        .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
-        .collect::<Vec<_>>();
-
-    Ok(OsString::from_wide(&name_units))
+    let name = &buffer[offset_usize + file_name_offset..offset_usize + file_name_end];
+    Ok(Some(match record {
+        UsnRecordView::V2(header, _) => UsnRecordView::V2(header, name),
+        UsnRecordView::V3(header, _) => UsnRecordView::V3(header, name),
+    }))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn write_header(buf: &mut [u8], record_length: u32, major_version: u16) {
+        let header = USN_RECORD_COMMON_HEADER {
+            RecordLength: record_length,
+            MajorVersion: major_version,
+            MinorVersion: 0,
+        };
+        unsafe {
+            std::ptr::write_unaligned(buf.as_mut_ptr() as *mut USN_RECORD_COMMON_HEADER, header);
+        }
+    }
+
     #[test]
-    fn parse_usn_record_v2_header_rejects_truncated_valid_region() {
-        let buffer = vec![0u8; USN_RECORD_V2_HEADER_LEN];
+    fn cursor_read_rejects_too_large_bytes_read() {
+        let err = read_next_start_fid(&[0; 4], 8).unwrap_err();
+        assert!(matches!(
+            err,
+            UsnError::InvalidBytesRead {
+                bytes_read: 8,
+                buffer_len: 4
+            }
+        ));
+    }
 
-        let result = parse_usn_record_v2_header(
-            &buffer,
-            0,
-            (USN_RECORD_V2_HEADER_LEN - 1) as u32,
-            "USN record",
-        );
+    #[test]
+    fn cursor_read_reports_truncated_cursor() {
+        let err = read_next_start_usn(&[0; 4], 4).unwrap_err();
+        assert!(matches!(
+            err,
+            UsnError::TruncatedRecord {
+                offset: 0,
+                needed: 8,
+                got: 4
+            }
+        ));
+    }
 
-        assert!(
-            matches!(result, Err(UsnError::OtherError(message)) if message == "USN record missing fixed header")
+    #[test]
+    fn record_parse_reports_truncated_header() {
+        let mut offset = 0;
+        let err = find_next_record(&[0; 2], 2, &mut offset).unwrap_err();
+        assert!(matches!(
+            err,
+            UsnError::TruncatedRecord {
+                offset: 0,
+                needed,
+                got: 2
+            } if needed == size_of::<USN_RECORD_COMMON_HEADER>()
+        ));
+        assert_eq!(offset, 2, "unusable buffer tail must be consumed");
+    }
+
+    #[test]
+    fn record_parse_reports_invalid_record_length() {
+        let header_len = size_of::<USN_RECORD_COMMON_HEADER>();
+        let mut buf = vec![0u8; header_len];
+        write_header(&mut buf, (header_len - 1) as u32, 2);
+
+        let mut offset = 0;
+        let err = find_next_record(&buf, buf.len() as u32, &mut offset).unwrap_err();
+        assert!(matches!(
+            err,
+            UsnError::InvalidRecordLength {
+                offset: 0,
+                length,
+                reason: "record length is smaller than header"
+            } if length == (header_len - 1) as u32
+        ));
+        assert_eq!(
+            offset,
+            buf.len() as u32,
+            "invalid boundary must consume buffer"
         );
     }
 
     #[test]
-    fn parse_usn_record_v2_header_rejects_offset_beyond_valid_bytes() {
-        let buffer = vec![0u8; USN_RECORD_V2_HEADER_LEN * 2];
+    fn record_parse_reports_unsupported_version() {
+        let header_len = size_of::<USN_RECORD_COMMON_HEADER>();
+        let mut buf = vec![0u8; header_len];
+        write_header(&mut buf, header_len as u32, 99);
 
-        let result =
-            parse_usn_record_v2_header(&buffer, USN_RECORD_V2_HEADER_LEN as u32, 0, "USN record");
-
-        assert!(
-            matches!(result, Err(UsnError::OtherError(message)) if message == "USN record missing fixed header")
+        let mut offset = 0;
+        let err = find_next_record(&buf, buf.len() as u32, &mut offset).unwrap_err();
+        assert!(matches!(
+            err,
+            UsnError::UnsupportedRecordVersion {
+                offset: 0,
+                major_version: 99
+            }
+        ));
+        assert_eq!(
+            offset,
+            buf.len() as u32,
+            "unsupported record must be consumed"
         );
+    }
+
+    /// Build a `USN_RECORD_V2` buffer with the given fields and file name.
+    fn build_v2_record(
+        usn: i64,
+        fid: u64,
+        parent: u64,
+        reason: u32,
+        attributes: u32,
+        name: &str,
+    ) -> Vec<u8> {
+        let name_u16: Vec<u16> = name.encode_utf16().collect();
+        let name_len = name_u16.len() * size_of::<u16>();
+        let base = size_of::<USN_RECORD_V2>();
+        let total = (base + name_len).next_multiple_of(8);
+        let name_offset = std::mem::offset_of!(USN_RECORD_V2, FileName);
+
+        let record = USN_RECORD_V2 {
+            RecordLength: total as u32,
+            MajorVersion: 2,
+            MinorVersion: 0,
+            FileReferenceNumber: fid,
+            ParentFileReferenceNumber: parent,
+            Usn: usn,
+            TimeStamp: 0,
+            Reason: reason,
+            SourceInfo: 0,
+            SecurityId: 0,
+            FileAttributes: attributes,
+            FileNameLength: name_len as u16,
+            FileNameOffset: name_offset as u16,
+            FileName: [0; 1],
+        };
+
+        let mut buf = vec![0u8; total];
+        // SAFETY: copy the header bytes up to (not including) the FileName
+        // placeholder, then splice the real UTF-16 name in at FileNameOffset.
+        unsafe {
+            ptr::copy_nonoverlapping(
+                &record as *const USN_RECORD_V2 as *const u8,
+                buf.as_mut_ptr(),
+                name_offset,
+            );
+            ptr::copy_nonoverlapping(
+                name_u16.as_ptr() as *const u8,
+                buf.as_mut_ptr().add(name_offset),
+                name_len,
+            );
+        }
+        buf
+    }
+
+    /// Build a `USN_RECORD_V3` buffer carrying 128-bit file IDs.
+    fn build_v3_record(usn: i64, fid: u128, parent: u128, name: &str) -> Vec<u8> {
+        use windows::Win32::Storage::FileSystem::FILE_ID_128;
+
+        let name_u16: Vec<u16> = name.encode_utf16().collect();
+        let name_len = name_u16.len() * size_of::<u16>();
+        let base = size_of::<USN_RECORD_V3>();
+        let total = (base + name_len).next_multiple_of(8);
+        let name_offset = std::mem::offset_of!(USN_RECORD_V3, FileName);
+
+        let record = USN_RECORD_V3 {
+            RecordLength: total as u32,
+            MajorVersion: 3,
+            MinorVersion: 0,
+            FileReferenceNumber: FILE_ID_128 {
+                Identifier: fid.to_le_bytes(),
+            },
+            ParentFileReferenceNumber: FILE_ID_128 {
+                Identifier: parent.to_le_bytes(),
+            },
+            Usn: usn,
+            TimeStamp: 0,
+            Reason: 0,
+            SourceInfo: 0,
+            SecurityId: 0,
+            FileAttributes: 0,
+            FileNameLength: name_len as u16,
+            FileNameOffset: name_offset as u16,
+            FileName: [0; 1],
+        };
+
+        let mut buf = vec![0u8; total];
+        // SAFETY: same header-then-name splice as the V2 builder.
+        unsafe {
+            ptr::copy_nonoverlapping(
+                &record as *const USN_RECORD_V3 as *const u8,
+                buf.as_mut_ptr(),
+                name_offset,
+            );
+            ptr::copy_nonoverlapping(
+                name_u16.as_ptr() as *const u8,
+                buf.as_mut_ptr().add(name_offset),
+                name_len,
+            );
+        }
+        buf
+    }
+
+    #[test]
+    fn find_next_record_parses_v2_and_advances_offset() {
+        let buf = build_v2_record(0x1234, 0x42, 0x7, 0x0000_0100, 0x20, "file.txt");
+        let mut offset = 0u32;
+        let record = find_next_record(&buf, buf.len() as u32, &mut offset)
+            .expect("parse ok")
+            .expect("record present");
+
+        assert_eq!(record.usn(), 0x1234);
+        assert_eq!(record.fid(), Fid::new(0x42));
+        assert_eq!(record.parent_fid(), Fid::new(0x7));
+        assert_eq!(record.reason(), 0x0000_0100);
+        assert_eq!(record.file_attributes(), 0x20);
+        let name: Vec<u16> = "file.txt".encode_utf16().collect();
+        assert_eq!(record.file_name_slice(), name.as_slice());
+        assert_eq!(offset as usize, buf.len());
+    }
+
+    #[test]
+    fn find_next_record_iterates_multiple_v2_records() {
+        let mut buf = build_v2_record(1, 0x10, 0x5, 0, 0, "a.txt");
+        buf.extend(build_v2_record(2, 0x11, 0x5, 0, 0, "bb.txt"));
+        let total = buf.len() as u32;
+
+        let mut offset = 0u32;
+        let first = find_next_record(&buf, total, &mut offset)
+            .unwrap()
+            .expect("first record");
+        assert_eq!(first.usn(), 1);
+        assert_eq!(first.fid(), Fid::new(0x10));
+
+        let second = find_next_record(&buf, total, &mut offset)
+            .unwrap()
+            .expect("second record");
+        assert_eq!(second.usn(), 2);
+        assert_eq!(second.fid(), Fid::new(0x11));
+
+        assert_eq!(offset, total);
+        assert!(
+            find_next_record(&buf, total, &mut offset)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn find_next_record_parses_v3_extended_ids() {
+        let fid = 0x0011_2233_4455_6677_8899_aabb_ccdd_eeffu128;
+        let parent = 0x1000_0000_0000_0000_0000_0000_0000_0001u128;
+        let buf = build_v3_record(0x99, fid, parent, "refs.dat");
+
+        let mut offset = 0u32;
+        let record = find_next_record(&buf, buf.len() as u32, &mut offset)
+            .unwrap()
+            .expect("record present");
+
+        assert_eq!(record.usn(), 0x99);
+        assert_eq!(record.fid(), Fid::from(fid));
+        assert_eq!(record.parent_fid(), Fid::from(parent));
+        assert!(record.fid().is_extended());
+    }
+
+    #[test]
+    fn find_next_record_rejects_misaligned_file_name_length() {
+        let mut buf = build_v2_record(1, 0x10, 0x5, 0, 0, "abc");
+        // FileNameLength lives right before FileNameOffset in the header.
+        let len_off = std::mem::offset_of!(USN_RECORD_V2, FileNameLength);
+        buf[len_off..len_off + 2].copy_from_slice(&3u16.to_le_bytes());
+
+        let mut offset = 0u32;
+        let err = find_next_record(&buf, buf.len() as u32, &mut offset).unwrap_err();
+        assert!(matches!(err, UsnError::MisalignedRecord { offset: 0, .. }));
+        assert_eq!(
+            offset,
+            buf.len() as u32,
+            "malformed record must be consumed"
+        );
+    }
+
+    #[test]
+    fn find_next_record_rejects_file_name_beyond_record() {
+        let mut buf = build_v2_record(1, 0x10, 0x5, 0, 0, "abc");
+        // Declare a file-name length that runs past the record end.
+        let len_off = std::mem::offset_of!(USN_RECORD_V2, FileNameLength);
+        buf[len_off..len_off + 2].copy_from_slice(&1000u16.to_le_bytes());
+
+        let mut offset = 0u32;
+        let err = find_next_record(&buf, buf.len() as u32, &mut offset).unwrap_err();
+        assert!(matches!(
+            err,
+            UsnError::InvalidRecord {
+                offset: 0,
+                reason: "file name range exceeds record length"
+            }
+        ));
+        assert_eq!(
+            offset,
+            buf.len() as u32,
+            "malformed record must be consumed"
+        );
+    }
+
+    #[test]
+    fn malformed_record_does_not_block_following_record() {
+        let mut first = build_v2_record(1, 0x10, 0x5, 0, 0, "bad");
+        let len_off = std::mem::offset_of!(USN_RECORD_V2, FileNameLength);
+        first[len_off..len_off + 2].copy_from_slice(&3u16.to_le_bytes());
+        let first_len = first.len() as u32;
+        first.extend(build_v2_record(2, 0x11, 0x5, 0, 0, "good"));
+
+        let mut offset = 0u32;
+        assert!(find_next_record(&first, first.len() as u32, &mut offset).is_err());
+        assert_eq!(offset, first_len);
+
+        let second = find_next_record(&first, first.len() as u32, &mut offset)
+            .expect("second parse")
+            .expect("second record");
+        assert_eq!(second.usn(), 2);
+    }
+
+    #[test]
+    fn find_next_record_returns_none_when_offset_at_end() {
+        let buf = build_v2_record(1, 0x10, 0x5, 0, 0, "a.txt");
+        let mut offset = buf.len() as u32;
+        assert!(
+            find_next_record(&buf, buf.len() as u32, &mut offset)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn read_cursor_helpers_read_leading_values() {
+        let mut usn_buf = vec![0u8; 16];
+        usn_buf[..8].copy_from_slice(&0x0123_4567i64.to_le_bytes());
+        assert_eq!(
+            read_next_start_usn(&usn_buf, usn_buf.len() as u32).unwrap(),
+            Usn::new(0x0123_4567)
+        );
+
+        let mut fid_buf = vec![0u8; 16];
+        fid_buf[..8].copy_from_slice(&0xDEAD_BEEFu64.to_le_bytes());
+        assert_eq!(
+            read_next_start_fid(&fid_buf, fid_buf.len() as u32).unwrap(),
+            0xDEAD_BEEF
+        );
+    }
+
+    #[test]
+    fn records_decode_unaligned_buffers_and_declared_filename_offsets() {
+        for mut record in [
+            build_v2_record(7, 42, 5, 0, 0, "offset.txt"),
+            build_v3_record(7, 42, 5, "offset.txt"),
+        ] {
+            let version = u16::from_le_bytes([record[4], record[5]]);
+            let (name_len_pos, name_offset_pos) = if version == 2 {
+                (
+                    std::mem::offset_of!(USN_RECORD_V2, FileNameLength),
+                    std::mem::offset_of!(USN_RECORD_V2, FileNameOffset),
+                )
+            } else {
+                (
+                    std::mem::offset_of!(USN_RECORD_V3, FileNameLength),
+                    std::mem::offset_of!(USN_RECORD_V3, FileNameOffset),
+                )
+            };
+            let name_len =
+                u16::from_le_bytes(record[name_len_pos..name_len_pos + 2].try_into().unwrap())
+                    as usize;
+            let old_offset = u16::from_le_bytes(
+                record[name_offset_pos..name_offset_pos + 2]
+                    .try_into()
+                    .unwrap(),
+            ) as usize;
+            let name = record[old_offset..old_offset + name_len].to_vec();
+            let new_offset = old_offset + 8;
+            record.resize((new_offset + name_len).next_multiple_of(8), 0);
+            record[old_offset..new_offset].fill(0x7f);
+            record[new_offset..new_offset + name_len].copy_from_slice(&name);
+            record[name_offset_pos..name_offset_pos + 2]
+                .copy_from_slice(&(new_offset as u16).to_le_bytes());
+            let len = record.len() as u32;
+            record[..4].copy_from_slice(&len.to_le_bytes());
+            let mut unaligned = vec![0];
+            unaligned.extend(record);
+            let parsed = find_next_record(&unaligned[1..], len, &mut 0)
+                .unwrap()
+                .unwrap();
+            assert_eq!(parsed.usn(), 7);
+            assert_eq!(
+                String::from_utf16(&parsed.file_name_slice()).unwrap(),
+                "offset.txt"
+            );
+        }
+    }
+
+    #[test]
+    fn fixed_header_respects_bytes_read_and_filename_must_follow_header() {
+        let mut record = build_v2_record(1, 42, 5, 0, 0, "a");
+        assert!(find_next_record(&record, 12, &mut 0).is_err());
+        let pos = std::mem::offset_of!(USN_RECORD_V2, FileNameOffset);
+        record[pos..pos + 2].copy_from_slice(&0u16.to_le_bytes());
+        assert!(find_next_record(&record, record.len() as u32, &mut 0).is_err());
     }
 }
