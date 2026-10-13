@@ -5,6 +5,10 @@ use crate::volume::Volume;
 use super::{iter::MftIter, options::MftIterOptions};
 
 /// Represents the Master File Table (MFT) enumerator.
+///
+/// NTFS supports `FSCTL_ENUM_USN_DATA`. ReFS availability depends on the
+/// Windows/filesystem implementation; unsupported enumeration is returned as
+/// a [`crate::UsnError::WinApiError`] iterator item with the original OS error.
 #[derive(Debug)]
 pub struct Mft<'a> {
     /// Volume whose MFT will be enumerated.

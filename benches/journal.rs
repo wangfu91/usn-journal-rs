@@ -54,7 +54,10 @@ fn open_volume() -> Option<Volume> {
 }
 
 /// Iterate the full USN journal with all reason flags enabled.
-#[allow(clippy::expect_used, reason = "failed reads must abort benchmark samples")]
+#[allow(
+    clippy::expect_used,
+    reason = "failed reads must abort benchmark samples"
+)]
 fn journal_iter_full_mask(c: &mut Criterion) {
     let Some(volume) = open_volume() else { return };
     let limit = bench_record_limit();
@@ -81,7 +84,10 @@ fn journal_iter_full_mask(c: &mut Criterion) {
 
 /// Iterate the USN journal with a restricted reason mask
 /// (FILE_CREATE | FILE_DELETE).
-#[allow(clippy::expect_used, reason = "failed reads must abort benchmark samples")]
+#[allow(
+    clippy::expect_used,
+    reason = "failed reads must abort benchmark samples"
+)]
 fn journal_iter_filtered(c: &mut Criterion) {
     let Some(volume) = open_volume() else { return };
     let limit = bench_record_limit();

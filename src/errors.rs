@@ -92,6 +92,11 @@ pub enum UsnError {
     #[cfg(windows)]
     WinApiError(#[from] windows::core::Error),
 
+    /// A caller-defined error message, retained for compatibility with 0.4.1.
+    /// The library uses structured variants for parser and option errors.
+    #[error("Other error: {0}")]
+    OtherError(String),
+
     /// A provided buffer was too small for the requested work.
     #[error("Buffer too small: needed {needed} bytes, got {got}")]
     BufferTooSmall {

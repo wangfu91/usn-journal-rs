@@ -20,7 +20,7 @@ and Administrator privileges.
 ## Features
 
 - Read and iterate `USN_RECORD_V2` / `USN_RECORD_V3` journal records with a configurable reason mask and start USN
-- Enumerate MFT entries via the `FSCTL_ENUM_USN_DATA` API, including ReFS 128-bit file IDs
+- Enumerate MFT entries via `FSCTL_ENUM_USN_DATA`, decoding V2/V3 IDs where the filesystem supports this operation
 - Resolve current file IDs to full paths with optional LRU directory caching
 - Lightweight `Filetime(u64)` newtype with standard-library conversions
 - Strong `Usn`, `Fid`, `UsnReason`, and `FileAttributes` types throughout (`Fid` supports both 64-bit NTFS and 128-bit ReFS file IDs)
@@ -28,12 +28,11 @@ and Administrator privileges.
 
 ## Quick start
 
-The examples below target the unreleased 0.5.0 API on `api-refine`.
-Use the Git dependency until that version is published:
+Requires Windows and Rust 1.88 or later. The examples use the 0.5.0 API:
 
 ```toml
 [dependencies]
-usn-journal-rs = { git = "https://github.com/wangfu91/usn-journal-rs", branch = "api-refine" }
+usn-journal-rs = "0.5.0"
 ```
 
 Iterate the USN change journal on drive `C:`:
@@ -123,10 +122,9 @@ as the first argument (default `C`).
 
 ## Development
 
-Run `cargo build`, `cargo test --all-features`, and
-`cargo clippy --all-targets --all-features -- -D warnings` on Windows.
-Device-dependent tests skip when privileges or a suitable volume are unavailable.
-`cargo package` verifies the publishable crate without publishing it.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for validation, live-volume testing,
+and the tag-only release procedure. CI and release checks use the committed
+`Cargo.lock`; downstream applications still resolve their own dependencies.
 
 Cloned volumes and iterators share handle ownership; an iterator can outlive
 the volume value that created it.
@@ -141,17 +139,21 @@ cargo bench --bench path_resolver
 ## Privileges and filesystem support
 
 Journal, FSCTL enumeration, and live path operations require Windows and an
-Administrator process. Journal and enumeration APIs support NTFS/ReFS; ReFS
-entries may use extended file IDs.
+Administrator process. Journal reads support NTFS/ReFS. FSCTL enumeration
+supports NTFS; availability on ReFS depends on the Windows/filesystem implementation.
+An unsupported ReFS enumeration yields `UsnError::WinApiError` with the original
+OS error, such as `ERROR_INVALID_FUNCTION` or `ERROR_NOT_SUPPORTED`.
 
-On ReFS, journal and `Mft` entries may expose 128-bit file IDs via
+ReFS journal records and supported V3 enumeration records expose 128-bit file IDs via
 `Fid::is_extended()`, `Fid::as_u128()`, and `Fid::as_bytes()`.
 
 ## API behavior
 
-Journal `iter()?` (also available as `try_iter()?`) reads available records by
-default. Set `wait_for_more(true)` to wait for changes. A positive fractional
-timeout rounds up to whole seconds; zero means an indefinite kernel wait.
+Journal `iter()?` retains the 0.4.1 behavior: read from USN zero and wait for
+new records at the tail. Use `try_iter()?` to read available records and finish.
+Explicit options default to `wait_for_more(false)`; set it to `true` for monitoring.
+A positive fractional timeout rounds up to whole seconds; zero means an
+indefinite kernel wait.
 Options builders validate their inputs and return `Result` from `build()`.
 MFT `iter()` constructs an iterator directly; each item is still a `Result`.
 
@@ -167,6 +169,9 @@ supported. `new_with_cache()` and `path_resolver_with_cache()` retain their
 ## Migrating from 0.4.x
 
 See [CHANGELOG.md](CHANGELOG.md) for the 0.4.1 migration table and release history.
+The old `EnumOptions` names and `USN_REASON_MASK_ALL` remain as deprecated aliases
+or constants; `UsnError::OtherError(String)` remains available. Options fields
+and struct literals still require migration to the validated builders.
 
 ## License
 

@@ -2,9 +2,12 @@ name: Rust
 
 on:
   push:
-    branches: ["main"]
+    branches: ['main']
   pull_request:
-    branches: ["main"]
+    branches: ['main']
+
+permissions:
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -12,14 +15,52 @@ env:
 jobs:
   build:
     runs-on: windows-latest
-
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - name: Build
-        run: cargo build --verbose
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Build all targets
+        run: cargo build --locked --all-targets --all-features
       - name: Run Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
       - name: Run tests
-        run: cargo test --verbose
-      - name: Build without default features
-        run: cargo build --no-default-features --verbose
+        run: cargo test --locked --all-features
+      - name: Check documentation
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --locked --no-deps --all-features
+      - name: Verify publication without uploading
+        run: cargo publish --locked --registry crates-io --dry-run
+
+  msrv:
+    name: Rust 1.88 library
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@1.88.0
+      - run: cargo check --locked --lib
+
+  windows-targets:
+    name: Library (${{ matrix.target }})
+    runs-on: windows-latest
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        target: [aarch64-pc-windows-msvc, i686-pc-windows-msvc]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - run: cargo check --locked --lib --target ${{ matrix.target }}

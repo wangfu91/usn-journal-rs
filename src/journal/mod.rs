@@ -23,5 +23,10 @@ pub use iter::UsnJournalIter;
 pub use journal::UsnJournal;
 pub use options::{JournalIterOptions, JournalIterOptionsBuilder};
 
+/// Compatibility name for [`JournalIterOptions`].
+/// The 0.4.1 public fields and struct literals still require migration to builders.
+#[deprecated(since = "0.5.0", note = "Use JournalIterOptions and its builder")]
+pub type EnumOptions = JournalIterOptions;
+
 #[cfg(test)]
 mod tests;

@@ -37,7 +37,7 @@ impl<'a> UsnJournal<'a> {
         UsnJournal { volume }
     }
 
-    /// Returns an iterator over the USN journal entries.
+    /// Iterate over currently available journal records without waiting at the tail.
     ///
     /// The iterator yields `Result<UsnEntry, UsnError>` items, allowing callers
     /// to handle individual entry errors gracefully without stopping iteration.
@@ -48,9 +48,12 @@ impl<'a> UsnJournal<'a> {
         self.try_iter_with_options(JournalIterOptions::default())
     }
 
-    /// Iterate over available records using default options.
+    /// Iterate from USN zero, waiting for new records at the tail as in 0.4.1.
+    ///
+    /// Use [`Self::try_iter`] to read available records and finish at the tail,
+    /// or [`Self::iter_with_options`] to configure the starting USN and wait policy.
     pub fn iter(&self) -> UsnResult<UsnJournalIter> {
-        self.try_iter()
+        self.try_iter_with_options(JournalIterOptions::builder().wait_for_more(true).build()?)
     }
 
     /// Iterate with validated options. Alias for [Self::try_iter_with_options].
