@@ -168,7 +168,8 @@ supported. `new_with_cache()` and `path_resolver_with_cache()` retain their
 
 ## Migrating from 0.4.x
 
-See [CHANGELOG.md](CHANGELOG.md) for the 0.4.1 migration table and release history.
+See the [0.4.1 to 0.5.0 migration guide](CHANGELOG.md#migration-from-041)
+and [release history](CHANGELOG.md).
 The old `EnumOptions` names and `USN_REASON_MASK_ALL` remain as deprecated aliases
 or constants; `UsnError::OtherError(String)` remains available. Options fields
 and struct literals still require migration to the validated builders.

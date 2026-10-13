@@ -1,10 +1,9 @@
 # Changelog
 
-## [Unreleased] — 0.5.0
+## [0.5.0] - 2026-10-13
 
 API refinements for Windows USN journals, FSCTL enumeration, and live paths.
-This release is not yet published. The 0.4.1 correctness fixes and shared
-handle ownership are retained.
+The 0.4.1 correctness fixes and shared handle ownership are retained.
 
 ### Added
 
@@ -195,7 +194,7 @@ MFT iteration remains infallible to construct after options have been validated:
 - Support for Windows NTFS and ReFS volumes
 - CI workflow
 
-[Unreleased]: https://github.com/wangfu91/usn-journal-rs/compare/v0.4.1...HEAD
+[0.5.0]: https://github.com/wangfu91/usn-journal-rs/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/wangfu91/usn-journal-rs/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/wangfu91/usn-journal-rs/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/wangfu91/usn-journal-rs/compare/v0.2.2...v0.3.0
