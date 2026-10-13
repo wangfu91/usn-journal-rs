@@ -10,6 +10,7 @@ permissions:
 concurrency:
   group: crates-io-${{ github.repository }}
   cancel-in-progress: false
+  queue: max
 
 env:
   CARGO_TERM_COLOR: always
