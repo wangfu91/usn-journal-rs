@@ -48,11 +48,7 @@ fn open_volume() -> Option<Volume> {
 
 /// Collect entries from the Windows FSCTL enumerator.
 fn collect_test_entries(volume: &Volume) -> Result<Vec<MftEntry>, UsnError> {
-    volume
-        .mft()
-        .iter()
-        .take(NUM_TEST_ENTRIES)
-        .collect()
+    volume.mft().iter().take(NUM_TEST_ENTRIES).collect()
 }
 
 /// Resolve paths with direct syscalls, no caching.

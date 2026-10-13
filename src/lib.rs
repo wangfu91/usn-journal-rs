@@ -5,7 +5,7 @@
 //! A Rust library for manipulating the NTFS/ReFS USN change journal and enumerating the NTFS Master File Table (MFT).
 //!
 //! This crate provides safe, ergonomic abstractions for accessing the USN
-//! change journal and MFT records on NTFS/ReFS volumes.
+//! change journal on NTFS/ReFS and FSCTL enumeration where the filesystem supports it.
 //! It enables applications to efficiently monitor, enumerate file system changes on Windows.
 //!
 //! ## Features
@@ -132,6 +132,11 @@ mod tests {
 /// Journal defaults, retained at the crate root for compatibility.
 #[cfg(windows)]
 pub use journal::{DEFAULT_JOURNAL_ALLOCATION_DELTA, DEFAULT_JOURNAL_MAX_SIZE};
+
+/// Raw mask for all USN reasons, retained for compatibility with 0.4.1.
+/// Prefer [`UsnReason::ALL`] in typed APIs.
+#[deprecated(since = "0.5.0", note = "Use UsnReason::ALL or UsnReason::ALL.bits()")]
+pub const USN_REASON_MASK_ALL: u32 = UsnReason::ALL.bits();
 
 /// Validate a Windows output-buffer length before allocation or FFI conversion.
 fn validate_buffer_bytes(bytes: usize) -> UsnResult<()> {

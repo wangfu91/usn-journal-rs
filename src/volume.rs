@@ -173,8 +173,7 @@ fn get_volume_handle_from_mount_point(mount_point: &Path) -> Result<HANDLE, UsnE
         return Err(UsnError::PermissionError);
     }
 
-    // GetVolumeNameForVolumeMountPointW requires trailing backslash
-    let mount_path = format!("{}\\", mount_point.to_string_lossy());
+    let mount_path = mount_point_wide_path(mount_point)?;
 
     let mut volume_name = [0u16; 50]; // Enough space for volume GUID path
     // SAFETY: `mount_path` lives until the end of the call; `volume_name`
@@ -182,10 +181,16 @@ fn get_volume_handle_from_mount_point(mount_point: &Path) -> Result<HANDLE, UsnE
     // for `GetVolumeNameForVolumeMountPointW` only requires the buffer
     // be large enough to hold the volume GUID path (50 wide chars is
     // ample for the standard `\\?\Volume{GUID}\` form).
-    if let Err(err) =
-        unsafe { GetVolumeNameForVolumeMountPointW(&HSTRING::from(&mount_path), &mut volume_name) }
-    {
-        warn!("GetVolumeNameForVolumeMountPointW failed, mount_point={mount_path}, error={err:?}");
+    if let Err(err) = unsafe {
+        GetVolumeNameForVolumeMountPointW(
+            windows::core::PCWSTR(mount_path.as_ptr()),
+            &mut volume_name,
+        )
+    } {
+        warn!(
+            "GetVolumeNameForVolumeMountPointW failed, mount_point={}, error={err:?}",
+            mount_point.display()
+        );
         return Err(err.into());
     }
 
@@ -224,6 +229,26 @@ fn get_volume_handle_from_mount_point(mount_point: &Path) -> Result<HANDLE, UsnE
     Ok(volume_handle)
 }
 
+/// Preserve Windows path code units and add the required trailing backslash/NUL.
+#[cfg(windows)]
+fn mount_point_wide_path(mount_point: &Path) -> crate::UsnResult<Vec<u16>> {
+    use std::os::windows::ffi::OsStrExt;
+
+    let mut path: Vec<u16> = mount_point.as_os_str().encode_wide().collect();
+    if path.contains(&0) {
+        return Err(UsnError::InvalidMountPointError(
+            "Path contains a NUL code unit".into(),
+        ));
+    }
+    if let Some(last) = path.last_mut().filter(|last| **last == u16::from(b'/')) {
+        *last = u16::from(b'\\');
+    } else if path.last() != Some(&u16::from(b'\\')) {
+        path.push(u16::from(b'\\'));
+    }
+    path.push(0);
+    Ok(path)
+}
+
 #[cfg(all(test, windows))]
 mod tests {
     use windows::Win32::Foundation::{ERROR_FILE_NOT_FOUND, HANDLE};
@@ -232,6 +257,30 @@ mod tests {
         errors::UsnError,
         volume::{Volume, VolumeSource},
     };
+
+    #[test]
+    fn mount_point_encoding_preserves_unpaired_utf16_and_normalizes_the_suffix() {
+        use std::{ffi::OsString, os::windows::ffi::OsStringExt, path::Path};
+
+        let mut raw: Vec<u16> = "C:\\mount-".encode_utf16().collect();
+        raw.push(0xd800);
+        let path = OsString::from_wide(&raw);
+        let mut expected = raw;
+        expected.extend([u16::from(b'\\'), 0]);
+        assert_eq!(
+            super::mount_point_wide_path(Path::new(&path)).unwrap(),
+            expected
+        );
+        for path in ["C:\\mount", "C:\\mount\\", "C:\\mount/"] {
+            assert_eq!(
+                super::mount_point_wide_path(Path::new(path)).unwrap(),
+                "C:\\mount\\\0".encode_utf16().collect::<Vec<_>>()
+            );
+        }
+        assert!(
+            super::mount_point_wide_path(Path::new(&OsString::from_wide(&[65, 0, 66]))).is_err()
+        );
+    }
 
     #[test]
     fn volume_accessors_construct_without_io() {

@@ -3,6 +3,7 @@
 //! ReFS / USN v3 coverage using a file created on a verified ReFS volume.
 //! Set USN_REFS_TEST_DRIVE to select the volume (default D).
 //! Only environment checks skip; enumeration and fixture failures fail the test.
+//! ReFS FSCTL enumeration support is checked against a direct Win32 call.
 
 use std::{
     ffi::OsString,
@@ -12,7 +13,20 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 use usn_journal_rs::{Usn, UsnError, journal::JournalIterOptions, volume::Volume};
-use windows::{Win32::Storage::FileSystem::GetVolumeInformationW, core::HSTRING};
+use windows::{
+    Win32::{
+        Foundation::{ERROR_INVALID_FUNCTION, ERROR_NOT_SUPPORTED},
+        Storage::FileSystem::{
+            CreateFileW, FILE_FLAGS_AND_ATTRIBUTES, FILE_GENERIC_READ, FILE_SHARE_READ,
+            FILE_SHARE_WRITE, GetVolumeInformationW, OPEN_EXISTING,
+        },
+        System::{
+            IO::DeviceIoControl,
+            Ioctl::{FSCTL_ENUM_USN_DATA, MFT_ENUM_DATA_V1},
+        },
+    },
+    core::{HSTRING, Owned},
+};
 
 struct Fixture {
     volume: Volume,
@@ -108,10 +122,68 @@ fn refs_journal_can_surface_extended_file_ids() {
 }
 
 #[test]
-fn refs_mft_can_surface_extended_file_ids() {
+fn refs_mft_matches_native_enumeration_support() {
     let Some(fixture) = fixture().expect("prepare ReFS fixture") else {
         return;
     };
+    let drive = fixture.volume.drive_letter().expect("drive-letter fixture");
+    // SAFETY: the path lives for this call; Owned closes the returned handle.
+    let handle = unsafe {
+        Owned::new(
+            CreateFileW(
+                &HSTRING::from(format!(r"\\.\{drive}:")),
+                FILE_GENERIC_READ.0,
+                FILE_SHARE_READ | FILE_SHARE_WRITE,
+                None,
+                OPEN_EXISTING,
+                FILE_FLAGS_AND_ATTRIBUTES::default(),
+                None,
+            )
+            .expect("open independent ReFS probe handle"),
+        )
+    };
+    let input = MFT_ENUM_DATA_V1 {
+        StartFileReferenceNumber: 0,
+        LowUsn: 0,
+        HighUsn: i64::MAX,
+        MinMajorVersion: 2,
+        MaxMajorVersion: 3,
+    };
+    let mut buffer = vec![0u8; usn_journal_rs::journal::DEFAULT_BUFFER_BYTES];
+    let mut bytes_returned = 0;
+    // SAFETY: both buffers and the returned-byte pointer are valid for the call.
+    let native = unsafe {
+        DeviceIoControl(
+            *handle,
+            FSCTL_ENUM_USN_DATA,
+            Some((&input as *const MFT_ENUM_DATA_V1).cast()),
+            std::mem::size_of::<MFT_ENUM_DATA_V1>() as u32,
+            Some(buffer.as_mut_ptr().cast()),
+            buffer.len() as u32,
+            Some(&mut bytes_returned),
+            None,
+        )
+    };
+    if let Err(error) = native {
+        assert!(
+            error.code() == ERROR_INVALID_FUNCTION.into()
+                || error.code() == ERROR_NOT_SUPPORTED.into(),
+            "unexpected native ReFS enumeration failure: {error}"
+        );
+        let library_error = fixture
+            .volume
+            .mft()
+            .iter()
+            .next()
+            .expect("unsupported enumeration must yield an error item")
+            .expect_err("library must preserve native enumeration failure");
+        assert!(
+            matches!(library_error, UsnError::WinApiError(ref underlying) if underlying.code() == error.code()),
+            "native ReFS error must survive unchanged: {library_error}"
+        );
+        eprintln!("Verified native ReFS enumeration limitation and OS error propagation: {error}");
+        return;
+    }
     let entry = fixture
         .volume
         .mft()

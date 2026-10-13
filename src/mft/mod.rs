@@ -15,5 +15,10 @@ pub use iter::MftIter;
 pub use mft::Mft;
 pub use options::{MftIterOptions, MftIterOptionsBuilder, UsnRecordVersion};
 
+/// Compatibility name for [`MftIterOptions`].
+/// The 0.4.1 public fields and struct literals still require migration to builders.
+#[deprecated(since = "0.5.0", note = "Use MftIterOptions and its builder")]
+pub type EnumOptions = MftIterOptions;
+
 #[cfg(test)]
 mod tests;

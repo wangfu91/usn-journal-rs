@@ -4,38 +4,16 @@
 //!
 //! These exercise the real USN journal on the `USN_TEST_DRIVE` volume
 //! (default `C`). They skip gracefully when the process is not elevated or
-//! the drive is unavailable.
+//! the drive is unavailable or not NTFS. Unexpected OS failures fail the tests.
 
-use usn_journal_rs::{errors::UsnError, volume::Volume};
-
-/// Pick the NTFS test volume, honoring `USN_TEST_DRIVE` (default `C`).
-fn pick_drive() -> char {
-    std::env::var("USN_TEST_DRIVE")
-        .ok()
-        .and_then(|s| s.chars().next())
-        .map(|c| c.to_ascii_uppercase())
-        .unwrap_or('C')
-}
-
-/// Open the test volume, or return `None` with a skip message.
-fn open_test_volume(test_name: &str) -> Option<Volume> {
-    let drive = pick_drive();
-    match Volume::from_drive_letter(drive) {
-        Ok(volume) => Some(volume),
-        Err(UsnError::PermissionError) => {
-            eprintln!("{test_name}: skipping (requires admin privileges)");
-            None
-        }
-        Err(error) => {
-            eprintln!("{test_name}: skipping on {drive}: {error}");
-            None
-        }
-    }
-}
+mod common;
+use common::open_test_volume;
 
 #[test]
 fn query_or_create_returns_self_consistent_state() {
-    let Some(volume) = open_test_volume("query_or_create_returns_self_consistent_state") else {
+    let Some(volume) = open_test_volume("query_or_create_returns_self_consistent_state")
+        .expect("check NTFS prerequisites and open test volume")
+    else {
         return;
     };
     let journal = volume.journal();
@@ -68,7 +46,9 @@ fn query_or_create_returns_self_consistent_state() {
 
 #[test]
 fn query_succeeds_after_query_or_create() {
-    let Some(volume) = open_test_volume("query_succeeds_after_query_or_create") else {
+    let Some(volume) = open_test_volume("query_succeeds_after_query_or_create")
+        .expect("check NTFS prerequisites and open test volume")
+    else {
         return;
     };
     let journal = volume.journal();
@@ -91,7 +71,9 @@ fn query_succeeds_after_query_or_create() {
 
 #[test]
 fn query_or_create_is_idempotent() {
-    let Some(volume) = open_test_volume("query_or_create_is_idempotent") else {
+    let Some(volume) = open_test_volume("query_or_create_is_idempotent")
+        .expect("check NTFS prerequisites and open test volume")
+    else {
         return;
     };
     let journal = volume.journal();

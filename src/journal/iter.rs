@@ -248,17 +248,20 @@ mod construction_tests {
 
     #[test]
     #[allow(clippy::too_many_arguments)] // The mock matches the eight-argument Win32 ABI.
-    fn shorthand_uses_default_wait_policy_and_reuses_supplied_buffer() {
+    fn legacy_iterator_waits_but_new_default_finishes_and_reuses_supplied_buffer() {
         let mut injector = InjectorPP::new();
         crate::test_support::mock_device_io_control!(injector, Ok(()));
         let volume = crate::test_support::mock_volume();
         let journal = volume.journal();
         let simple = journal.iter().unwrap();
+        let available = journal.try_iter().unwrap();
         let explicit = journal
             .iter_with_options(JournalIterOptions::default())
             .unwrap();
-        assert_eq!(simple.bytes_to_wait_for, 0);
-        assert_eq!(simple.bytes_to_wait_for, explicit.bytes_to_wait_for);
+        assert_eq!(simple.bytes_to_wait_for, 1);
+        assert_eq!(simple.next_start_usn, 0);
+        assert_eq!(available.bytes_to_wait_for, 0);
+        assert_eq!(available.bytes_to_wait_for, explicit.bytes_to_wait_for);
         assert_eq!(simple.timeout, explicit.timeout);
         let buffer = Vec::with_capacity(crate::journal::DEFAULT_BUFFER_BYTES);
         let pointer = buffer.as_ptr();

@@ -6,45 +6,24 @@
 //!
 //! Each accessor must be equivalent to the explicit constructor it wraps.
 //! Tests run against the `USN_TEST_DRIVE` volume (default `C`) and skip
-//! gracefully when the process is not elevated or the drive is unavailable.
+//! gracefully when the process is not elevated or the drive is unavailable or
+//! not NTFS. Unexpected OS failures fail the tests.
+
+mod common;
+use common::open_test_volume;
 
 use usn_journal_rs::{
     Usn,
-    errors::UsnError,
     journal::UsnJournal,
     mft::{Mft, MftIterOptions},
     path::PathResolver,
-    volume::Volume,
 };
-
-/// Pick the NTFS test volume, honoring `USN_TEST_DRIVE` (default `C`).
-fn pick_drive() -> char {
-    std::env::var("USN_TEST_DRIVE")
-        .ok()
-        .and_then(|s| s.chars().next())
-        .map(|c| c.to_ascii_uppercase())
-        .unwrap_or('C')
-}
-
-/// Open the test volume, or return `None` with a skip message.
-fn open_test_volume(test_name: &str) -> Option<Volume> {
-    let drive = pick_drive();
-    match Volume::from_drive_letter(drive) {
-        Ok(volume) => Some(volume),
-        Err(UsnError::PermissionError) => {
-            eprintln!("{test_name}: skipping (requires admin privileges)");
-            None
-        }
-        Err(error) => {
-            eprintln!("{test_name}: skipping on {drive}: {error}");
-            None
-        }
-    }
-}
 
 #[test]
 fn journal_accessor_matches_constructor() {
-    let Some(volume) = open_test_volume("journal_accessor_matches_constructor") else {
+    let Some(volume) = open_test_volume("journal_accessor_matches_constructor")
+        .expect("check NTFS prerequisites and open test volume")
+    else {
         return;
     };
 
@@ -64,7 +43,9 @@ fn journal_accessor_matches_constructor() {
 
 #[test]
 fn mft_accessor_matches_constructor_first_entries() {
-    let Some(volume) = open_test_volume("mft_accessor_matches_constructor_first_entries") else {
+    let Some(volume) = open_test_volume("mft_accessor_matches_constructor_first_entries")
+        .expect("check NTFS prerequisites and open test volume")
+    else {
         return;
     };
 
@@ -95,7 +76,9 @@ fn mft_accessor_matches_constructor_first_entries() {
 
 #[test]
 fn path_resolver_accessor_matches_constructor() {
-    let Some(volume) = open_test_volume("path_resolver_accessor_matches_constructor") else {
+    let Some(volume) = open_test_volume("path_resolver_accessor_matches_constructor")
+        .expect("check NTFS prerequisites and open test volume")
+    else {
         return;
     };
 
@@ -129,7 +112,9 @@ fn path_resolver_accessor_matches_constructor() {
 
 #[test]
 fn mft_zero_usn_range_only_yields_zero_usns() {
-    let Some(volume) = open_test_volume("mft_zero_usn_range_only_yields_zero_usns") else {
+    let Some(volume) = open_test_volume("mft_zero_usn_range_only_yields_zero_usns")
+        .expect("check NTFS prerequisites and open test volume")
+    else {
         return;
     };
 
@@ -156,7 +141,9 @@ fn mft_zero_usn_range_only_yields_zero_usns() {
 
 #[test]
 fn mft_full_range_yields_entries() {
-    let Some(volume) = open_test_volume("mft_full_range_yields_entries") else {
+    let Some(volume) = open_test_volume("mft_full_range_yields_entries")
+        .expect("check NTFS prerequisites and open test volume")
+    else {
         return;
     };
 
